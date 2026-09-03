@@ -734,6 +734,18 @@ class TestWindowsBundle(unittest.TestCase):
             REPO_ROOT / ".github" / "workflows" / "release-hub.yml"
         ).read_text(encoding="utf-8")
 
+    def test_release_bundles_editors_and_language_pack_in_both_zips(self):
+        # A7: the city clone carries no tools/, so the hub zip must ship the editors and
+        # the language pack under program/ where hub.py's fallback lookup finds them.
+        loops = self.workflow.count('for sub in ("attr_editor", "tex_editor", "i18n"):')
+        self.assertEqual(loops, 2, "both the Windows and the macOS assembly must bundle them")
+        for entry in ('f"{LIB}/attr_editor/app.py"', 'f"{LIB}/tex_editor/app.py"',
+                      'f"{LIB}/i18n/i18n_loader.py"', 'f"{LIB}/i18n/catalogs/hub/ja.json"'):
+            self.assertEqual(self.workflow.count(entry), 2, entry)
+        hub = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
+        self.assertIn('APP_DIR / "i18n" / "i18n_loader.py"', hub)
+        self.assertIn("for cand in (APP_DIR / rel, APP_DIR.parent / rel)", hub)
+
     def test_release_uses_pinned_mingit_and_python_and_size_gate(self):
         # A5/A7: build-time downloads are pinned by version URL + SHA-256 and
         # verified before extraction; no moving releases/latest reference remains.

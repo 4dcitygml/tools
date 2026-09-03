@@ -914,7 +914,8 @@ def i18n_module():
     if _i18n_mod is not None:
         return _i18n_mod or None
     import importlib.util
-    for cand in (RES_DIR.parent / "i18n" / "i18n_loader.py",
+    for cand in (APP_DIR / "i18n" / "i18n_loader.py",  # distribution: program/i18n/
+                 RES_DIR.parent / "i18n" / "i18n_loader.py",
                  APP_DIR.parent / "i18n" / "i18n_loader.py"):
         if cand.is_file():
             spec = importlib.util.spec_from_file_location("i18n_loader", cand)
@@ -1011,8 +1012,11 @@ class Hub:
         cand = self.root / t["path"]
         if cand.is_file():
             return cand
-        cand = APP_DIR.parent / str(Path(t["path"]).relative_to("tools"))
-        return cand if cand.is_file() else None
+        rel = Path(t["path"]).relative_to("tools")
+        for cand in (APP_DIR / rel, APP_DIR.parent / rel):  # distribution: program/<editor>/app.py
+            if cand.is_file():
+                return cand
+        return None
 
     def _port_serves_our_repo(self, port: int) -> bool:
         """Whether the editor on that port has our own city (repo) open (5-second TTL)."""

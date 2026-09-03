@@ -169,6 +169,13 @@ jobs:
               z.write(repo_root / "LICENSE", f"{LIB}/LICENSE")
               z.write(repo_root / "NOTICE", f"{LIB}/NOTICE")
               z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
+              # Editors and the language pack travel with the hub (the city clone has no tools/;
+              # hub.py resolves program/<editor>/app.py and program/i18n/ as its fallback).
+              tools_root = repo_root / "tools"
+              for sub in ("attr_editor", "tex_editor", "i18n"):
+                  for p in sorted((tools_root / sub).rglob("*")):
+                      if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
+                          z.write(p, f"{LIB}/{sub}/{p.relative_to(tools_root / sub).as_posix()}")
               for bundle in ("PortableGit", "PythonPortable"):
                   base = pathlib.Path(bundle)
                   for p in sorted(base.rglob("*")):
@@ -204,6 +211,12 @@ jobs:
               f"{LIB}/LICENSE",
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
+              f"{LIB}/attr_editor/app.py",
+              f"{LIB}/attr_editor/index.html",
+              f"{LIB}/tex_editor/app.py",
+              f"{LIB}/tex_editor/index.html",
+              f"{LIB}/i18n/i18n_loader.py",
+              f"{LIB}/i18n/catalogs/hub/ja.json",
               f"{LIB}/PythonPortable/python.exe",
               f"{LIB}/PythonPortable/LICENSE.txt",
               f"{LIB}/PortableGit/cmd/git.exe",
@@ -330,6 +343,12 @@ jobs:
               add(z, "LICENSE", f"{LIB}/LICENSE")
               add(z, "NOTICE", f"{LIB}/NOTICE")
               add(z, "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
+              # Editors and the language pack travel with the hub (see the Windows step)
+              import pathlib
+              for sub in ("attr_editor", "tex_editor", "i18n"):
+                  for p in sorted(pathlib.Path("tools", sub).rglob("*")):
+                      if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
+                          add(z, str(p), f"{LIB}/{sub}/{p.relative_to(pathlib.Path('tools', sub)).as_posix()}")
       - name: Verify archive contents (entry points, licenses, layout)
         shell: python
         run: |
@@ -354,6 +373,12 @@ jobs:
               f"{LIB}/LICENSE",
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
+              f"{LIB}/attr_editor/app.py",
+              f"{LIB}/attr_editor/index.html",
+              f"{LIB}/tex_editor/app.py",
+              f"{LIB}/tex_editor/index.html",
+              f"{LIB}/i18n/i18n_loader.py",
+              f"{LIB}/i18n/catalogs/hub/ja.json",
           ]
           missing = [n for n in required if n not in names]
           if missing:
