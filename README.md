@@ -34,8 +34,9 @@ request.
 2. Double-click `start-mac.command` (macOS) or `start-windows.bat` (Windows).
 3. The hub opens in your browser. Pick your city — it is already selected if
    you installed from your municipality's repository.
-4. Browse freely; viewing needs no account. To send a change proposal, sign
-   in with GitHub when prompted.
+4. Sign in with GitHub when prompted (the screen states exactly what you
+   authorize), create your copy of the city, and import it. Viewing the data
+   itself needs no account: open the city repository or the portal.
 
 Nothing is ever changed directly: every edit becomes a pull request, reviewed
 by the data maintainer — and the approved history *is* the record of the city.
