@@ -66,6 +66,8 @@ jobs:
           sparse-checkout: |
             tools/hub
             tools/attr_editor
+            tools/tex_editor
+            tools/i18n
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
         working-directory: tools/hub
@@ -302,7 +304,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           filter: blob:none
-          sparse-checkout: tools/hub
+          sparse-checkout: |
+            tools/hub
+            tools/attr_editor
+            tools/tex_editor
+            tools/i18n
       - name: Assemble macOS zip
         # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
         # names, so build with Python's zipfile (non-ASCII names always get EFS).

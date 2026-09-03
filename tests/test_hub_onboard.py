@@ -742,6 +742,8 @@ class TestWindowsBundle(unittest.TestCase):
         for entry in ('f"{LIB}/attr_editor/app.py"', 'f"{LIB}/tex_editor/app.py"',
                       'f"{LIB}/i18n/i18n_loader.py"', 'f"{LIB}/i18n/catalogs/hub/ja.json"'):
             self.assertEqual(self.workflow.count(entry), 2, entry)
+        # the sparse checkout of both build jobs must materialise the bundled directories
+        self.assertEqual(self.workflow.count("            tools/tex_editor\n            tools/i18n\n"), 2)
         hub = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
         self.assertIn('APP_DIR / "i18n" / "i18n_loader.py"', hub)
         self.assertIn("for cand in (APP_DIR / rel, APP_DIR.parent / rel)", hub)
