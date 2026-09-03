@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="hub.title">Building Data Editing Tools</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --border: #dde1e6; --text: #1c2733;
+    --muted: #6b7785; --accent: #0969da; --ok: #1f883d; --warn: #b8860b; --danger: #c92a2a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 13px; color: var(--text); background: var(--bg); }
+  header { background: #24292f; color: #fff; padding: 12px 20px; display: flex;
+    align-items: center; gap: 14px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #cityLogo { height: 28px; }  /* Municipality logo (/city-logo; stays hidden if absent) */
+  header .who { font-size: 12px; color: #c9d1d9; margin-left: auto; text-align: right; line-height: 1.4; }
+  header .who b { color: #fff; }
+  main { max-width: 1000px; margin: 0 auto; padding: 18px 20px 40px; }
+  /* minmax(0,1fr): keeps a column from growing to its content's min width and squeezing the other (lets ellipsis/wrapping work) */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .grid > div { min-width: 0; }
+  @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px; }
+  #welcome { background: #eef9f0; border-color: #9bd5aa; font-size: 14px; line-height: 1.7; }
+  #welcome h2 { color: var(--text); font-size: 16px; margin-bottom: 6px; }
+  #welcome p { margin: 0 0 10px; }
+  #reviewEntry { border: 2px solid #2da44e; background: #f0fff4; }
+  #reviewEntry .reviewRow { display: flex; align-items: center; gap: 12px; }
+  #reviewEntry .reviewIcon { font-size: 30px; }
+  #reviewEntry .reviewMeta { flex: 1; min-width: 0; }
+  #reviewEntry .reviewMeta b { display: block; font-size: 14px; margin-bottom: 3px; }
+  #reviewEntry .reviewMeta span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  section h2 { font-size: 13px; margin: 0 0 10px; color: var(--muted); font-weight: 600;
+    display: flex; align-items: center; gap: 8px; }
+  section h2 .act { margin-left: auto; font-size: 11px; font-weight: 500; }
+  /* Tool launch */
+  .tool { display: flex; align-items: center; gap: 12px; padding: 10px 0;
+    border-top: 1px solid #f0f2f4; }
+  .tool:first-of-type { border-top: none; }
+  .tool .ic { font-size: 26px; width: 34px; text-align: center; flex: none; }
+  .tool .meta { flex: 1; min-width: 0; }
+  .tool .meta .name { font-weight: 600; font-size: 14px; }
+  .tool .meta .d { color: var(--muted); font-size: 12px; }
+  .tool .st { flex: none; }
+  .tool button { flex: none; }
+  .tool .st { font-size: 11px; color: var(--muted); margin-right: 4px; }
+  .tool.recommended { background: #eef9f0; border: 1px solid #9bd5aa; border-radius: 8px;
+    margin: 4px 0; padding: 10px 8px; }
+  .first { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: 10px;
+    background: var(--ok); color: #fff; font-size: 10px; vertical-align: 1px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #c9d1d9; margin-right: 4px; vertical-align: 1px; }
+  .dot.on { background: var(--ok); }
+  button { font: inherit; border-radius: 6px; border: 1px solid var(--border);
+    background: #f6f8fa; padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #eef1f4; }
+  button.primary { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  a.btnlink { text-decoration: none; }
+  /* Badge */
+  .badge { text-align: center; padding: 8px 0 4px; }
+  .badge .emoji { font-size: 46px; line-height: 1; }
+  .badge .name { font-size: 15px; font-weight: 700; margin-top: 6px; }
+  .badge .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .bar { height: 8px; background: #eceff2; border-radius: 5px; margin: 10px 2px 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--ok); border-radius: 5px; }
+  .counts { display: flex; gap: 10px; margin-top: 10px; }
+  .counts .c { flex: 1; text-align: center; background: #f6f8fa; border-radius: 8px; padding: 8px 4px; }
+  .counts .c b { font-size: 20px; display: block; }
+  .counts .c span { font-size: 11px; color: var(--muted); }
+  /* PR / issue lists */
+  .list { max-height: 260px; overflow: auto; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-top: 1px solid #f0f2f4;
+    font-size: 12px; }
+  .row:first-child { border-top: none; }
+  .row .num { color: var(--muted); font-family: ui-monospace, monospace; }
+  .row .num { flex: none; }
+  .row .ttl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .pill, .row .reply, .row .muted { flex: none; }
+  .row a { color: var(--text); text-decoration: none; }
+  .row a:hover { color: var(--accent); text-decoration: underline; }
+  .pill { font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; }
+  .pill.open { background: #dafbe1; color: #1a7f37; }
+  .pill.closed { background: #ffebe9; color: #cf222e; }
+  .pill.merged { background: #f3e8ff; color: #8250df; }
+  .pill.draft { background: #eef1f4; color: var(--muted); }
+  .reply { font-size: 11px; }
+  .reply.yes { color: var(--warn); font-weight: 600; }
+  .reply.no { color: #c9d1d9; }
+  button.retryCi { padding: 3px 8px; color: #0550ae; border-color: #8cbbeb; background: #f0f7ff;
+    font-size: 10px; font-weight: 650; }
+  .retryHint { max-width: 150px; color: var(--muted); font-size: 10px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 16px; text-align: center; }
+  .muted { color: var(--muted); }
+  .statline { font-size: 12px; line-height: 1.7; }
+  .statline .k { color: var(--muted); display: inline-block; min-width: 92px; }
+  .warnbox { background: #fff8e5; border: 1px solid #eed888; border-radius: 6px;
+    padding: 8px 12px; font-size: 12px; margin-top: 8px; }
+  .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid #ccc;
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  .feedbackEntry { text-align: center; }
+  .feedbackEntry p { color: var(--muted); margin: 8px 0 0; font-size: 12px; }
+  #feedbackBack { position: fixed; inset: 0; z-index: 200; display: none; align-items: center;
+    justify-content: center; padding: 20px; background: rgba(27,31,36,.58); }
+  #feedbackDialog { width: min(720px, 96vw); max-height: 92vh; overflow: auto; background: #fff;
+    border-radius: 12px; box-shadow: 0 16px 50px rgba(0,0,0,.3); padding: 20px; text-align: left; }
+  #feedbackDialog h2 { color: var(--text); font-size: 17px; margin: 0 0 5px; }
+  #feedbackDialog .lead { color: var(--muted); line-height: 1.6; margin: 0 0 14px; }
+  #feedbackForm label { display: block; margin: 12px 0 5px; font-size: 12px; font-weight: 650; }
+  #feedbackForm input, #feedbackForm select, #feedbackForm textarea { width: 100%; font: inherit;
+    color: var(--text); border: 1px solid #b9c1ca; border-radius: 6px; padding: 8px; background: #fff; }
+  #feedbackForm textarea { min-height: 74px; resize: vertical; line-height: 1.5; }
+  #feedbackForm textarea.tall { min-height: 110px; }
+  #feedbackForm details { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  #feedbackForm summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .required { color: var(--danger); font-size: 10px; }
+  #feedbackMeta { background: #f0f7ff; border: 1px solid #b6d7ff; border-radius: 7px;
+    padding: 9px 11px; line-height: 1.6; margin-bottom: 8px; }
+  #feedbackResult { min-height: 22px; margin-top: 12px; line-height: 1.6; }
+  #feedbackValidation { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 12px; }
+  #feedbackValidation.ready { color: var(--ok); font-weight: 600; }
+  #feedbackValidation.warn { color: var(--danger); }
+  .feedbackActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    background: #24292f; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 12px;
+    display: none; z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+</style>
+</head>
+<body>
+<header>
+  <img id="cityLogo" src="/city-logo" alt="" style="display:none" onload="this.style.display=''">
+  <h1 data-i18n="hub.header">🗺️ Building Data Editing Tools</h1>
+  <div class="who" id="who"></div>
+</header>
+<main>
+  <section id="welcome" hidden>
+    <h2 data-i18n="hub.welcome_title">🎉 Ready to go — what to do first</h2>
+    <p data-i18n="hub.welcome_body">In the "Tools" section below, first press the green "Launch" button of the Attribute Editor. The editing screen for viewing and fixing buildings opens in a new tab. You can leave this dashboard tab open.</p>
+    <button id="welcomeDismiss" data-i18n="hub.welcome_dismiss">Close this guide</button>
+  </section>
+  <div class="grid">
+    <div>
+      <section id="reviewEntry">
+        <h2 data-i18n="hub.admin_section">For maintainers</h2>
+        <div class="reviewRow">
+          <div class="reviewIcon">✅</div>
+          <div class="reviewMeta"><b data-i18n="hub.review_entry_title">Review change proposals per building</b>
+            <span data-i18n="hub.review_entry_desc">Approve after checking the history, before/after values, 3D view, and supporting documents.</span></div>
+          <a class="btnlink" href="/review.html"><button class="primary" data-i18n="hub.review_open">Open the review screen</button></a>
+        </div>
+      </section>
+      <section id="toolsSec">
+        <h2 data-i18n="hub.tools_section">Tools</h2>
+        <div id="tools"><div class="empty"><span class="spinner"></span> <span data-i18n="hub.loading">Loading…</span></div></div>
+      </section>
+      <section>
+        <h2 data-i18n="hub.account_section">Account / repository</h2>
+        <div class="statline" id="statlines"></div>
+        <div id="ghWarn"></div>
+      </section>
+    </div>
+    <div>
+      <section>
+        <h2 data-i18n="hub.badge_section">Achievement badge</h2>
+        <div id="badge"><div class="empty"><span class="spinner"></span> <span data-i18n="hub.loading">Loading…</span></div></div>
+      </section>
+      <section>
+        <h2><span data-i18n="hub.prs_section">My Pull Requests</span> <span class="act"><button id="refreshBtn" data-i18n="hub.refresh">Refresh</button></span></h2>
+        <div class="list" id="prs"><div class="empty">…</div></div>
+      </section>
+      <section>
+        <h2 data-i18n="hub.issues_section">My issues</h2>
+        <div class="list" id="issues"><div class="empty">…</div></div>
+      </section>
+    </div>
+  </div>
+  <section class="feedbackEntry">
+    <button id="feedbackOpen" data-i18n="hub.feedback_open">💬 Report a problem or make a suggestion (feedback form)</button>
+    <p data-i18n="hub.feedback_entry_desc">Send it to the maintainer from this screen, without opening GitHub.</p>
+  </section>
+</main>
+<div id="feedbackBack" role="dialog" aria-modal="true" aria-labelledby="feedbackHeading">
+  <div id="feedbackDialog">
+    <h2 id="feedbackHeading" data-i18n="hub.feedback_title">Send a problem or suggestion to the maintainer</h2>
+    <p class="lead" data-i18n="hub.feedback_lead">Fill in what you can. The hub's connection is used to create the issue, so you do not need to sign in to GitHub again.</p>
+    <div id="feedbackMeta"><span class="spinner"></span> <span data-i18n="hub.feedback_checking_author">Checking author information…</span></div>
+    <div id="feedbackForm">
+      <label for="feedbackTitle" data-i18n="hub.feedback_label_title">Subject (required)</label>
+      <input id="feedbackTitle" maxlength="120">
+      <label for="feedbackCategory" data-i18n="hub.feedback_label_category">Type (required)</label>
+      <select id="feedbackCategory"></select>
+      <label for="feedbackGoal" data-i18n="hub.feedback_label_goal">What were you trying to do? (required)</label>
+      <textarea id="feedbackGoal" maxlength="2000"></textarea>
+      <label for="feedbackProblem" data-i18n="hub.feedback_label_problem">Where did you get stuck, or what do you suggest? (required)</label>
+      <textarea id="feedbackProblem" class="tall" maxlength="4000" data-i18n-placeholder="hub.feedback_problem_placeholder" placeholder="e.g. Pressing the button gave a 404. I would like to send this from inside the hub."></textarea>
+      <details>
+        <summary data-i18n="hub.feedback_details_summary">Desired behavior, target building, environment, etc. (optional)</summary>
+        <label for="feedbackExpected" data-i18n="hub.feedback_label_expected">What would make it easier to use?</label>
+        <textarea id="feedbackExpected" maxlength="3000"></textarea>
+        <label for="feedbackBuilding" data-i18n="hub.feedback_label_building">Target building / mesh</label>
+        <input id="feedbackBuilding" maxlength="500" data-i18n-placeholder="hub.feedback_building_placeholder" placeholder="e.g. 13101-bldg-3728">
+        <label for="feedbackContext" data-i18n="hub.feedback_label_context">Environment</label>
+        <textarea id="feedbackContext" maxlength="1000"></textarea>
+        <label for="feedbackAdditional" data-i18n="hub.feedback_label_additional">Additional notes</label>
+        <textarea id="feedbackAdditional" maxlength="3000" data-i18n-placeholder="hub.feedback_additional_placeholder" placeholder="Enter only information that may be made public."></textarea>
+      </details>
+    </div>
+    <div id="feedbackValidation"></div>
+    <div id="feedbackResult"></div>
+    <div class="feedbackActions">
+      <button id="feedbackCancel" data-i18n="hub.feedback_cancel">Cancel</button>
+      <button data-i18n="hub.feedback_submit" id="feedbackSubmit" class="primary" disabled>Send</button>
+      <button id="feedbackDone" class="primary" style="display:none" data-i18n="hub.feedback_close">Close</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const hubQuery = new URLSearchParams(location.search);
+const firstSession = hubQuery.get('welcome') === '1';
+const adminPanelMode = (hubQuery.get('admin') || 'on').toLowerCase();
+const showAdminPanel = !['off', '0', 'false'].includes(adminPanelMode);
+$('reviewEntry').hidden = !showAdminPanel;
+let welcomeMode = firstSession;
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+  if (j.ok === false && j.error) throw new Error(j.error);
+  return j;
+}
+function ago(iso) {
+  if (!iso) return '';
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (d < 3600) return t('hub.ago_min', '{n} min ago', { n: Math.floor(d / 60) });
+  if (d < 86400) return t('hub.ago_hour', '{n} hr ago', { n: Math.floor(d / 3600) });
+  return t('hub.ago_day', '{n} days ago', { n: Math.floor(d / 86400) });
+}
+
+// ---- Status / account ----
+// GitHub connection uses the same device flow as setup (no gh CLI needed). While waiting
+// for approval, re-fetch the status every 2 seconds and load PRs / issues the moment it connects.
+let ghPollTimer = null, ghWasConnected = null, feedbackConnected = false;
+async function loadStatus() {
+  const s = await api('/api/status');
+  const g = s.github || {};
+  $('who').innerHTML = g.login
+    ? `GitHub: <b>@${esc(g.login)}</b><br>${esc(s.gitUser || '')}`
+    : `<b>${t('hub.gh_not_connected', 'GitHub not connected')}</b>`;
+  $('statlines').innerHTML =
+    `<div><span class="k">${t('hub.stat_repo', 'Repository')}</span>${esc(s.nwo || s.repo)}</div>` +
+    `<div><span class="k">${t('hub.stat_branch', 'Branch')}</span><code>${esc(s.branch)}</code></div>` +
+    `<div><span class="k">${t('hub.stat_git_user', 'git user')}</span>${esc(s.gitUser || t('hub.stat_unset', '(not set)'))} &lt;${esc(s.gitEmail || '')}&gt;</div>` +
+    `<div><span class="k">GitHub</span>${g.login ? `✅ ${t('hub.stat_connected_user', 'Connected (@{login})', { login: esc(g.login) })}` : t('hub.stat_disconnected', '⚠ Not connected')}</div>`;
+  renderGhWarn(g);
+  clearTimeout(ghPollTimer);
+  if (g.waiting) ghPollTimer = setTimeout(loadStatus, 2000);
+  if (g.login && ghWasConnected === false) loadContributions(true);
+  ghWasConnected = !!g.login;
+  return s;
+}
+
+function renderGhWarn(g) {
+  const el = $('ghWarn');
+  if (g.login) { el.innerHTML = ''; return; }
+  if (g.waiting) {
+    const link = `<a href="${esc(g.verifyUrl)}" target="_blank" rel="noopener">${esc(g.verifyUrl)}</a>`;
+    el.innerHTML = `<div class="warnbox">${t('hub.device_flow_open', 'In your browser, open {link} and enter this code:', { link })}<br>
+      <b style="font-size:22px;letter-spacing:3px">${esc(g.userCode)}</b><br>
+      <span class="spinner"></span> ${t('hub.device_flow_waiting', 'Waiting for approval… (continues automatically once approved)')}</div>`;
+    return;
+  }
+  if (!g.clientId) {
+    el.innerHTML = `<div class="warnbox">${t('hub.no_client_id',
+      'GitHub is not connected. This deployment has no connection setting (client_id). Developers can connect with {gh} or {env}.',
+      { gh: '<code>gh auth login</code>', env: '<code>CITYGML_OAUTH_CLIENT_ID</code>' })}</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="warnbox">${t('hub.gh_warn_lists', 'GitHub is not connected. The PR / issue lists and the badge require a connection.')}
+    ${g.error ? `<br>⚠ ${esc(g.error)}` : ''}<br>
+    <button id="ghConnect" class="primary" style="margin-top:6px">${t('hub.gh_connect', 'Connect to GitHub')}</button></div>`;
+  $('ghConnect').onclick = connectGithub;
+}
+
+async function connectGithub() {
+  const btn = $('ghConnect');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/auth/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    await loadStatus();
+  } catch (e) {
+    toast(t('hub.connect_error_prefix', 'Connection error: ') + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---- Tool launch ----
+async function loadTools() {
+  const r = await api('/api/tools');
+  const el = $('tools');
+  el.innerHTML = '';
+  for (const t of r.tools) {
+    const row = document.createElement('div');
+    row.className = 'tool' + (welcomeMode && t.key === 'attr_editor' ? ' recommended' : '');
+    row.innerHTML =
+      `<div class="ic">${t.icon}</div>` +
+      `<div class="meta"><div class="name">${esc(t.label)}${welcomeMode && t.key === 'attr_editor'
+        ? `<span class="first">${window.t('hub.first_here', 'Start here')}</span>` : ''}</div>` +
+      `<div class="d">${esc(t.desc)}</div></div>` +
+      `<span class="st"><span class="dot ${t.running ? 'on' : ''}"></span>${t.running ? window.t('hub.tool_running', 'Running') : window.t('hub.tool_stopped', 'Stopped')}</span>`;
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    // If running, allow opening (even when "not installed", e.g. source-tree launch)
+    btn.textContent = t.running ? window.t('hub.tool_open', 'Open')
+      : (t.available ? window.t('hub.tool_launch', 'Launch') : window.t('hub.tool_missing', 'Not installed'));
+    btn.disabled = !t.available && !t.running;
+    btn.onclick = () => launch(t, btn);
+    row.appendChild(btn);
+    el.appendChild(row);
+  }
+}
+
+async function launch(t, btn) {
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await api('/api/launch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: t.key }),
+    });
+    const targetUrl = firstSession && t.key === 'attr_editor' ? `${r.url}?welcome=1` : r.url;
+    window.open(targetUrl, '_blank', 'noopener');
+    toast(r.already
+      ? window.t('hub.launch_opened', 'Opened {label} ({url})', { label: t.label, url: r.url })
+      : window.t('hub.launch_started', 'Started {label} ({url})', { label: t.label, url: r.url }));
+    setTimeout(loadTools, 500);
+  } catch (e) {
+    toast(window.t('hub.launch_error_prefix', 'Launch error: ') + e.message);
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+// ---- Contributions (badge / PRs / issues) ----
+function statePill(state, draft) {
+  if (draft) return '<span class="pill draft">' + t('hub.state_draft', 'Draft') + '</span>';
+  const s = String(state).toLowerCase();
+  const label = { open: t('hub.state_open', 'Open'), closed: t('hub.state_closed', 'Closed'), merged: t('hub.state_merged', 'Merged') }[s] || state;
+  return `<span class="pill ${s}">${label}</span>`;
+}
+function rows(items, kind) {
+  if (!items.length) return '<div class="empty">' + t('hub.list_empty', 'Nothing yet') + '</div>';
+  return items.map(it => {
+    const reply = it.reacted
+      ? `<span class="reply yes" title="${kind === 'pr' ? t('hub.reply_review_title', 'Has a review') : t('hub.reply_comment_title', 'Has a comment')}">${t('hub.reply_yes', '● Response')}</span>`
+      : `<span class="reply no">—</span>`;
+    const retry = kind === 'pr' && it.retry?.available
+      ? `<button type="button" class="retryCi" data-retry="${it.number}" title="${esc(it.retry.reason)}">${t('hub.retry_ci', 'Re-run automated checks')}</button>`
+      : kind === 'pr' && ['update','fix','pending'].includes(it.retry?.kind)
+        ? `<span class="retryHint" title="${esc(it.retry.reason)}">${esc(it.retry.label)}</span>` : '';
+    return `<div class="row"><span class="num">#${it.number}</span>` +
+      `<span class="ttl"><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a></span>` +
+      `${reply}${retry}${statePill(it.state, it.draft)}<span class="muted">${ago(it.updated)}</span></div>`;
+  }).join('');
+}
+async function retryCi(number, btn) {
+  if (!confirm(t('hub.retry_confirm', 'This re-runs the automated checks only; no data is changed. Continue?'))) return;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> ' + t('hub.retry_requesting', 'Requesting');
+  try {
+    const result = await api(`/api/reviews/${number}/retry`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    btn.textContent = t('hub.retry_accepted', 'Re-check requested');
+    toast(result.message || t('hub.retry_accepted_toast', 'The re-check was accepted'));
+    setTimeout(() => loadContributions(true), 2500);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = t('hub.retry_ci', 'Re-run automated checks');
+    toast(t('hub.retry_failed_prefix', 'Could not re-run the checks: ') + e.message);
+  }
+}
+async function loadContributions(force) {
+  try {
+    const r = force
+      ? await api('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      : await api('/api/contributions');
+    if (!r.ok || r.login === null) {
+      const msg = `<div class="empty">${esc(r.reason || t('hub.gh_not_connected_hint', 'GitHub is not connected (use "Connect to GitHub" in the account section)'))}</div>`;
+      $('badge').innerHTML = msg; $('prs').innerHTML = msg; $('issues').innerHTML = msg;
+      return;
+    }
+    const b = r.badge;
+    let sub = '';
+    if (b.next) {
+      const need = b.next.at - b.merged;
+      sub = t('hub.badge_next', '{n} more to rank up → {next}',
+        { n: `<b>${need}</b>`, next: `${b.next.emoji} ${esc(b.next.name)}` });
+    } else {
+      sub = t('hub.badge_top_rank', 'You have reached the highest rank');
+    }
+    const pct = b.next && b.next.at > 0 ? Math.min(100, Math.round(b.merged / b.next.at * 100)) : 100;
+    $('badge').innerHTML =
+      `<div class="badge"><div class="emoji">${b.emoji}</div>` +
+      `<div class="name">${esc(b.name)}</div><div class="sub">${sub}</div></div>` +
+      `<div class="bar"><i style="width:${pct}%"></i></div>` +
+      `<div class="counts">` +
+      `<div class="c"><b>${r.merged}</b><span>${t('hub.count_merged', 'Merged PRs')}</span></div>` +
+      `<div class="c"><b>${r.prs.length}</b><span>${t('hub.count_prs', 'Total PRs')}</span></div>` +
+      `<div class="c"><b>${r.issues.length}</b><span>${t('hub.count_issues', 'Total issues')}</span></div></div>`;
+    $('prs').innerHTML = rows(r.prs, 'pr');
+    $('issues').innerHTML = rows(r.issues, 'issue');
+    document.querySelectorAll('[data-retry]').forEach(btn => {
+      btn.onclick = () => retryCi(Number(btn.dataset.retry), btn);
+    });
+  } catch (e) {
+    const msg = `<div class="empty">${t('hub.contrib_error', 'Could not fetch this information. The tools remain fully usable.')}<br>
+      ${t('hub.contrib_error_hint', 'Check your internet connection and press "Refresh" above.')}</div>`;
+    $('badge').innerHTML = msg; $('prs').innerHTML = msg; $('issues').innerHTML = msg;
+  }
+}
+
+$('refreshBtn').onclick = () => {
+  $('prs').innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  loadContributions(true);
+};
+
+// ---- In-hub feedback form ----
+function feedbackReady() {
+  const required = [
+    ['feedbackTitle', t('hub.feedback_field_title', 'subject')],
+    ['feedbackCategory', t('hub.feedback_field_category', 'type')],
+    ['feedbackGoal', t('hub.feedback_field_goal', 'what you were trying to do')],
+    ['feedbackProblem', t('hub.feedback_field_problem', 'problem / suggestion')],
+  ];
+  const missing = required.filter(([id]) => !$(id).value.trim()).map(([, label]) => label);
+  const ready = feedbackConnected && missing.length === 0;
+  $('feedbackSubmit').disabled = !ready;
+  const note = $('feedbackValidation');
+  if (!feedbackConnected) {
+    note.className = 'warn';
+    note.textContent = t('hub.feedback_need_github', 'To send, connect to GitHub first.');
+  } else if (missing.length) {
+    note.className = '';
+    note.textContent = t('hub.feedback_missing_prefix', 'Missing required fields: ') + missing.join(t('hub.list_sep', ', '));
+  } else {
+    note.className = 'ready';
+    note.textContent = t('hub.feedback_ready_note', 'All required fields are filled in. Ready to send.');
+  }
+}
+function closeFeedback() {
+  $('feedbackBack').style.display = 'none';
+}
+async function openFeedback() {
+  $('feedbackBack').style.display = 'flex';
+  $('feedbackForm').style.display = '';
+  $('feedbackCancel').style.display = '';
+  $('feedbackSubmit').style.display = '';
+  $('feedbackDone').style.display = 'none';
+  $('feedbackResult').innerHTML = '';
+  $('feedbackValidation').textContent = '';
+  $('feedbackMeta').innerHTML = '<span class="spinner"></span> ' + t('hub.feedback_checking_author', 'Checking author information…');
+  feedbackConnected = false;
+  $('feedbackSubmit').disabled = true;
+  try {
+    const d = await api('/api/feedback');
+    feedbackConnected = !!d.connected;
+    $('feedbackTitle').value = d.title || t('hub.feedback_default_title', '[UX] Problem / suggestion');
+    const category = $('feedbackCategory'); category.innerHTML = '';
+    for (const name of d.categories || []) category.add(new Option(name, name));
+    category.value = d.category || '';
+    $('feedbackGoal').value = d.goal || '';
+    $('feedbackProblem').value = '';
+    $('feedbackExpected').value = '';
+    $('feedbackBuilding').value = hubQuery.get('building') || '';
+    const platform = navigator.userAgentData?.platform || navigator.platform || t('hub.os_unknown', 'Unknown OS');
+    $('feedbackContext').value = `${d.context || t('hub.feedback_context_hub', 'Integrated hub')} / ${platform} / ${navigator.userAgent}`;
+    $('feedbackAdditional').value = '';
+    if (d.connected) {
+      const b = d.badge;
+      const badge = b ? `${b.emoji} ${esc(b.name)}${t('hub.merged_prs', ' (merged PRs: {n})', { n: d.merged })}` : t('hub.feedback_badge_missing', 'Could not fetch the achievement badge');
+      $('feedbackMeta').innerHTML = `${t('hub.feedback_author_label', 'Author')} <b>@${esc(d.login)}</b><br>${t('hub.feedback_ref_label', 'Reference for the maintainer: ')}${badge}`;
+    } else {
+      $('feedbackMeta').innerHTML = '<b>' + t('hub.feedback_not_connected', 'GitHub is not connected.') + '</b><br>' + t('hub.feedback_connect_first', 'First connect to GitHub from the "Account / repository" section.');
+    }
+    feedbackReady();
+    $('feedbackProblem').focus();
+  } catch (e) {
+    $('feedbackMeta').textContent = t('hub.feedback_author_error', 'Could not fetch author information.');
+    $('feedbackResult').textContent = t('hub.feedback_prepare_error_prefix', 'Could not prepare the form: ') + e.message;
+  }
+}
+async function submitFeedbackIssue() {
+  if ($('feedbackSubmit').disabled) return;
+  const btn = $('feedbackSubmit'); btn.disabled = true;
+  $('feedbackResult').innerHTML = '<span class="spinner"></span> ' + t('hub.feedback_sending', 'Sending…');
+  try {
+    const r = await api('/api/feedback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: $('feedbackTitle').value,
+        category: $('feedbackCategory').value,
+        goal: $('feedbackGoal').value,
+        problem: $('feedbackProblem').value,
+        expected: $('feedbackExpected').value,
+        building: $('feedbackBuilding').value,
+        context: $('feedbackContext').value,
+        additional: $('feedbackAdditional').value,
+      }),
+    });
+    $('feedbackForm').style.display = 'none';
+    $('feedbackCancel').style.display = 'none';
+    $('feedbackSubmit').style.display = 'none';
+    $('feedbackDone').style.display = '';
+    const link = r.url ? `<br><a href="${esc(r.url)}" target="_blank" rel="noopener">${t('hub.feedback_record_link', 'Open the full record of your submission ↗')}</a>` : '';
+    $('feedbackResult').innerHTML = `<b>${t('hub.feedback_sent', '✅ Sent to the maintainer.')}</b><br>${t('hub.feedback_receipt_line', 'Ticket #{n} "{title}"', { n: r.number, title: esc(r.title) })}${link}`;
+    $('feedbackDone').focus();
+    loadContributions(true);
+  } catch (e) {
+    $('feedbackResult').textContent = t('hub.feedback_send_error_prefix', 'Could not send: ') + e.message;
+    feedbackReady();
+  }
+}
+for (const id of ['feedbackTitle', 'feedbackGoal', 'feedbackProblem']) $(id).addEventListener('input', feedbackReady);
+$('feedbackCategory').addEventListener('change', feedbackReady);
+$('feedbackOpen').onclick = openFeedback;
+$('feedbackCancel').onclick = closeFeedback;
+$('feedbackDone').onclick = closeFeedback;
+$('feedbackSubmit').onclick = submitFeedbackIssue;
+$('feedbackBack').onclick = e => { if (e.target === $('feedbackBack')) closeFeedback(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('feedbackBack').style.display === 'flex') closeFeedback(); });
+
+function showWelcome() {
+  const el = $('welcome');
+  if (!welcomeMode) return;
+  el.hidden = false;
+  $('welcomeDismiss').onclick = () => {
+    welcomeMode = false;
+    el.hidden = true;
+    hubQuery.delete('welcome');
+    const queryString = hubQuery.toString();
+    history.replaceState(
+      {}, '', location.pathname + (queryString ? `?${queryString}` : '') + location.hash);
+    loadTools();
+  };
+}
+
+async function init() {
+  showWelcome();
+  const statusTask = loadStatus().catch(e => {
+    $('who').innerHTML = '<b>' + t('hub.status_error', 'Cannot check the connection status') + '</b>';
+    $('statlines').innerHTML = '<div class="warnbox">' + t('hub.status_error_hint', 'Check your internet connection. The tools remain fully usable.') + '</div>';
+  });
+  const toolsTask = loadTools().catch(e => {
+    $('tools').innerHTML = '<div class="empty">' + t('hub.tools_error', 'Could not load the tools.') + '<br><button onclick="loadTools()">' + t('hub.tools_reload', 'Reload') + '</button></div>';
+  });
+  await Promise.all([statusTask, toolsTask, loadContributions(false)]);
+}
+init();
+</script>
+</body>
+</html>

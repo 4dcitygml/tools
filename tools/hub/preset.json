@@ -1,0 +1,4 @@
+{
+  "_comment": "Default values at distribution time. oauthClientId is the GitHub OAuth App Client ID (public info in device flow; client_secret not used). Set oauthClientId after creating the Organization.",
+  "oauthClientId": "Ov23liAvXHHTqKEk5cdw"
+}

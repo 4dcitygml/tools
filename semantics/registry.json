@@ -1,0 +1,883 @@
+{
+ "schemaVersion": 1,
+ "description": "Semantic attribute registry: edition-independent keys for building attributes and their concrete paths per i-UR edition. Paths use element local names (no prefixes) as produced by analyze_yearly_citygml_mesh.extract_attributes; an absent edition means the attribute does not exist in that edition's vocabulary.",
+ "editions": {
+  "iur-2.0": {
+   "uro": "https://www.geospatial.jp/iur/uro/2.0",
+   "citygml": "2.0",
+   "xsd": "schemas/www.geospatial.jp/iur/uro/2.0/urbanObject.xsd",
+   "plateau_years": [
+    "2020",
+    "2021"
+   ]
+  },
+  "iur-3.0": {
+   "uro": "https://www.geospatial.jp/iur/uro/3.0",
+   "citygml": "2.0",
+   "xsd": "schemas/www.geospatial.jp/iur/uro/3.0/urbanObject.xsd",
+   "plateau_years": [
+    "2022",
+    "2023"
+   ]
+  },
+  "iur-3.1": {
+   "uro": "https://www.geospatial.jp/iur/uro/3.1",
+   "citygml": "2.0",
+   "xsd": "schemas/www.geospatial.jp/iur/uro/3.1/urbanObject.xsd",
+   "plateau_years": [
+    "2023",
+    "2024"
+   ]
+  },
+  "iur-3.2": {
+   "uro": "https://www.geospatial.jp/iur/uro/3.2",
+   "citygml": "2.0",
+   "xsd": "schemas/www.geospatial.jp/iur/uro/3.2/urbanObject.xsd",
+   "plateau_years": [
+    "2024",
+    "2025"
+   ]
+  }
+ },
+ "core_segments": [
+  "class",
+  "usage",
+  "storeysAboveGround",
+  "storeysBelowGround",
+  "measuredHeight",
+  "yearOfConstruction",
+  "creationDate",
+  "address",
+  "Address",
+  "xalAddress",
+  "AddressDetails",
+  "Country",
+  "CountryName",
+  "Locality",
+  "LocalityName",
+  "DependentLocality",
+  "DependentLocalityName",
+  "stringAttribute[@name]",
+  "value"
+ ],
+ "attributes": {
+  "building.id": {
+   "family": "source_identity",
+   "label": {
+    "en": "Building ID",
+    "ja": "建物ID"
+   },
+   "paths": {
+    "iur-2.0": "/buildingIDAttribute/BuildingIDAttribute/buildingID",
+    "iur-3.0": "/buildingIDAttribute/BuildingIDAttribute/buildingID",
+    "iur-3.1": "/buildingIDAttribute/BuildingIDAttribute/buildingID",
+    "iur-3.2": "/buildingIDAttribute/BuildingIDAttribute/buildingID"
+   },
+   "role": "stable_id"
+  },
+  "building.branchID": {
+   "family": "source_identity",
+   "label": {
+    "en": "Branch ID",
+    "ja": "枝番"
+   },
+   "paths": {
+    "iur-2.0": "/buildingIDAttribute/BuildingIDAttribute/branchID",
+    "iur-3.0": "/buildingIDAttribute/BuildingIDAttribute/branchID",
+    "iur-3.1": "/buildingIDAttribute/BuildingIDAttribute/branchID",
+    "iur-3.2": "/buildingIDAttribute/BuildingIDAttribute/branchID"
+   }
+  },
+  "building.partID": {
+   "family": "source_identity",
+   "label": {
+    "en": "Part ID",
+    "ja": "部分ID"
+   },
+   "paths": {
+    "iur-2.0": "/buildingIDAttribute/BuildingIDAttribute/partID",
+    "iur-3.0": "/buildingIDAttribute/BuildingIDAttribute/partID",
+    "iur-3.1": "/buildingIDAttribute/BuildingIDAttribute/partID",
+    "iur-3.2": "/buildingIDAttribute/BuildingIDAttribute/partID"
+   }
+  },
+  "building.prefecture": {
+   "family": "source_identity",
+   "label": {
+    "en": "Prefecture code",
+    "ja": "都道府県コード"
+   },
+   "paths": {
+    "iur-2.0": "/buildingIDAttribute/BuildingIDAttribute/prefecture",
+    "iur-3.0": "/buildingIDAttribute/BuildingIDAttribute/prefecture",
+    "iur-3.1": "/buildingIDAttribute/BuildingIDAttribute/prefecture",
+    "iur-3.2": "/buildingIDAttribute/BuildingIDAttribute/prefecture"
+   },
+   "codelist": "Common_prefecture"
+  },
+  "building.city": {
+   "family": "source_identity",
+   "label": {
+    "en": "Municipality code",
+    "ja": "市区町村コード"
+   },
+   "paths": {
+    "iur-2.0": "/buildingIDAttribute/BuildingIDAttribute/city",
+    "iur-3.0": "/buildingIDAttribute/BuildingIDAttribute/city",
+    "iur-3.1": "/buildingIDAttribute/BuildingIDAttribute/city",
+    "iur-3.2": "/buildingIDAttribute/BuildingIDAttribute/city"
+   },
+   "codelist": "Common_localPublicAuthorities"
+  },
+  "building.class": {
+   "family": "usage_class_landuse",
+   "label": {
+    "en": "Class",
+    "ja": "建物区分"
+   },
+   "paths": {
+    "iur-2.0": "/class",
+    "iur-3.0": "/class",
+    "iur-3.1": "/class",
+    "iur-3.2": "/class"
+   },
+   "codelist": "Building_class"
+  },
+  "building.usage": {
+   "family": "usage_class_landuse",
+   "label": {
+    "en": "Usage",
+    "ja": "用途"
+   },
+   "paths": {
+    "iur-2.0": "/usage",
+    "iur-3.0": "/usage",
+    "iur-3.1": "/usage",
+    "iur-3.2": "/usage"
+   },
+   "codelist": "Building_usage"
+  },
+  "building.storeysAboveGround": {
+   "family": "storeys",
+   "label": {
+    "en": "Storeys above ground",
+    "ja": "地上階数"
+   },
+   "paths": {
+    "iur-2.0": "/storeysAboveGround",
+    "iur-3.0": "/storeysAboveGround",
+    "iur-3.1": "/storeysAboveGround",
+    "iur-3.2": "/storeysAboveGround"
+   },
+   "value_type": "integer"
+  },
+  "building.storeysBelowGround": {
+   "family": "storeys",
+   "label": {
+    "en": "Storeys below ground",
+    "ja": "地下階数"
+   },
+   "paths": {
+    "iur-2.0": "/storeysBelowGround",
+    "iur-3.0": "/storeysBelowGround",
+    "iur-3.1": "/storeysBelowGround",
+    "iur-3.2": "/storeysBelowGround"
+   },
+   "value_type": "integer"
+  },
+  "building.measuredHeight": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Measured height",
+    "ja": "計測高さ"
+   },
+   "paths": {
+    "iur-2.0": "/measuredHeight",
+    "iur-3.0": "/measuredHeight",
+    "iur-3.1": "/measuredHeight",
+    "iur-3.2": "/measuredHeight"
+   },
+   "value_type": "length"
+  },
+  "building.yearOfConstruction": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Year of construction",
+    "ja": "建築年"
+   },
+   "paths": {
+    "iur-2.0": "/yearOfConstruction",
+    "iur-3.0": "/yearOfConstruction",
+    "iur-3.1": "/yearOfConstruction",
+    "iur-3.2": "/yearOfConstruction"
+   },
+   "value_type": "year"
+  },
+  "building.creationDate": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Creation date",
+    "ja": "作成日"
+   },
+   "paths": {
+    "iur-2.0": "/creationDate",
+    "iur-3.0": "/creationDate",
+    "iur-3.1": "/creationDate",
+    "iur-3.2": "/creationDate"
+   },
+   "value_type": "date"
+  },
+  "detail.areaClassificationType": {
+   "family": "planning_zoning_rates",
+   "label": {
+    "en": "Area classification",
+    "ja": "区域区分"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/areaClassificationType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/areaClassificationType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/areaClassificationType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/areaClassificationType"
+   },
+   "codelist": "Common_areaClassificationType"
+  },
+  "detail.districtsAndZonesType": {
+   "family": "planning_zoning_rates",
+   "label": {
+    "en": "Districts and zones",
+    "ja": "地域地区"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/districtsAndZonesType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/districtsAndZonesType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/districtsAndZonesType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/districtsAndZonesType"
+   },
+   "codelist": "Common_districtsAndZonesType"
+  },
+  "detail.urbanPlanType": {
+   "family": "planning_zoning_rates",
+   "label": {
+    "en": "Urban plan type",
+    "ja": "都市計画区分"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/urbanPlanType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/urbanPlanType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/urbanPlanType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/urbanPlanType"
+   },
+   "codelist": "Common_urbanPlanType"
+  },
+  "detail.specifiedBuildingCoverageRate": {
+   "family": "planning_zoning_rates",
+   "label": {
+    "en": "Specified building coverage rate",
+    "ja": "指定建蔽率"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedBuildingCoverageRate",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedBuildingCoverageRate",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedBuildingCoverageRate",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedBuildingCoverageRate"
+   },
+   "value_type": "ratio"
+  },
+  "detail.specifiedFloorAreaRate": {
+   "family": "planning_zoning_rates",
+   "label": {
+    "en": "Specified floor area rate",
+    "ja": "指定容積率"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedFloorAreaRate",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedFloorAreaRate",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedFloorAreaRate",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/specifiedFloorAreaRate"
+   },
+   "value_type": "ratio"
+  },
+  "detail.detailedUsage": {
+   "family": "usage_class_landuse",
+   "label": {
+    "en": "Detailed usage",
+    "ja": "詳細用途"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/detailedUsage",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/detailedUsage",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/detailedUsage",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/detailedUsage"
+   },
+   "codelist": "BuildingDetailAttribute_detailedUsage"
+  },
+  "detail.landUseType": {
+   "family": "usage_class_landuse",
+   "label": {
+    "en": "Land use type",
+    "ja": "土地利用"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/landUseType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/landUseType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/landUseType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/landUseType"
+   },
+   "codelist": "Common_landUseType"
+  },
+  "detail.buildingRoofEdgeArea": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Roof edge area",
+    "ja": "屋根外周面積"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingRoofEdgeArea",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingRoofEdgeArea",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/buildingRoofEdgeArea",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/buildingRoofEdgeArea"
+   },
+   "value_type": "area"
+  },
+  "detail.buildingFootprintArea": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Footprint area",
+    "ja": "建築面積"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingFootprintArea",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingFootprintArea",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/buildingFootprintArea",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/buildingFootprintArea"
+   },
+   "value_type": "area"
+  },
+  "detail.totalFloorArea": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Total floor area",
+    "ja": "延床面積"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/totalFloorArea",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/totalFloorArea",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/totalFloorArea",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/totalFloorArea"
+   },
+   "value_type": "area"
+  },
+  "detail.fireproofStructureType": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Fireproof structure",
+    "ja": "耐火構造種別"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/fireproofStructureType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/fireproofStructureType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/fireproofStructureType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/fireproofStructureType"
+   },
+   "codelist": "BuildingDetailAttribute_fireproofStructureType"
+  },
+  "detail.buildingStructureType": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Building structure",
+    "ja": "構造種別"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingStructureType",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/buildingStructureType",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/buildingStructureType",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/buildingStructureType"
+   },
+   "codelist": "BuildingDetailAttribute_buildingStructureType"
+  },
+  "detail.surveyYear": {
+   "family": "survey_building_detail",
+   "label": {
+    "en": "Survey year",
+    "ja": "調査年"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDetailAttribute/BuildingDetailAttribute/surveyYear",
+    "iur-3.0": "/buildingDetailAttribute/BuildingDetailAttribute/surveyYear",
+    "iur-3.1": "/buildingDetailAttribute/BuildingDetailAttribute/surveyYear",
+    "iur-3.2": "/buildingDetailAttribute/BuildingDetailAttribute/surveyYear"
+   },
+   "value_type": "year"
+  },
+  "quality.lod1HeightType": {
+   "family": "lod_quality",
+   "label": {
+    "en": "LoD1 height type",
+    "ja": "LoD1高さ種別"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/lod1HeightType",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/lod1HeightType",
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/lod1HeightType",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/lod1HeightType"
+   },
+   "codelist": "DataQualityAttribute_lod1HeightType"
+  },
+  "quality.lodType": {
+   "family": "lod_quality",
+   "label": {
+    "en": "LoD type",
+    "ja": "LoD種別"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/lodType",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/lodType",
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/lodType",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/lodType"
+   },
+   "codelist": "Building_lodType"
+  },
+  "quality.thematicSrcDesc": {
+   "family": "source_quality",
+   "label": {
+    "en": "Thematic source",
+    "ja": "主題出典"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/thematicSrcDesc",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/thematicSrcDesc",
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/thematicSrcDesc",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/thematicSrcDesc"
+   },
+   "codelist": "DataQualityAttribute_thematicSrcDesc"
+  },
+  "quality.geometrySrcDesc": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source (all LoDs)",
+    "ja": "幾何出典（LoD共通）"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/geometrySrcDesc",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/geometrySrcDesc"
+   },
+   "successors": [
+    "quality.geometrySrcDesc.lod0",
+    "quality.geometrySrcDesc.lod1",
+    "quality.geometrySrcDesc.lod2",
+    "quality.geometrySrcDesc.lod3",
+    "quality.geometrySrcDesc.lod4"
+   ],
+   "notes": "Split per LoD from i-UR 3.1; carry-forward assigns the single value to each LoD present.",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.geometrySrcDesc.lod0": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source LoD0",
+    "ja": "幾何出典 LoD0"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod0",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod0"
+   },
+   "predecessor": "quality.geometrySrcDesc",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.geometrySrcDesc.lod1": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source LoD1",
+    "ja": "幾何出典 LoD1"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod1",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod1"
+   },
+   "predecessor": "quality.geometrySrcDesc",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.geometrySrcDesc.lod2": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source LoD2",
+    "ja": "幾何出典 LoD2"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod2",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod2"
+   },
+   "predecessor": "quality.geometrySrcDesc",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.geometrySrcDesc.lod3": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source LoD3",
+    "ja": "幾何出典 LoD3"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod3",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod3"
+   },
+   "predecessor": "quality.geometrySrcDesc",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.geometrySrcDesc.lod4": {
+   "family": "source_quality",
+   "label": {
+    "en": "Geometry source LoD4",
+    "ja": "幾何出典 LoD4"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod4",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/geometrySrcDescLod4"
+   },
+   "predecessor": "quality.geometrySrcDesc",
+   "codelist": "DataQualityAttribute_geometrySrcDesc"
+  },
+  "quality.appearanceSrcDesc": {
+   "family": "source_quality",
+   "label": {
+    "en": "Appearance source (all LoDs)",
+    "ja": "外観出典（LoD共通）"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/appearanceSrcDesc",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/appearanceSrcDesc"
+   },
+   "successors": [
+    "quality.appearanceSrcDesc.lod2",
+    "quality.appearanceSrcDesc.lod3",
+    "quality.appearanceSrcDesc.lod4"
+   ],
+   "codelist": "DataQualityAttribute_appearanceSrcDesc"
+  },
+  "quality.appearanceSrcDesc.lod2": {
+   "family": "source_quality",
+   "label": {
+    "en": "Appearance source LoD2",
+    "ja": "外観出典 LoD2"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod2",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod2"
+   },
+   "predecessor": "quality.appearanceSrcDesc",
+   "codelist": "DataQualityAttribute_appearanceSrcDesc"
+  },
+  "quality.appearanceSrcDesc.lod3": {
+   "family": "source_quality",
+   "label": {
+    "en": "Appearance source LoD3",
+    "ja": "外観出典 LoD3"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod3",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod3"
+   },
+   "predecessor": "quality.appearanceSrcDesc",
+   "codelist": "DataQualityAttribute_appearanceSrcDesc"
+  },
+  "quality.appearanceSrcDesc.lod4": {
+   "family": "source_quality",
+   "label": {
+    "en": "Appearance source LoD4",
+    "ja": "外観出典 LoD4"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod4",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/appearanceSrcDescLod4"
+   },
+   "predecessor": "quality.appearanceSrcDesc",
+   "codelist": "DataQualityAttribute_appearanceSrcDesc"
+  },
+  "quality.srcScale": {
+   "family": "source_quality",
+   "label": {
+    "en": "Source scale",
+    "ja": "出典縮尺"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/srcScale",
+    "iur-3.0": "/buildingDataQualityAttribute/BuildingDataQualityAttribute/srcScale"
+   },
+   "successors": [
+    "quality.publicSurvey.srcScale.lod0",
+    "quality.publicSurvey.srcScale.lod1",
+    "quality.publicSurvey.srcScale.lod2"
+   ],
+   "codelist": "DataQualityAttribute_srcScale"
+  },
+  "quality.publicSurvey.srcDesc.lod0": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey source LoD0",
+    "ja": "公共測量出典 LoD0"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod0",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod0"
+   },
+   "codelist": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc"
+  },
+  "quality.publicSurvey.srcScale.lod0": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey scale LoD0",
+    "ja": "公共測量縮尺 LoD0"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod0",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod0"
+   },
+   "predecessor": "quality.srcScale",
+   "codelist": "PublicSurveyDataQualityAttribute_srcScale"
+  },
+  "quality.publicSurvey.srcDesc.lod1": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey source LoD1",
+    "ja": "公共測量出典 LoD1"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod1",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod1"
+   },
+   "codelist": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc"
+  },
+  "quality.publicSurvey.srcScale.lod1": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey scale LoD1",
+    "ja": "公共測量縮尺 LoD1"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod1",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod1"
+   },
+   "predecessor": "quality.srcScale",
+   "codelist": "PublicSurveyDataQualityAttribute_srcScale"
+  },
+  "quality.publicSurvey.srcDesc.lod2": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey source LoD2",
+    "ja": "公共測量出典 LoD2"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod2",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/publicSurveySrcDescLod2"
+   },
+   "codelist": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc"
+  },
+  "quality.publicSurvey.srcScale.lod2": {
+   "family": "source_quality",
+   "label": {
+    "en": "Public survey scale LoD2",
+    "ja": "公共測量縮尺 LoD2"
+   },
+   "paths": {
+    "iur-3.1": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod2",
+    "iur-3.2": "/bldgDataQualityAttribute/DataQualityAttribute/publicSurveyDataQualityAttribute/PublicSurveyDataQualityAttribute/srcScaleLod2"
+   },
+   "predecessor": "quality.srcScale",
+   "codelist": "PublicSurveyDataQualityAttribute_srcScale"
+  },
+  "risk.river.adminType": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: administrator",
+    "ja": "洪水: 管理主体"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/adminType",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/adminType",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/adminType",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/adminType"
+   },
+   "codelist": "RiverFloodingRiskAttribute_adminType"
+  },
+  "risk.river.depth": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: depth",
+    "ja": "洪水: 浸水深"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/depth",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/depth",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/depth",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/depth"
+   },
+   "value_type": "length"
+  },
+  "risk.river.description": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: description",
+    "ja": "洪水: 説明"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/description",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/description",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/description",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/description"
+   }
+  },
+  "risk.river.rank": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: rank",
+    "ja": "洪水: ランク"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/rank",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/rank",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/rank",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/rank"
+   },
+   "aliases": {
+    "iur-2.0": [
+     "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/rankOrg"
+    ]
+   },
+   "notes": "Early i-UR 2.0 datasets carry rankOrg; the revised 2.0 schema and later editions use rank.",
+   "codelist": "RiverFloodingRiskAttribute_rank"
+  },
+  "risk.river.scale": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: scale",
+    "ja": "洪水: 規模"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/scale",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/scale",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/scale",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/scale"
+   },
+   "codelist": "RiverFloodingRiskAttribute_scale"
+  },
+  "risk.river.duration": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "River flooding: duration",
+    "ja": "洪水: 継続時間"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/duration",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/duration",
+    "iur-3.1": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/duration",
+    "iur-3.2": "/bldgDisasterRiskAttribute/RiverFloodingRiskAttribute/duration"
+   }
+  },
+  "risk.landslide.areaType": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "Landslide: area type",
+    "ja": "土砂災害: 区域種別"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingLandSlideRiskAttribute/areaType",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingLandSlideRiskAttribute/areaType",
+    "iur-3.1": "/bldgDisasterRiskAttribute/LandSlideRiskAttribute/areaType",
+    "iur-3.2": "/bldgDisasterRiskAttribute/LandSlideRiskAttribute/areaType"
+   },
+   "codelist": "LandSlideRiskAttribute_areaType"
+  },
+  "risk.landslide.description": {
+   "family": "disaster_risk",
+   "label": {
+    "en": "Landslide: description",
+    "ja": "土砂災害: 説明"
+   },
+   "paths": {
+    "iur-2.0": "/buildingDisasterRiskAttribute/BuildingLandSlideRiskAttribute/description",
+    "iur-3.0": "/buildingDisasterRiskAttribute/BuildingLandSlideRiskAttribute/description",
+    "iur-3.1": "/bldgDisasterRiskAttribute/LandSlideRiskAttribute/description",
+    "iur-3.2": "/bldgDisasterRiskAttribute/LandSlideRiskAttribute/description"
+   }
+  },
+  "generic.keyValue.key": {
+   "family": "generic_attributes",
+   "label": {
+    "en": "Key-value: key",
+    "ja": "キー値: キー"
+   },
+   "paths": {
+    "iur-2.0": "/keyValuePairAttribute/KeyValuePairAttribute/key",
+    "iur-3.0": "/keyValuePairAttribute/KeyValuePairAttribute/key",
+    "iur-3.1": "/bldgKeyValuePairAttribute/KeyValuePairAttribute/key",
+    "iur-3.2": "/bldgKeyValuePairAttribute/KeyValuePairAttribute/key"
+   },
+   "codelist": "KeyValuePairAttribute_key"
+  },
+  "generic.keyValue.codeValue": {
+   "family": "generic_attributes",
+   "label": {
+    "en": "Key-value: code value",
+    "ja": "キー値: コード値"
+   },
+   "paths": {
+    "iur-2.0": "/keyValuePairAttribute/KeyValuePairAttribute/codeValue",
+    "iur-3.0": "/keyValuePairAttribute/KeyValuePairAttribute/codeValue",
+    "iur-3.1": "/bldgKeyValuePairAttribute/KeyValuePairAttribute/codeValue",
+    "iur-3.2": "/bldgKeyValuePairAttribute/KeyValuePairAttribute/codeValue"
+   }
+  },
+  "generic.string": {
+   "family": "generic_attributes",
+   "label": {
+    "en": "Generic string attribute (by name)",
+    "ja": "汎用文字列属性（名前別）"
+   },
+   "paths": {
+    "iur-2.0": "/stringAttribute[@name]/value",
+    "iur-3.0": "/stringAttribute[@name]/value",
+    "iur-3.1": "/stringAttribute[@name]/value",
+    "iur-3.2": "/stringAttribute[@name]/value"
+   },
+   "notes": "CityGML generics; the [@name] marker stands for the attribute's name."
+  },
+  "address.country": {
+   "family": "address",
+   "label": {
+    "en": "Country",
+    "ja": "国"
+   },
+   "paths": {
+    "iur-2.0": "/address/Address/xalAddress/AddressDetails/Country/CountryName",
+    "iur-3.0": "/address/Address/xalAddress/AddressDetails/Country/CountryName",
+    "iur-3.1": "/address/Address/xalAddress/AddressDetails/Country/CountryName",
+    "iur-3.2": "/address/Address/xalAddress/AddressDetails/Country/CountryName"
+   }
+  },
+  "address.locality": {
+   "family": "address",
+   "label": {
+    "en": "Locality",
+    "ja": "市区町村（住所）"
+   },
+   "paths": {
+    "iur-2.0": "/address/Address/xalAddress/AddressDetails/Country/Locality/LocalityName",
+    "iur-3.0": "/address/Address/xalAddress/AddressDetails/Country/Locality/LocalityName",
+    "iur-3.1": "/address/Address/xalAddress/AddressDetails/Country/Locality/LocalityName",
+    "iur-3.2": "/address/Address/xalAddress/AddressDetails/Country/Locality/LocalityName"
+   }
+  },
+  "address.dependentLocality": {
+   "family": "address",
+   "label": {
+    "en": "Dependent locality",
+    "ja": "町丁目（住所）"
+   },
+   "paths": {
+    "iur-2.0": "/address/Address/xalAddress/AddressDetails/Country/Locality/DependentLocality/DependentLocalityName",
+    "iur-3.0": "/address/Address/xalAddress/AddressDetails/Country/Locality/DependentLocality/DependentLocalityName",
+    "iur-3.1": "/address/Address/xalAddress/AddressDetails/Country/Locality/DependentLocality/DependentLocalityName",
+    "iur-3.2": "/address/Address/xalAddress/AddressDetails/Country/Locality/DependentLocality/DependentLocalityName"
+   }
+  }
+ }
+}

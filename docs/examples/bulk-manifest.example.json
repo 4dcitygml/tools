@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "identity-baseline",
+  "repository": "example-city/13101-example",
+  "scope": {"mesh": "53394611", "municipality": "13101", "edition_from": "plateau-tokyo23ku-2020-v4", "edition_to": "plateau-13101-2025-v1"},
+  "plan_issue": "https://github.com/example-city/13101-example/issues/12",
+  "materials": [
+    {
+      "name": "13100_tokyo23-ku_2020_citygml_4_2_op.zip",
+      "uri": "https://assets.cms.plateau.reearth.io/assets/ec/d51c64-a47f-4a56-aa64-340d1d3c720b/13100_tokyo23-ku_2020_citygml_4_2_op.zip",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 5333703547,
+      "acquired": "2026-09-02",
+      "members": [
+        {"path": "13100_tokyo23-ku_2020_citygml_4_2_op/udx/bldg/53394611_bldg_6697_2_op.gml", "sha256": "0e636fc9787269283eab4c43c144aa578c60159ed34262718cdd80d899774130", "bytes": 11484942}
+      ]
+    }
+  ],
+  "builder": {"tools_repo": "4dcitygml/tools", "tools_commit": "0123456789abcdef0123456789abcdef01234567", "script": "scripts/identity_manifest.py", "version": "tools-v1.0.0"},
+  "invocation": {
+    "command": ["python3", "scripts/identity_manifest.py", "--mesh", "53394611", "--municipality", "13101", "--editions", "2020,2022,2023,2024,2025", "--minimum-iou", "0.5", "--search-padding-m", "2.0"],
+    "parameters": {"minimum_iou": 0.5, "search_padding_m": 2.0, "tier_a_iou": 0.9, "tier_a_centroid_m": 1.0, "tier_b_area_ratio": [0.67, 1.5], "tier_b_competitor_iou_max": 0.2},
+    "environment": {"python": "3.12.6", "lxml": "6.1.1", "shapely": "2.1.2"}
+  },
+  "products": [
+    {"path": "13100_tokyo23-ku_2020_citygml_4_2_op/udx/bldg/53394611_bldg_6697_2_op.gml", "sha256": "04c57c5440ff1e8741b83957fc1cde6277ffff1bd7e469872d90f4163d8f2b39", "buildings": 829}
+  ],
+  "evidence": {
+    "boundaries": [
+      {"from": "2020", "to": "2022", "id_regime": "continuous", "shared_ids": 829, "shared_consistent": 829, "geometry_matches": 829, "id_persisted": 829},
+      {"from": "2022", "to": "2023", "id_regime": "renumbered", "shared_ids": 36, "shared_consistent": 0, "geometry_matches": 672, "id_persisted": 0},
+      {"from": "2023", "to": "2024", "id_regime": "mixed", "shared_ids": 846, "shared_consistent": 828, "geometry_matches": 856, "id_persisted": 831},
+      {"from": "2024", "to": "2025", "id_regime": "continuous", "shared_ids": 937, "shared_consistent": 937, "geometry_matches": 937, "id_persisted": 937}
+    ],
+    "thresholds": {"consistent_iou": 0.5, "consistent_centroid_m": 2.0, "regime_continuous_min_share": 0.95, "regime_renumbered_max_share": 0.5},
+    "links": [
+      {"from": "13101-bldg-12905", "to": "13101-bldg-15889", "tier": "B", "method": "mutual_best_iou", "iou": 0.978, "centroid_m": 0.3, "hausdorff_m": 1.1, "area_ratio": 1.02, "competitor_iou": 0.0, "chain": ["2020", "2022", "2023", "2024", "2025"]}
+    ],
+    "unlinked": [
+      {"id": "13101-bldg-15955", "tier": "C", "reason": "same buildingID in 2022 and 2023 but IoU 0.0 and centroid distance 707.7 m (renumbered boundary); no geometric match"}
+    ]
+  },
+  "sample_audit": {"seed": 20260902, "size": 30, "ids": ["13101-bldg-12905"], "reviewed_by": "", "result": "pending", "notes": ""},
+  "generated_at": "2026-09-02T00:00:00Z"
+}

@@ -1,0 +1,89 @@
+= ENGLISH =
+
+CityGML Attribute Editor (macOS · No installation needed)
+
+1. Open the Terminal app (Launchpad → Other → Terminal)
+
+2. Type python3 and one space in Terminal.
+   【Do not press Enter yet】
+   Next, drag and drop the app.py file from this folder into the Terminal window.
+   Once the line reads:
+
+     python3 /Users/your-name/Downloads/citygml-attr-editor/app.py
+
+   then press Enter.
+
+   Note: If you see ">>>" appear (you pressed Enter earlier), type exit() and press Enter to exit,
+   then try again.
+   Note: The first time, if you're asked to install "Command Line Developer Tools",
+   click "Install" (this adds git and python3).
+   Once done, repeat step 2.
+
+3. A browser will open and initial setup will begin
+   (paste the fork URL and click "Clone")
+
+4. When finished, "Attribute Editor.command" will be automatically created on your Desktop.
+   Next time, just double-click it (no Terminal needed).
+
+For detailed steps (GitHub account creation · fork · authentication setup):
+https://github.com/4dcitygml/tools/blob/main/tools/attr_editor/setup-guide.md
+
+--- Deutsch ---
+
+CityGML Attribut-Editor (macOS · Keine Installation erforderlich)
+
+1. Öffnen Sie die Terminal-App (Launchpad → Sonstige → Terminal)
+
+2. Geben Sie python3 und ein Leerzeichen in Terminal ein.
+   【Drücken Sie noch nicht Enter】
+   Ziehen Sie dann die Datei app.py aus diesem Ordner in das Terminal-Fenster.
+   Sobald die Zeile wie folgt aussieht:
+
+     python3 /Users/your-name/Downloads/citygml-attr-editor/app.py
+
+   drücken Sie Enter.
+
+   Hinweis: Wenn ">>>" erscheint (Sie haben Enter vorher gedrückt), geben Sie exit() ein
+   und drücken Sie Enter zum Beenden, versuchen Sie es erneut.
+   Hinweis: Beim ersten Mal werden Sie möglicherweise aufgefordert, "Command Line Developer Tools"
+   zu installieren. Klicken Sie auf "Installieren" (dies fügt git und python3 hinzu).
+   Wiederholen Sie danach Schritt 2.
+
+3. Ein Browser öffnet sich und die Ersteinrichtung beginnt
+   (Geben Sie die Fork-URL ein und klicken Sie auf "Clone")
+
+4. Nach Abschluss wird "Attribute Editor.command" automatisch auf Ihrem Desktop erstellt.
+   Nächstes Mal klicken Sie einfach doppelt darauf (kein Terminal erforderlich).
+
+Ausführliche Schritte (GitHub-Kontoerstellung · Fork · Authentifizierungseinrichtung):
+https://github.com/4dcitygml/tools/blob/main/tools/attr_editor/setup-guide.md
+
+--- 日本語 ---
+
+CityGML 属性エディタ（macOS・インストール不要）
+
+1. 「ターミナル」アプリを開きます（Launchpad →「その他」→「ターミナル」）
+
+2. ターミナルに半角で python3 と空白1つを入力します。
+   【ここではまだ Enter を押しません】
+   続けて、このフォルダの app.py をターミナルの画面へ
+   ドラッグ＆ドロップします。画面が1行で
+
+     python3 /Users/あなたの名前/Downloads/citygml-attr-editor/app.py
+
+   のようになったら、Enter を押します
+
+   ※「>>>」と表示されてしまったら（先に Enter を押した状態です）、
+     exit() と入力して Enter で抜けてから、やり直してください
+   ※初回に「コマンドライン・デベロッパツール」のインストールを
+     求められたら「インストール」を押してください（git と python3 が入ります）。
+     終わったらもう一度この手順 2 を行います
+
+3. ブラウザが開き、初回セットアップが始まります
+   （フォークの URL を貼り付けて［クローン実行］）
+
+4. 完了すると、デスクトップに「Attribute Editor.command」が自動で作られます。
+   次回からはそれをダブルクリックするだけです（ターミナルは使いません）
+
+詳しい手順（GitHub アカウント作成・フォーク・認証の準備）:
+https://github.com/4dcitygml/tools/blob/main/tools/attr_editor/setup-guide.md

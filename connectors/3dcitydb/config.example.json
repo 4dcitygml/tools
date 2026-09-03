@@ -1,0 +1,9 @@
+{
+  "citygml": "citygml/mesh.gml",
+  "citydbCommand": "citydb",
+  "citygmlVersion": "2.0",
+  "noAppearances": true,
+  "baseBranch": "main",
+  "dbSchema": "citydb",
+  "restoreUro": true
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Bauhaus (DE)",
+  "bg": "#ffffff",
+  "card": "#fafafa",
+  "border": "#cfcfcf",
+  "text": "#111111",
+  "muted": "#666666",
+  "accent": "#cc2229",
+  "header_bg": "#111111",
+  "header_fg": "#ffffff",
+  "font": "\"Helvetica Neue\", Arial, \"Noto Sans\", sans-serif",
+  "font_head": "\"Futura\", \"Century Gothic\", \"Helvetica Neue\", sans-serif"
+}

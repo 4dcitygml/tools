@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="editor.title">CityGML Attribute Editor</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --border: #dde1e6; --text: #1c2733;
+    --muted: #6b7785; --accent: #0969da; --edit: #fff3bf; --danger: #c92a2a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
+               font-size: 13px; color: var(--text); background: var(--bg); overflow: hidden; }
+  #app { display: grid; grid-template-columns: 420px 1fr; grid-template-rows: 44px 1fr;
+         height: 100vh; }
+  /* ---- Header ---- */
+  #header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
+            padding: 0 14px; background: #24292f; color: #fff; }
+  #header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+  #cityLogo { height: 28px; }  /* Municipality logo (/city-logo; stays hidden if absent) */
+  #headerInfo { font-size: 12px; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; flex: 1; }
+  #gitStatus { font-size: 11px; color: #8b949e; white-space: nowrap; }
+  /* ---- Left column: map + 3D ---- */
+  #left { display: grid; grid-template-rows: 55% 45%; border-right: 1px solid var(--border); min-width: 0; }
+  #map { width: 100%; height: 100%; }
+  #pane3d { position: relative; background: #000; border-top: 1px solid var(--border); }
+  #viewerFrame { width: 100%; height: 100%; border: 0; }
+  #pane3dLabel { position: absolute; top: 8px; right: 8px; z-index: 12; pointer-events: none;
+                 padding: 4px 8px; border-radius: 5px; background: rgba(0,0,0,.68);
+                 color: #fff; font-size: 11px; font-weight: 600; }
+  #pane3dEmpty { position: absolute; inset: 0; display: flex; align-items: center;
+                 justify-content: center; color: #8b949e; font-size: 12px; }
+  #open3d { position: absolute; top: 8px; right: 8px; z-index: 10; font-size: 11px;
+            background: rgba(0,0,0,.65); color: #fff; padding: 4px 10px; border-radius: 4px;
+            text-decoration: none; display: none; }
+  /* ---- Right column: attribute panel ---- */
+  #right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #attrHead { padding: 8px 14px 6px; border-bottom: 1px solid var(--border); background: var(--card);
+              display: flex; align-items: baseline; gap: 10px; }
+  #attrTitle { font-size: 15px; font-weight: 600; }
+  #attrSub { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  #cards { flex: 1; overflow: auto; padding: 10px; display: grid;
+           grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+           gap: 10px; align-content: start; }
+  #cardsEmpty { color: var(--muted); padding: 30px; text-align: center; grid-column: 1 / -1; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+          padding: 8px 10px; }
+  .card h2 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600;
+             display: flex; align-items: center; gap: 6px; }
+  .card h2 .lock { font-size: 10px; }
+  .card.wide { grid-column: 1 / -1; }
+  table.attrs { width: 100%; border-collapse: collapse; }
+  table.attrs td { padding: 3px 4px; border-top: 1px solid #f0f2f4; vertical-align: top; }
+  table.attrs tr:first-child td { border-top: none; }
+  td.k { color: var(--muted); width: 42%; }
+  td.v { word-break: break-all; }
+  .subttl td { color: var(--text); font-weight: 600; background: #f6f8fa; }
+  .code { color: var(--muted); }
+  .uom { color: var(--muted); font-size: 11px; }
+  .editable { cursor: pointer; border-radius: 3px; }
+  .editable:hover { background: #eef4fd; outline: 1px solid #b6d4fe; }
+  .edited { background: var(--edit) !important; }
+  .oldval { color: var(--muted); text-decoration: line-through; margin-right: 6px; font-size: 12px; }
+  .ro { color: var(--text); }
+  input.editbox, select.editbox { width: 100%; font: inherit; padding: 2px 4px;
+    border: 1px solid var(--accent); border-radius: 3px; }
+  /* Sources (resolution rule: item note > parent thematicSrcDesc > unknown)
+     The building default is shown once at the top. Rows show only attributes with an
+     item note; rows without one show "+ Source" on hover */
+  #attrSrc { padding: 5px 14px; border-bottom: 1px solid var(--border); background: #fbfcfd;
+    font-size: 11px; color: var(--muted); display: none; line-height: 1.5; }
+  #attrSrc.on { display: block; }
+  #attrSrc b { color: var(--text); font-weight: 600; }
+  #attrSrc .plus { color: #8250df; }
+  /* Per-row source (code only). A transparent select is overlaid; opening it shows code + name */
+  .srcwrap { position: relative; display: inline-block; margin-top: 2px; vertical-align: middle; }
+  .srcchip { font-size: 11px; border: 1px solid transparent; border-radius: 4px; padding: 0 5px;
+    cursor: pointer; white-space: nowrap; }
+  .srcchip.tokki { color: #8250df; font-weight: 600; background: #f6f2fd; }
+  .srcchip.tokki.edited { background: var(--edit); }
+  .srcwrap:hover .srcchip.tokki { border-color: #d0bcf0; }
+  .srcchip.add { color: var(--accent); background: transparent; border: 1px dashed #cbd5e1;
+    opacity: 0; transition: opacity .1s; }
+  tr:hover .srcchip.add { opacity: .65; }
+  .srcwrap:hover .srcchip.add { opacity: 1; border-style: solid; }
+  .srcwrap > select { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; font: inherit; }
+  .sourceRequired { display: block; margin-top: 6px; padding: 7px 8px; border: 2px solid #d97706;
+    border-radius: 6px; background: #fff8e6; }
+  .sourceRequired.done { border-color: #2da44e; background: #f0fff4; }
+  .sourceRequired label { display: block; margin-bottom: 4px; color: #8a4b08; font-size: 11px;
+    font-weight: 700; }
+  .sourceRequired.done label { color: #1f6f35; }
+  .sourceRequired select { width: 100%; min-height: 32px; padding: 4px 7px; font: inherit;
+    border: 1px solid #d97706; border-radius: 5px; background: #fff; }
+  .sourceRequired.done select { border-color: #2da44e; }
+  tr.needsSource td { background: #fffdf3; }
+  .links a { display: block; padding: 2px 0; color: var(--accent); text-decoration: none;
+             font-size: 12px; }
+  .links a:hover { text-decoration: underline; }
+  /* ---- Change bar ---- */
+  #changeBar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+               border-top: 1px solid var(--border); background: var(--card); }
+  #changeCount { font-size: 12px; }
+  #changeCount b { color: #b8860b; }
+  #sourceStatus { font-size: 12px; color: var(--danger); font-weight: 600; }
+  #sourceStatus.ready { color: #1f6f35; }
+  button { font: inherit; border-radius: 6px; border: 1px solid var(--border);
+           background: #f6f8fa; padding: 6px 14px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #1f883d; border-color: #1f883d; color: #fff; font-weight: 600; }
+  button.danger { color: var(--danger); }
+  /* ---- On the map ---- */
+  .meshLabel { background: rgba(255,255,255,.85); border: 1px solid #888; border-radius: 3px;
+               padding: 1px 4px; font-size: 11px; font-family: ui-monospace, monospace; white-space: nowrap; }
+  #loading { position: absolute; inset: 0; z-index: 2000; display: none; align-items: center;
+             justify-content: center; background: rgba(255,255,255,.6); font-weight: 600; }
+  /* ---- First-time guide ---- */
+  #firstGuide { position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center;
+                justify-content: center; padding: 20px; background: rgba(0,0,0,.52); }
+  #firstGuide[hidden] { display: none; }
+  #firstGuideCard { width: min(520px, 100%); padding: 22px 24px; border-radius: 12px;
+                    background: #fff; box-shadow: 0 12px 36px rgba(0,0,0,.28); }
+  #firstGuideCard h2 { margin: 0 0 6px; font-size: 19px; }
+  #firstGuideCard .lead { margin: 0 0 14px; color: var(--muted); line-height: 1.6; }
+  #firstGuideCard ol { margin: 0 0 18px; padding-left: 24px; line-height: 1.7; }
+  #firstGuideCard li + li { margin-top: 5px; }
+  #firstGuideCard .guideNote { margin: 0 0 18px; padding: 9px 11px; border-radius: 7px;
+                               background: #eef6ff; color: #174e87; line-height: 1.5; }
+  #firstGuideClose { width: 100%; padding: 9px 14px; background: var(--accent);
+                     border-color: var(--accent); color: #fff; font-weight: 600; }
+  /* ---- Modal ---- */
+  #modalBack { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
+               align-items: center; justify-content: center; z-index: 3000; }
+  #modal { background: #fff; border-radius: 10px; width: min(680px, 92vw); max-height: 88vh;
+           overflow: auto; padding: 18px 22px; }
+  #modal h2 { margin: 0 0 4px; font-size: 16px; }
+  #modal .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  #modal table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  #modal th, #modal td { border: 1px solid var(--border); padding: 5px 8px; text-align: left;
+                         font-size: 12px; }
+  #modal th { background: #f6f8fa; }
+  #modal textarea { width: 100%; height: 90px; font: inherit; padding: 6px;
+                    border: 1px solid var(--border); border-radius: 6px; }
+  #prPreview { margin: 0 0 12px; padding: 10px 12px; border-radius: 7px;
+    background: #f6f8fa; line-height: 1.7; white-space: pre-line; }
+  #prPreview b { display: block; margin-bottom: 3px; }
+  #modalBtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+  #btnPretest { color: var(--accent); border-color: #8cbbeb; background: #f0f7ff; font-weight: 600; }
+  #pretestResult { margin-top: 12px; }
+  .pretestLead { padding: 9px 11px; border-radius: 7px; font-size: 12px; font-weight: 650; }
+  .pretestLead.pass { color: #116329; background: #dafbe1; }
+  .pretestLead.fail { color: #82071e; background: #ffebe9; }
+  .pretestItems { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .pretestItem { padding: 5px 8px; border: 1px solid; border-radius: 999px; font-size: 11px; }
+  .pretestItem.pass { color: #116329; border-color: #56b870; background: #dafbe1; }
+  .pretestItem.fail { color: #82071e; border-color: #ff8182; background: #ffebe9; }
+  .pretestItem.na { color: #57606a; border-color: #afb8c1; background: #eef1f4; }
+  .pretestNote { margin-top: 7px; color: var(--muted); font-size: 11px; }
+  #modalResult { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  #modalResult a { color: var(--accent); font-weight: 600; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc;
+             border-top-color: var(--accent); border-radius: 50%;
+             animation: spin .8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <img id="cityLogo" src="/city-logo" alt="" style="display:none" onload="this.style.display=''">
+    <h1 data-i18n="editor.title">CityGML Attribute Editor</h1>
+    <span id="headerInfo" data-i18n="editor.hint_pick_mesh">Select a blue square on the map in the top left</span>
+    <span id="gitStatus"></span>
+  </div>
+  <div id="left">
+    <div style="position:relative; min-height:0;">
+      <div id="map"></div>
+      <div id="loading"><span class="spinner"></span>&nbsp;<span data-i18n="editor.loading_mesh">Loading mesh…</span></div>
+    </div>
+    <div id="pane3d">
+      <div id="pane3dLabel" data-i18n="editor.pane3d_label">3D preview | LOD1 / LOD2</div>
+      <div id="pane3dEmpty" data-i18n="editor.pane3d_empty">Select a building to see it in 3D</div>
+      <a id="open3d" href="#" target="_blank" rel="noopener" data-i18n="editor.open3d">⧉ Open in a new tab</a>
+      <iframe id="viewerFrame" style="display:none"></iframe>
+    </div>
+  </div>
+  <div id="right">
+    <div id="attrHead">
+      <span id="attrTitle" data-i18n="editor.attr_title">Attributes</span>
+      <span id="attrSub"></span>
+    </div>
+    <div id="attrSrc"></div>
+    <div id="cards"><div id="cardsEmpty" data-i18n="editor.cards_empty">1. Click a blue square on the map in the top left → 2. Click one of the light-blue buildings that appear</div></div>
+    <div id="changeBar">
+      <span id="changeCount" data-i18n="editor.changed_attrs_zero">Changed attributes: 0</span>
+      <span id="sourceStatus"></span>
+      <span style="flex:1"></span>
+      <button id="btnDiscard" disabled data-i18n="editor.btn_discard">Discard changes</button>
+      <button id="btnPr" class="primary" disabled data-i18n="editor.btn_submit_changes">Send changes</button>
+    </div>
+  </div>
+</div>
+
+<div id="firstGuide" hidden>
+  <div id="firstGuideCard" role="dialog" aria-modal="true" aria-labelledby="firstGuideTitle">
+    <h2 id="firstGuideTitle" data-i18n="editor.guide_title">Getting started</h2>
+    <p class="lead" data-i18n="editor.guide_lead">First, pick one building to edit on the map.</p>
+    <ol>
+      <li data-i18n="editor.guide_step1">Click a blue square on the map in the top left.</li>
+      <li data-i18n="editor.guide_step2">Wait until the buildings finish loading.</li>
+      <li data-i18n="editor.guide_step3">Click one of the light-blue buildings shown inside the square.</li>
+      <li data-i18n="editor.guide_step4">Attributes appear on the right. Click an editable value to change it.</li>
+    </ol>
+    <p class="guideNote" data-i18n="editor.guide_note">Changing a value does not send anything by itself. When you change a value, a source selector opens right below it. Only after you choose a source and press "Send changes" is your proposal delivered to the maintainer.</p>
+    <button id="firstGuideClose" type="button" data-i18n="editor.guide_close">Start with the map</button>
+  </div>
+</div>
+
+<div id="modalBack">
+  <div id="modal">
+    <h2 data-i18n="editor.modal_title">Send changes to the maintainer</h2>
+    <div class="sub" data-i18n="editor.modal_sub">The source data is not modified directly; a readable summary for the maintainer is generated from the selected sources and the before/after values.</div>
+    <div class="sub" id="modalTarget"></div>
+    <div id="prPreview"></div>
+    <table id="modalTable"><thead><tr><th data-i18n="editor.th_item">Item</th><th data-i18n="editor.th_old">Before</th><th data-i18n="editor.th_new">After</th><th data-i18n="editor.th_source">Source</th></tr></thead><tbody></tbody></table>
+    <label style="font-weight:600; font-size:12px;" data-i18n="editor.reason_label">Notes / supporting document URL (optional)</label>
+    <textarea id="prReason" data-i18n-placeholder="editor.reason_placeholder" placeholder="e.g. survey date, URLs of documents you checked, anything the maintainer should know"></textarea>
+    <div id="pretestResult"><div class="pretestNote" data-i18n="editor.pretest_note_initial">Before sending, your changes are checked on this computer.</div></div>
+    <div id="modalBtns">
+      <button id="btnCancel" data-i18n="editor.btn_cancel">Cancel</button>
+      <button id="btnPretest" data-i18n="editor.btn_pretest">Pre-submission check</button>
+      <button id="btnSubmit" class="primary" disabled data-i18n="editor.btn_send">Send these changes</button>
+      <button id="btnDoneClose" class="primary" style="display:none;" data-i18n="editor.btn_done_close">Close and return to the attribute editor</button>
+    </div>
+    <div id="modalResult"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+function showFirstGuideIfNeeded() {
+  const query = new URLSearchParams(location.search);
+  if (query.get('welcome') !== '1') return;
+  const guide = $('firstGuide');
+  guide.hidden = false;
+  $('firstGuideClose').onclick = () => {
+    guide.hidden = true;
+    query.delete('welcome');
+    const rest = query.toString();
+    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+  };
+  $('firstGuideClose').focus();
+}
+
+showFirstGuideIfNeeded();
+
+// ---- State ----
+let codelists = {};          // filename -> {code: label}
+let tiles = [];              // /api/tiles
+let resources = [];          // primary-source links
+let currentTile = null;      // tile object from /api/tile/<code>
+let selected = null;         // currently selected building object
+let changes = new Map();     // "tag#index" -> {key,tag,index,old,new,label}
+let srcChanges = new Map();  // qname -> {kind:'src',qname,old,new,label} (item-source-note changes)
+let sourceSelections = new Map(); // changed attribute key -> {key,code} (required to send)
+let qnameCount = new Map();  // qname -> occurrence count (duplicated names are excluded from item notes = R2-2)
+let sourceFocusKey = null;   // source field to focus next, right after a value is committed
+let footprintLayers = new Map();  // gid -> L.polygon
+let meshLayer = null;
+
+const GROUP_DEFS = [
+  ['basic',   t('editor.group_basic', 'Basic')],
+  ['detail',  t('editor.group_detail', 'Building details')],
+  ['ident',   t('editor.group_ident', 'Identification 🔒')],
+  ['addr',    t('editor.group_addr', 'Address / district')],
+  ['risk',    t('editor.group_risk', 'Disaster risk')],
+  ['kv',      t('editor.group_kv', 'Additional KV')],
+  ['other',   t('editor.group_other', 'Other')],
+  ['quality', t('editor.group_quality', 'Source documents 🔒')],
+];
+
+// ---- Map ----
+// Initial position and tile type follow the clone's 4dcitygml.json (injected by the server as CITY_MAP).
+// Without a setting, default to GSI and leave it to fitBounds after the tile list is fetched.
+const CITY_MAP = window.CITY_MAP || {};
+const map = L.map('map', { zoomControl: true })
+  .setView(CITY_MAP.center || [35.681, 139.767], CITY_MAP.zoom || 13);
+if (CITY_MAP.tiles === 'osm') {
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+} else {
+  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: t('editor.gsi_attribution', 'GSI Tiles'),
+  }).addTo(map);
+}
+
+function codeLabel(codelist, code) {
+  const t = codelists[codelist];
+  return t && t[code] !== undefined ? t[code] : null;
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+  if (j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+// ---- Initialization ----
+async function init() {
+  const [tilesRes, cl] = await Promise.all([
+    api('/api/tiles'),
+    fetch('/api/codelists').then(r => r.json()),
+  ]);
+  tiles = tilesRes.tiles; resources = tilesRes.resources || [];
+  codelists = cl;
+  drawMeshes();
+  refreshGitStatus();
+
+  const q = new URLSearchParams(location.search);
+  if (q.get('tile')) {
+    await loadTile(q.get('tile'));
+    if (q.get('bid') && currentTile) {
+      const b = currentTile.buildings.find(x => x.gid === q.get('bid'));
+      if (b) selectBuilding(b, true);
+    }
+  } else if (tiles.length) {
+    const bs = tiles.map(t => t.bounds).filter(Boolean);
+    if (bs.length) map.fitBounds(bs.map(b => [[b[0], b[1]], [b[2], b[3]]]).flat());
+  }
+}
+
+async function refreshGitStatus() {
+  try {
+    const s = await api('/api/status');
+    $('gitStatus').textContent =
+      `branch: ${s.branch}${s.dirty.length ? ` / ${t('editor.git_dirty', 'uncommitted changes: {n}', {n: s.dirty.length})}` : ''}`;
+  } catch (e) { $('gitStatus').textContent = ''; }
+}
+
+// ---- Mesh display ----
+function drawMeshes() {
+  meshLayer = L.layerGroup().addTo(map);
+  for (const t of tiles) {
+    if (!t.bounds) continue;
+    const rect = L.rectangle([[t.bounds[0], t.bounds[1]], [t.bounds[2], t.bounds[3]]], {
+      color: '#0969da', weight: 1, fillOpacity: 0.04,
+    }).addTo(meshLayer);
+    rect.bindTooltip(window.t('editor.mesh_tooltip', '{code} ({size} MiB)',
+      { code: t.code, size: (t.size / 1048576).toFixed(1) }), { sticky: true });
+    rect.on('click', () => loadTile(t.code));
+  }
+}
+
+// ---- Tile loading ----
+async function loadTile(code) {
+  if (!confirmDiscard()) return;
+  $('loading').style.display = 'flex';
+  try {
+    const res = await api(`/api/tile/${code}`);
+    currentTile = res.tile;
+    clearSelection();
+    drawFootprints();
+    updateActionHint();
+    updateUrl();
+  } catch (e) {
+    alert(t('editor.load_error', 'Load error: ') + e.message);
+  } finally {
+    $('loading').style.display = 'none';
+  }
+}
+
+function drawFootprints() {
+  footprintLayers.forEach(l => map.removeLayer(l));
+  footprintLayers.clear();
+  for (const b of currentTile.buildings) {
+    if (!b.footprint || b.footprint.length < 3) continue;
+    const poly = L.polygon(b.footprint, {
+      color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35,
+    }).addTo(map);
+    poly.on('click', () => selectBuilding(b));
+    poly.bindTooltip(b.buildingID || b.gid, { sticky: true });
+    footprintLayers.set(b.gid, poly);
+  }
+  const b0 = currentTile.bounds;
+  if (b0) map.fitBounds([[b0[0], b0[1]], [b0[2], b0[3]]]);
+}
+
+// ---- Building selection ----
+function confirmDiscard() {
+  if (changes.size + srcChanges.size === 0) return true;
+  return confirm(t('editor.confirm_discard_move', 'You have edits in progress. Discard them and move on? (PRs are per building)'));
+}
+
+function clearSelection() {
+  selected = null;
+  changes.clear();
+  srcChanges.clear();
+  sourceSelections.clear();
+  renderChangeBar();
+  $('cards').innerHTML = '<div id="cardsEmpty">' +
+    t('editor.cards_empty', '1. Click a blue square on the map in the top left → 2. Click one of the light-blue buildings that appear') + '</div>';
+  $('attrTitle').textContent = t('editor.attr_title', 'Attributes');
+  $('attrSub').textContent = '';
+  $('attrSrc').className = ''; $('attrSrc').textContent = '';
+  $('viewerFrame').style.display = 'none';
+  $('open3d').style.display = 'none';
+  $('pane3dEmpty').style.display = 'flex';
+}
+
+function missingSourceKeys() {
+  return [...changes.keys()].filter(key => !sourceSelections.has(key));
+}
+
+function updateActionHint() {
+  const n = changes.size + srcChanges.size;
+  const missing = missingSourceKeys().length;
+  if (missing > 0) {
+    $('headerInfo').textContent = t('editor.hint_pick_source', 'Next: choose a source under each changed value ({n} left)', {n: missing});
+  } else if (n > 0) {
+    $('headerInfo').textContent = t('editor.hint_send', 'Next: press "Send changes" at the bottom right ({n} changes)', {n: n});
+  } else if (selected) {
+    $('headerInfo').textContent = t('editor.hint_click_value', 'Next: click a value on the right that you want to change');
+  } else if (currentTile) {
+    $('headerInfo').textContent = t('editor.hint_pick_building', 'Next: click one light-blue building on the map (mesh {code})', {code: currentTile.code});
+  } else {
+    $('headerInfo').textContent = t('editor.hint_pick_mesh', 'Select a blue square on the map in the top left');
+  }
+}
+
+function selectBuilding(b, keepChanges) {
+  if (!keepChanges && selected && selected.gid !== b.gid && !confirmDiscard()) return;
+  if (!selected || selected.gid !== b.gid) {
+    changes.clear(); srcChanges.clear(); sourceSelections.clear();
+  }
+  // Highlight
+  footprintLayers.forEach((poly, gid) => poly.setStyle(
+    gid === b.gid
+      ? { color: '#d97706', weight: 2.5, fillColor: '#fbbf24', fillOpacity: 0.55 }
+      : { color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35 }
+  ));
+  selected = b;
+  $('attrTitle').textContent = b.buildingID || t('editor.no_building_id', '(no building ID)');
+  $('attrSub').textContent = b.gid;
+  renderCards();
+  renderChangeBar();
+  updateUrl();
+  // 3D panel
+  const url = `/viewer.html?v=2&tile=${currentTile.code}&bid=${encodeURIComponent(b.gid)}`;
+  $('viewerFrame').src = url;
+  $('viewerFrame').style.display = 'block';
+  $('pane3dEmpty').style.display = 'none';
+  $('open3d').href = url;
+  $('open3d').style.display = 'block';
+  if (b.center) map.panTo(b.center);
+}
+
+function updateUrl() {
+  const q = new URLSearchParams();
+  if (currentTile) q.set('tile', currentTile.code);
+  if (selected) q.set('bid', selected.gid);
+  history.replaceState(null, '', '?' + q.toString());
+}
+
+// ---- Attribute card rendering ----
+function leafKey(leaf) { return `${leaf.tag}#${leaf.index}`; }
+
+function displayValue(leaf) {
+  const pend = changes.get(leafKey(leaf));
+  const val = pend ? pend.new : leaf.value;
+  let html = '';
+  if (pend) html += `<span class="oldval">${esc(leaf.value)}</span>`;
+  html += esc(val === '' ? t('editor.empty_value', '(empty)') : val);
+  if (leaf.codelist) {
+    const lb = codeLabel(leaf.codelist, val);
+    if (lb !== null) html += ` <span class="code">${esc(lb)}</span>`;
+  }
+  if (leaf.uom) html += ` <span class="uom">${esc(leaf.uom)}</span>`;
+  return html;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderCards() {
+  const cards = $('cards');
+  cards.innerHTML = '';
+  if (!selected) return;
+  qnameCount = new Map();
+  for (const item of selected.items)
+    for (const l of item.leaves)
+      if (l.qname) qnameCount.set(l.qname, (qnameCount.get(l.qname) || 0) + 1);
+  renderBuildingSrc();
+  const byGroup = {};
+  for (const item of selected.items) (byGroup[item.group] ??= []).push(item);
+
+  for (const [gkey, gtitle] of GROUP_DEFS) {
+    const items = byGroup[gkey];
+    if (!items && gkey !== 'quality') continue;
+    const card = document.createElement('div');
+    card.className = 'card' + (gkey === 'risk' || gkey === 'quality' || gkey === 'kv' ? ' wide' : '');
+    card.innerHTML = `<h2>${gtitle}</h2>`;
+    const table = document.createElement('table');
+    table.className = 'attrs';
+
+    if (gkey === 'kv' && items) {
+      for (const item of items) renderKvRow(table, item);
+    } else if (items) {
+      for (const item of items) {
+        // Omit the sub-heading when a single leaf would repeat the same name as the row label
+        // (a standalone gen:stringAttribute = the leaf has tag 'value' and the title shows on the row side;
+        //  prevents double-displayed attribute names in the munich/newyork data)
+        const redundant = item.title && item.leaves.length === 1
+          && (item.leaves[0].label === item.title
+              || (item.group === 'addr' && item.leaves[0].tag === 'value'));
+        if (item.title && !redundant) {
+          const tr = table.insertRow();
+          tr.className = 'subttl';
+          const td = tr.insertCell(); td.colSpan = 2; td.textContent = item.title;
+        }
+        for (const leaf of item.leaves) renderLeafRow(table, leaf, item);
+      }
+    }
+    card.appendChild(table);
+    if (gkey === 'quality') {
+      const links = document.createElement('div');
+      links.className = 'links';
+      links.innerHTML = '<h2 style="margin:8px 0 2px;font-size:12px;color:var(--muted)">' +
+        t('editor.primary_sources', 'Primary sources') + '</h2>' +
+        resources.map(r => `<a href="${r.path}" target="_blank" rel="noopener">📄 ${esc(r.name)}</a>`).join('');
+      card.appendChild(links);
+    }
+    cards.appendChild(card);
+  }
+  if (sourceFocusKey) {
+    const key = sourceFocusKey;
+    sourceFocusKey = null;
+    requestAnimationFrame(() => {
+      const picker = [...document.querySelectorAll('[data-source-key]')]
+        .find(element => element.dataset.sourceKey === key);
+      if (picker) {
+        picker.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        picker.focus({ preventScroll: true });
+      }
+    });
+  }
+}
+
+function renderLeafRow(table, leaf, item) {
+  const tr = table.insertRow();
+  const tdK = tr.insertCell(); tdK.className = 'k';
+  tdK.textContent = (item.group === 'addr' && item.title && leaf.tag === 'value')
+    ? item.title : leaf.label;
+  const tdV = tr.insertCell(); tdV.className = 'v';
+  paintValueCell(tdV, leaf);
+  srcControl(tdV, leaf, item.group);
+}
+
+function renderKvRow(table, item) {
+  // KeyValuePair: the key leaf (code) and the value leaf as a pair on one row
+  const keyLeaf = item.leaves.find(l => l.tag === 'key');
+  const valLeaf = item.leaves.find(l => l.tag !== 'key') || item.leaves[0];
+  const tr = table.insertRow();
+  const tdK = tr.insertCell(); tdK.className = 'k';
+  const kLabel = keyLeaf && keyLeaf.codelist ? codeLabel(keyLeaf.codelist, keyLeaf.value) : null;
+  tdK.textContent = kLabel || (keyLeaf ? `key ${keyLeaf.value}` : t('editor.value_label', 'Value'));
+  const tdV = tr.insertCell(); tdV.className = 'v';
+  if (valLeaf) { paintValueCell(tdV, valLeaf); srcControl(tdV, valLeaf, 'kv'); }
+}
+
+// ---- Sources (resolution rule from docs/provenance-rules.md: item note > parent thematicSrcDesc > 898 unknown) ----
+const SRC_GROUPS = new Set(['basic', 'detail', 'addr', 'risk', 'kv', 'other']);
+
+// Code + name for tooltips, the building default, and the dropdown
+function srcUpperLong(info) {
+  if (!info.upper.length) return t('editor.src_unknown', '898 Unknown');
+  return info.upper.map(c => {
+    const lb = codeLabel(info.codelist, c);
+    return lb ? `${c} ${lb}` : c;
+  }).join(t('editor.src_sep', ', '));
+}
+function codeLong(info, code) {
+  const lb = codeLabel(info.codelist, code);
+  return lb ? `${code} ${lb}` : code;
+}
+
+// Show the building's default source once at the top (plus planned thematicSrcDesc additions from item notes = R2-8)
+function renderBuildingSrc() {
+  const el = $('attrSrc');
+  if (!selected || !selected.src) { el.className = ''; el.textContent = ''; return; }
+  const info = selected.src;
+  let html = t('editor.src_default_label', 'Source (default for this building): ') + '<b>' + esc(srcUpperLong(info)) + '</b>';
+  const added = [...new Set([
+    ...[...srcChanges.values()].map(c => c.new),
+    ...[...sourceSelections.values()].map(c => c.code),
+  ]
+    .filter(v => v && !info.upper.includes(v)))];
+  if (added.length) {
+    html += ' <span class="plus">' + t('editor.src_appended', '+ {list} (to be added along with the item notes)',
+      {list: added.map(c => esc(codeLong(info, c))).join(t('editor.src_sep', ', '))}) + '</span>';
+  }
+  el.innerHTML = html;
+  el.className = 'on';
+}
+
+function srcControl(td, leaf, group) {
+  if (leaf.readonly || !leaf.qname || !selected || !selected.src) return;
+  const info = selected.src;
+  const table = codelists[info.codelist] || {};
+  const orig = info.specific[leaf.qname] ?? '';
+  const pend = srcChanges.get(leaf.qname);
+  const cur = pend ? pend.new : orig;
+  const key = leafKey(leaf);
+
+  // On rows whose value changed, open the required source picker right below instead of the chip.
+  if (changes.has(key)) {
+    const chosen = sourceSelections.get(key);
+    const box = document.createElement('span');
+    box.className = 'sourceRequired' + (chosen ? ' done' : '');
+    const label = document.createElement('label');
+    label.textContent = chosen
+      ? t('editor.source_done_label', '✓ Source you checked for this change')
+      : t('editor.source_required_label', 'Next, choose the source you checked for this change (required)');
+    box.appendChild(label);
+
+    const select = document.createElement('select');
+    select.dataset.sourceKey = key;
+    select.setAttribute('aria-label', t('editor.source_aria', 'Source for {label} (required)', {label: leaf.label}));
+    const prompt = document.createElement('option');
+    prompt.value = '';
+    prompt.textContent = t('editor.source_prompt', 'Choose a source');
+    select.appendChild(prompt);
+    for (const [code, name] of Object.entries(table)) {
+      if (code === '898' || code === '999') continue;
+      const option = document.createElement('option');
+      option.value = code;
+      option.textContent = t('editor.source_option', '{name} (code {code})', {name: name, code: code});
+      select.appendChild(option);
+    }
+    select.value = chosen ? chosen.code : '';
+    select.onclick = event => event.stopPropagation();
+    select.onchange = event => {
+      event.stopPropagation();
+      const code = select.value;
+      if (code) sourceSelections.set(key, { key, code });
+      else sourceSelections.delete(key);
+
+      // For a unique QName, update the item note at the same time. For duplicated
+      // attributes the server syncs the building-level source and records the
+      // attribute mapping in the PR body.
+      if ((qnameCount.get(leaf.qname) || 0) === 1) {
+        srcChanges.delete(leaf.qname);
+        if (code && code !== orig) {
+          srcChanges.set(leaf.qname, {
+            kind: 'src', qname: leaf.qname, old: orig, new: code,
+            label: `Source (${leaf.label})`, ownerKey: key,
+          });
+        }
+      }
+      renderCards();
+      renderChangeBar();
+    };
+    box.appendChild(select);
+    td.appendChild(box);
+    if (!chosen) td.closest('tr').classList.add('needsSource');
+    return;
+  }
+
+  // Unchanged rows behave as before: show the optional item-note chip only when the QName is unique.
+  if (!SRC_GROUPS.has(group)) return;
+  if ((qnameCount.get(leaf.qname) || 0) > 1) return;
+
+  const wrap = document.createElement('span');
+  wrap.className = 'srcwrap';
+  wrap.onclick = e => e.stopPropagation();
+
+  // With an item note -> code-only chip / without -> "+ Source" shown on hover
+  const chip = document.createElement('span');
+  if (cur) {
+    chip.className = 'srcchip tokki' + (pend ? ' edited' : '');
+    chip.textContent = t('editor.src_chip', 'Source {code}', {code: cur});
+    chip.title = t('editor.src_chip_title', 'Item-specific source: {src} — click to change', {src: codeLong(info, cur)});
+  } else {
+    chip.className = 'srcchip add';
+    chip.textContent = t('editor.src_add_chip', '+ Source');
+    chip.title = t('editor.src_add_title', 'Inherits the default ({src}). Click to add an item-specific source', {src: srcUpperLong(info)});
+  }
+  wrap.appendChild(chip);
+
+  // Dropdown (opening it shows code + name). Made transparent and overlaid on the chip
+  const sel = document.createElement('select');
+  const o0 = document.createElement('option');
+  o0.value = '';
+  o0.textContent = t('editor.src_inherit_option', '(no item note — inherit the default: {src})', {src: srcUpperLong(info)});
+  sel.appendChild(o0);
+  if (cur && !(cur in table)) {
+    const ox = document.createElement('option');
+    ox.value = cur; ox.textContent = t('editor.src_out_of_list', '{code} (not in the list)', {code: cur});
+    sel.appendChild(ox);
+  }
+  for (const [code, label] of Object.entries(table)) {
+    const o = document.createElement('option');
+    o.value = code;
+    o.textContent = `${code}　${label}`;
+    sel.appendChild(o);
+  }
+  sel.value = cur;
+  sel.onclick = e => e.stopPropagation();
+  sel.onchange = e => {
+    e.stopPropagation();
+    const v = sel.value;
+    if (v === orig) {
+      srcChanges.delete(leaf.qname);
+    } else if (v === '') {
+      alert(t('editor.src_delete_unsupported', 'Removing an existing item-specific source is not supported yet (you can revert pre-PR changes with "Discard changes")'));
+      sel.value = cur;
+      return;
+    } else {
+      srcChanges.set(leaf.qname, {
+        kind: 'src', qname: leaf.qname, old: orig, new: v,
+        label: `Source note (${leaf.label})`,
+      });
+    }
+    renderCards();
+    renderChangeBar();
+  };
+  wrap.appendChild(sel);
+  td.appendChild(wrap);
+}
+
+function paintValueCell(td, leaf) {
+  td.innerHTML = displayValue(leaf);
+  if (leaf.readonly) { td.classList.add('ro'); return; }
+  td.classList.add('editable');
+  if (changes.has(leafKey(leaf))) td.classList.add('edited');
+  td.title = t('editor.click_to_edit', 'Click to edit');
+  td.onclick = () => beginEdit(td, leaf);
+}
+
+// ---- Inline editing ----
+function beginEdit(td, leaf) {
+  if (td.querySelector('.editbox')) return;
+  const pend = changes.get(leafKey(leaf));
+  const cur = pend ? pend.new : leaf.value;
+  td.onclick = null;
+  td.innerHTML = '';
+
+  let box;
+  if (leaf.codelist && codelists[leaf.codelist]) {
+    box = document.createElement('select');
+    const table = codelists[leaf.codelist];
+    if (!(cur in table)) {
+      const o = document.createElement('option');
+      o.value = cur; o.textContent = t('editor.current_out_of_list', '{code} (current value, not in the list)', {code: cur}); box.appendChild(o);
+    }
+    for (const [code, label] of Object.entries(table)) {
+      const o = document.createElement('option');
+      o.value = code; o.textContent = `${code}　${label}`;
+      box.appendChild(o);
+    }
+    box.value = cur;
+  } else {
+    box = document.createElement('input');
+    box.type = 'text';
+    box.value = cur;
+  }
+  box.className = 'editbox';
+  td.appendChild(box);
+  box.focus();
+  if (box.select) try { box.select(); } catch (e) {}
+
+  const finish = commit => {
+    let v = box.value;
+    if (commit && v !== cur) {
+      if (/[<>]/.test(v)) { alert(t('editor.err_no_angle_brackets', 'The characters < and > cannot be used in values')); v = cur; }
+      else if (leaf.uom && v.trim() !== '' && isNaN(Number(v))) {
+        alert(t('editor.err_numeric', '"{label}" must be a number (unit: {uom})', {label: leaf.label, uom: leaf.uom})); v = cur;
+      }
+    }
+    if (commit && v !== leaf.value) {
+      const key = leafKey(leaf);
+      changes.set(key, {
+        key,
+        tag: leaf.tag, index: leaf.index, old: leaf.value, new: v,
+        label: leaf.label + (leaf.codelist ? '' : ''),
+      });
+      if (!sourceSelections.has(key)) sourceFocusKey = key;
+    } else if (commit && v === leaf.value) {
+      const key = leafKey(leaf);
+      changes.delete(key);
+      sourceSelections.delete(key);
+      const owned = srcChanges.get(leaf.qname);
+      if (owned && owned.ownerKey === key) srcChanges.delete(leaf.qname);
+    }
+    renderCards();
+    renderChangeBar();
+  };
+  box.onblur = () => finish(true);
+  box.onkeydown = e => {
+    if (e.key === 'Enter') { box.onblur = null; finish(true); }
+    if (e.key === 'Escape') { box.onblur = null; finish(false); }
+  };
+  if (box.tagName === 'SELECT') box.onchange = () => { box.onblur = null; finish(true); };
+}
+
+// ---- Change bar / PR ----
+function allChanges() { return [...changes.values(), ...srcChanges.values()]; }
+let pretestPassed = false;
+
+function proposalPayload() {
+  return {
+    tile: currentTile.code,
+    gid: selected.gid,
+    buildingID: selected.buildingID,
+    reason: $('prReason').value,
+    changes: allChanges(),
+    sourceSelections: [...sourceSelections.values()],
+  };
+}
+
+function sourceLabelFor(key) {
+  const selectedSource = sourceSelections.get(key);
+  if (!selectedSource || !selected || !selected.src) return '';
+  const name = codeLabel(selected.src.codelist, selectedSource.code);
+  return name ? t('editor.source_name_code', '{name} ({code})', {name: name, code: selectedSource.code}) : selectedSource.code;
+}
+
+// The preview text is rendered by the server (/api/pr-preview) through the
+// same code that builds the real PR body, so it cannot drift from what is
+// posted and it speaks the repository's working language.
+function loadPrPreview(previewText, container) {
+  api('/api/pr-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(proposalPayload()),
+  }).then(res => {
+    previewText.textContent = res.summary ||
+      t('editor.preview_src_only', 'Updating source information.');
+    if (res.repoLang && window.LANG && res.repoLang !== window.LANG) {
+      const note = document.createElement('div');
+      note.className = 'pretestNote';
+      note.textContent = t('editor.pr_lang_note',
+        "This proposal will be written in {lang} — the working language of {city}'s reviewers. Your screen language is not affected.",
+        {lang: t('lang.' + res.repoLang, res.repoLang),
+         city: res.city || t('editor.this_city', 'this city')});
+      container.appendChild(note);
+    }
+  }).catch(() => {
+    previewText.textContent = t('editor.preview_unavailable',
+      'The description will be generated when you send.');
+  });
+}
+
+function renderChangeBar() {
+  const n = changes.size + srcChanges.size;
+  const missing = missingSourceKeys().length;
+  $('changeCount').innerHTML = changes.size
+    ? t('editor.changed_attrs', 'Changed attributes: <b>{n}</b>', {n: changes.size})
+    : (srcChanges.size ? t('editor.changed_sources', 'Source-info changes: <b>{n}</b>', {n: srcChanges.size})
+                       : t('editor.changed_attrs', 'Changed attributes: <b>{n}</b>', {n: 0}));
+  $('sourceStatus').textContent = missing
+    ? t('editor.status_pick_source', 'Choose a source ({n} left)', {n: missing})
+    : (changes.size ? t('editor.status_sources_done', '✓ Sources selected') : '');
+  $('sourceStatus').className = missing ? '' : 'ready';
+  $('btnDiscard').disabled = n === 0;
+  $('btnPr').disabled = n === 0 || missing > 0;
+  $('btnPr').title = missing ? t('editor.btn_pr_needs_sources', 'You can send once a source is chosen for every changed attribute') : '';
+  updateActionHint();
+}
+
+$('btnDiscard').onclick = () => {
+  if (changes.size + srcChanges.size && confirm(t('editor.confirm_discard_all', 'Discard all edits in progress?'))) {
+    changes.clear(); srcChanges.clear(); sourceSelections.clear(); renderCards(); renderChangeBar();
+  }
+};
+
+$('btnPr').onclick = () => {
+  if (!selected || changes.size + srcChanges.size === 0) return;
+  const missing = missingSourceKeys();
+  if (missing.length) {
+    alert(t('editor.alert_pick_all_sources', 'Choose a source for every changed attribute'));
+    sourceFocusKey = missing[0];
+    renderCards();
+    return;
+  }
+  const tbody = $('modalTable').querySelector('tbody');
+  tbody.innerHTML = '';
+  for (const c of changes.values()) {
+    const tr = tbody.insertRow();
+    tr.insertCell().textContent = c.label;
+    tr.insertCell().textContent = c.old || t('editor.blank_value', '(blank)');
+    tr.insertCell().textContent = c.new;
+    tr.insertCell().textContent = sourceLabelFor(c.key);
+  }
+  if (!changes.size) {
+    for (const c of srcChanges.values()) {
+      const tr = tbody.insertRow();
+      tr.insertCell().textContent = c.label;
+      tr.insertCell().textContent = c.old || t('editor.no_tokki_value', '(no item note)');
+      tr.insertCell().textContent = c.new;
+      tr.insertCell().textContent = '—';
+    }
+  }
+  $('prPreview').innerHTML = '<b>' + t('editor.preview_title', 'Automatically generated description') + '</b>';
+  const previewText = document.createElement('span');
+  previewText.textContent = t('editor.preview_loading', 'Generating the description…');
+  $('prPreview').appendChild(previewText);
+  loadPrPreview(previewText, $('prPreview'));
+  $('modalTarget').textContent =
+    t('editor.modal_target', 'Target: {id} (mesh {code} / one building only)',
+      {id: selected.buildingID || selected.gid, code: currentTile.code});
+  $('modalResult').innerHTML = '';
+  $('btnCancel').style.display = '';
+  $('btnPretest').style.display = '';
+  $('btnSubmit').style.display = '';
+  $('btnDoneClose').style.display = 'none';
+  $('pretestResult').innerHTML = '<div class="pretestNote">' +
+    t('editor.pretest_note_initial', 'Before sending, your changes are checked on this computer.') + '</div>';
+  pretestPassed = false;
+  $('btnPretest').disabled = false;
+  $('btnSubmit').disabled = true;
+  $('modalBack').style.display = 'flex';
+};
+
+function closePrModal() {
+  $('modalBack').style.display = 'none';
+  $('modalResult').innerHTML = '';
+}
+$('btnCancel').onclick = closePrModal;
+$('btnDoneClose').onclick = closePrModal;
+$('prReason').oninput = () => {
+  pretestPassed = false;
+  $('btnSubmit').disabled = true;
+  $('pretestResult').innerHTML = '<div class="pretestNote">' +
+    t('editor.pretest_note_rerun', 'Because the description changed, the pre-submission check runs again.') + '</div>';
+};
+
+$('btnPretest').onclick = async () => {
+  const btn = $('btnPretest');
+  btn.disabled = true;
+  $('btnSubmit').disabled = true;
+  $('pretestResult').innerHTML = '<div class="pretestNote"><span class="spinner"></span> ' +
+    t('editor.pretest_running', 'Checking on this computer…') + '</div>';
+  try {
+    const res = await api('/api/pretest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proposalPayload()),
+    });
+    pretestPassed = Boolean(res.passed);
+    const lead = pretestPassed
+      ? t('editor.pretest_pass', '✅ Passed the pre-submission check. You can send this.')
+      : t('editor.pretest_fail', '❌ Some items need attention. Please fix the items shown in red.');
+    const items = (res.checks || []).map(c => {
+      const icon = c.status === 'pass' ? '✓' : c.status === 'na' ? '−' : '✕';
+      return `<span class="pretestItem ${esc(c.status)}" title="${esc(c.detail || '')}">${icon} ${esc(c.label)}</span>`;
+    }).join('');
+    $('pretestResult').innerHTML = `<div class="pretestLead ${pretestPassed ? 'pass' : 'fail'}">${lead}</div>` +
+      `<div class="pretestItems">${items}</div>` +
+      (res.note ? `<div class="pretestNote">${esc(res.note)}</div>` : '');
+    $('btnSubmit').disabled = !pretestPassed;
+  } catch (e) {
+    pretestPassed = false;
+    $('pretestResult').innerHTML = `<div class="pretestLead fail">❌ ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+$('btnSubmit').onclick = async () => {
+  if (!pretestPassed) return;
+  $('btnSubmit').disabled = true;
+  $('btnPretest').disabled = true;
+  $('modalResult').innerHTML = '<span class="spinner"></span> ' +
+    t('editor.sending', 'Sending your changes. Please keep the browser open…');
+  try {
+    const res = await api('/api/pr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proposalPayload()),
+    });
+    let html = '';
+    if (res.prUrl) {
+      html = `<b>${t('editor.sent_done', '✅ Sending complete.')}</b><br>` +
+        t('editor.sent_wait_review', 'Awaiting review by the maintainer. You can close this screen.') +
+        `<br><a href="${res.prUrl}" target="_blank" rel="noopener">${t('editor.sent_view_github', 'View your submission on GitHub')}</a>`;
+    } else if (res.compareUrl) {
+      html = `<b>${t('editor.sent_needs_confirm', '⚠ Your change data reached GitHub. Only the final send confirmation is needed.')}</b>` +
+        `<br><a href="${res.compareUrl}" target="_blank" rel="noopener">${t('editor.sent_open_github', 'Open GitHub to finish sending')}</a>` +
+        `<br>` + t('editor.sent_github_steps', 'On the page that opens, press the green "Create pull request" button, then press the same button again on the confirmation screen.');
+    }
+    if (res.note) html += `<details><summary>${t('editor.details_summary', 'Details')}</summary>${esc(res.note)}</details>`;
+    $('modalResult').innerHTML = html;
+    pretestPassed = false;
+    if (res.prUrl) {
+      $('btnCancel').style.display = 'none';
+      $('btnPretest').style.display = 'none';
+      $('btnSubmit').style.display = 'none';
+      $('btnDoneClose').style.display = '';
+      $('btnDoneClose').focus();
+    }
+    changes.clear();
+    srcChanges.clear();
+    sourceSelections.clear();
+    $('prReason').value = '';
+    renderChangeBar();
+    refreshGitStatus();
+    // Reload the tile after editing to refresh the display (modal stays open)
+    const code = currentTile.code, gid = selected.gid;
+    const r2 = await api(`/api/tile/${code}`);
+    currentTile = r2.tile;
+    drawFootprints();
+    const b = currentTile.buildings.find(x => x.gid === gid);
+    if (b) selectBuilding(b, true);
+  } catch (e) {
+    $('modalResult').innerHTML = `<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`;
+    $('btnSubmit').disabled = !pretestPassed;
+    $('btnPretest').disabled = false;
+    refreshGitStatus();
+  }
+};
+
+
+// Show unexpected errors on screen (so beginners can see them without opening the console)
+window.addEventListener('error', ev => showErrBanner(ev.message));
+window.addEventListener('unhandledrejection', ev => showErrBanner(String(ev.reason)));
+function showErrBanner(msg) {
+  let b = document.getElementById('errBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'errBanner';
+    b.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);' +
+      'background:#c92a2a;color:#fff;padding:8px 16px;border-radius:8px;z-index:5000;' +
+      'font-size:12px;max-width:80vw;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+    b.onclick = () => b.remove();
+    document.body.appendChild(b);
+  }
+  b.textContent = t('editor.err_banner', '⚠ Error: {msg} (click to close)', {msg: msg});
+}
+
+init();
+</script>
+</body>
+</html>

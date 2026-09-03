@@ -1,0 +1,70 @@
+# Copyright (c) 2026 4dcitygml
+name: Usability suggestion or problem
+description: Suggestions about controls, explanations, display, accessibility, or helper features you would like.
+title: "[UX] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your suggestion. It does not have to be perfectly explained.
+        Knowing "what you were trying to do and where you had trouble" makes improvement much easier.
+
+        This issue is public. Do not include passwords, access tokens, personal
+        information, non-public documents, or unnecessary local file paths.
+  - type: dropdown
+    id: category
+    attributes:
+      label: Type of suggestion or problem
+      options:
+        - The controls are hard to understand
+        - The explanations or terms are hard to understand
+        - I cannot understand an error or how to fix it
+        - Accessibility
+        - A feature suggestion to make the work easier
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do
+      description: Describe what you wanted to accomplish, as far as you know.
+      placeholder: "e.g. Check the storey count of a building selected on the map and propose a correction"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Where did you have trouble
+      description: Describe the screen, the operation, the message shown, and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What would make it easier to use
+      description: Describe the display or behavior you would like, if any. A concrete proposal is not required.
+    validations:
+      required: false
+  - type: input
+    id: context
+    attributes:
+      label: Environment
+      description: If known, the tool name, OS, browser, and screen name.
+      placeholder: "e.g. Attribute editor / Windows 11 / Chrome / building attributes screen"
+    validations:
+      required: false
+  - type: input
+    id: building
+    attributes:
+      label: Target building / mesh
+      description: Only if it happened with a specific building, the uro:buildingID, mesh, or a shared URL.
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional notes
+      description: Screenshots that are OK to publish, or your current workaround, if any.
+    validations:
+      required: false

@@ -1,0 +1,1996 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="tex.title">CityGML Texture Editor</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --border: #dde1e6; --text: #1c2733;
+    --muted: #6b7785; --accent: #0969da; --edit: #fff3bf; --danger: #c92a2a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
+               font-size: 13px; color: var(--text); background: var(--bg); overflow: hidden; }
+  #app { display: grid; grid-template-columns: 420px 1fr; grid-template-rows: 44px 1fr; height: 100vh; }
+  #header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
+            padding: 0 14px; background: #24292f; color: #fff; }
+  #header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+  #cityLogo { height: 28px; }  /* Municipality logo (/city-logo; stays hidden if absent) */
+  #headerInfo { font-size: 12px; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; flex: 1; }
+  #left { display: grid; grid-template-rows: 45% 55%; border-right: 1px solid var(--border); min-width: 0; }
+  #map { width: 100%; height: 100%; }
+  #pane3d { position: relative; background: #000; border-top: 1px solid var(--border); }
+  #viewerFrame { width: 100%; height: 100%; border: 0; }
+  #pane3dEmpty { position: absolute; inset: 0; display: flex; align-items: center;
+                 justify-content: center; color: #8b949e; font-size: 12px; text-align: center; }
+  #right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #texHead { padding: 8px 14px 6px; border-bottom: 1px solid var(--border); background: var(--card);
+             display: flex; align-items: baseline; gap: 10px; }
+  #texTitle { font-size: 15px; font-weight: 600; }
+  #texSub { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  #texBody { flex: 1; overflow: auto; padding: 10px 14px; }
+  #facesEmpty { color: var(--muted); padding: 30px; text-align: center; }
+  /* Face list */
+  #faceGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+              gap: 8px; margin-bottom: 14px; }
+  .faceCard { background: var(--card); border: 2px solid var(--border); border-radius: 8px;
+              padding: 5px; cursor: pointer; text-align: center; position: relative; }
+  .faceCard:hover { border-color: #b6d4fe; }
+  .faceCard.selected { border-color: #d97706; box-shadow: 0 0 0 2px #fbbf2455; }
+  .faceCard.changed { background: var(--edit); }
+  .faceCard.disabled { opacity: .45; cursor: not-allowed; }
+  .faceCard canvas { width: 100%; height: 72px; object-fit: contain; background: #eee; border-radius: 4px; }
+  .wallCard { grid-column: span 2; }
+  .wallCard canvas { height: 120px; }
+  .faceCard .lbl { font-size: 10px; color: var(--muted); margin-top: 3px;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .faceCard .badge { position: absolute; top: 2px; right: 4px; font-size: 10px;
+                     background: #b8860b; color: #fff; border-radius: 8px; padding: 0 6px; }
+  /* Before/after comparison: 3D fixed on top, flat images below */
+  #comparisonPanel { display: none; margin-bottom: 14px; padding: 10px;
+                     border: 2px solid #9ec5fe; border-radius: 9px; background: #f4f8ff; }
+  #comparisonPanel h2 { margin: 0 0 4px; font-size: 13px; }
+  #comparisonPanel .compareHint { margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+  .compare3dGrid, .flatPair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                              gap: 8px; }
+  .compareView, .flatSide { min-width: 0; margin: 0; border: 1px solid var(--border);
+                            border-radius: 7px; overflow: hidden; background: #fff; }
+  .compareView figcaption, .flatSide figcaption { padding: 4px 7px; font-size: 11px;
+                                                   font-weight: 700; text-align: center; }
+  .compareView.before figcaption, .flatSide.before figcaption { color: #9b2c2c; background: #fff1f1; }
+  .compareView.after figcaption, .flatSide.after figcaption { color: #1c5d99; background: #eef6ff; }
+  .compareView iframe { display: block; width: 100%; height: 230px; border: 0; background: #000; }
+  #flatComparisonTitle { margin-top: 12px !important; }
+  #flatCompareGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+  .flatCompareItem { padding: 7px; border: 1px solid var(--border); border-radius: 7px; background: #fff; }
+  .flatCompareItem > b { display: block; margin-bottom: 5px; font-size: 11px; }
+  .flatSide canvas { display: block; width: 100%; height: 105px; object-fit: contain; background: #eee; }
+  .flatToneControl { display: grid; grid-template-columns: auto minmax(0, 1fr) 3.2em;
+                     gap: 6px; align-items: center; padding: 6px 7px; color: var(--muted);
+                     font-size: 10px; border-top: 1px solid var(--border); }
+  .flatToneControl input { width: 100%; min-width: 0; margin: 0; }
+  .flatToneControl output { text-align: right; font-variant-numeric: tabular-nums; }
+  /* Editing area */
+  #editor { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px 12px; display: none; }
+  #editor h2 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+  #drop { border: 2px dashed var(--border); border-radius: 8px; padding: 22px;
+          text-align: center; color: var(--muted); cursor: pointer; }
+  #drop.over { border-color: var(--accent); background: #eef4fd; }
+  #warpWrap { display: none; }
+  #warpCanvas { width: 100%; touch-action: none; border-radius: 6px; background: #222;
+                cursor: crosshair; display: block; }
+  .warpHint { font-size: 11px; color: var(--muted); margin: 6px 0; }
+  #editorBtns { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  button { font: inherit; border-radius: 6px; border: 1px solid var(--border);
+           background: #f6f8fa; padding: 6px 14px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #1f883d; border-color: #1f883d; color: #fff; font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button.comparing { background: #b45309; border-color: #b45309; color: #fff; }
+  /* Change bar */
+  #changeBar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+               border-top: 1px solid var(--border); background: var(--card); }
+  #changeCount b { color: #b8860b; }
+  .meshLabel { background: rgba(255,255,255,.85); border: 1px solid #888; border-radius: 3px;
+               padding: 1px 4px; font-size: 11px; font-family: ui-monospace, monospace; }
+  #loading { position: absolute; inset: 0; z-index: 2000; display: none; align-items: center;
+             justify-content: center; background: rgba(255,255,255,.6); font-weight: 600; }
+  /* Modal */
+  #modalBack { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
+               align-items: center; justify-content: center; z-index: 3000; }
+  #modal { background: #fff; border-radius: 10px; width: min(680px, 92vw); max-height: 88vh;
+           overflow: auto; padding: 18px 22px; }
+  #modal h2 { margin: 0 0 4px; font-size: 16px; }
+  #modal .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  #modal textarea { width: 100%; height: 90px; font: inherit; padding: 6px;
+                    border: 1px solid var(--border); border-radius: 6px; }
+  #modalBtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+  #modalResult { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  #modalResult a { color: var(--accent); font-weight: 600; }
+  #modalFaces { font-size: 12px; margin-bottom: 10px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc;
+             border-top-color: var(--accent); border-radius: 50%;
+             animation: spin .8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <img id="cityLogo" src="/city-logo" alt="" style="display:none" onload="this.style.display=''">
+    <h1 data-i18n="tex.title">CityGML Texture Editor</h1>
+    <span id="headerInfo" data-i18n="tex.hint_pick_mesh">Select a mesh</span>
+  </div>
+  <div id="left">
+    <div style="position:relative; min-height:0;">
+      <div id="map"></div>
+      <div id="loading"><span class="spinner"></span>&nbsp;<span data-i18n="tex.loading">Loading…</span></div>
+    </div>
+    <div id="pane3d">
+      <div id="pane3dEmpty" data-i18n="tex.pane3d_empty">Select a building to see it in 3D (click a LOD2 face to select that face)</div>
+      <iframe id="viewerFrame" style="display:none"></iframe>
+    </div>
+  </div>
+  <div id="right">
+    <div id="texHead">
+      <span id="texTitle" data-i18n="tex.tex_title">Texture</span>
+      <span id="texSub"></span>
+    </div>
+    <div id="texBody">
+      <div id="facesEmpty" data-i18n="tex.faces_empty">On the 2D map, select a building that has LOD2 (detailed shape)</div>
+      <div id="newAssignNote" data-i18n="tex.new_assign_note" style="display:none; background:#e7f5ff; border:1px solid #74c0fc;
+           border-radius:8px; padding:8px 12px; margin-bottom:10px; font-size:12px;">
+        🆕 This building has no textures yet. Pasting a photo assigns new textures (a new atlas image is created for this one building; walls without a photo stay blank)</div>
+      <section id="comparisonPanel" aria-live="polite">
+        <h2 data-i18n="tex.compare3d_title">3D comparison: before and after</h2>
+        <p class="compareHint" data-i18n="tex.compare3d_hint">Rotate or zoom either 3D view and the other follows the same viewpoint.</p>
+        <div class="compare3dGrid">
+          <figure class="compareView before">
+            <figcaption data-i18n="tex.before">Before</figcaption>
+            <iframe id="viewerBefore" data-i18n-title="tex.viewer_before_title" title="3D building before changes"></iframe>
+          </figure>
+          <figure class="compareView after">
+            <figcaption data-i18n="tex.after">After</figcaption>
+            <iframe id="viewerAfter" data-i18n-title="tex.viewer_after_title" title="3D building after changes"></iframe>
+          </figure>
+        </div>
+        <h2 id="flatComparisonTitle" data-i18n="tex.flat_compare_title">Flat image comparison: before and after</h2>
+        <p class="compareHint" data-i18n="tex.flat_compare_hint">The Before tone affects the comparison display only; the After tone is also applied to the submitted data and the 3D preview.</p>
+        <div id="flatCompareGrid"></div>
+      </section>
+      <div id="camLaunch" style="display:none; margin-bottom:10px;">
+        <button id="btnCamera" data-i18n="tex.btn_camera">📷 Paste from a single photo (camera alignment)</button>
+        <span style="font-size:11px; color:var(--muted); margin-left:8px;" data-i18n="tex.camera_hint">
+          One street-level photo updates every face visible in it (hidden areas keep their current texture)</span>
+      </div>
+      <div id="camEditor" style="display:none; background:var(--card); border:1px solid var(--border);
+           border-radius:8px; padding:10px 12px; margin-bottom:14px;">
+        <h2 style="font-size:12px; color:var(--muted); margin:0 0 8px;" data-i18n="tex.cam_editor_title">Camera alignment — paste from a photo</h2>
+        <div id="camDrop" data-i18n="tex.cam_drop" style="border:2px dashed var(--border); border-radius:8px; padding:22px;
+             text-align:center; color:var(--muted); cursor:pointer;">
+          📷 Drag &amp; drop a photo of the building here (or click to choose one)</div>
+        <input type="file" id="camFileInput" accept="image/*" style="display:none">
+        <div id="camWork" style="display:none;">
+          <div id="camBaseWarn" data-i18n="tex.cam_base_warn" style="display:none; background:#fff3bf; border:2px solid #d97706;
+               border-radius:6px; padding:8px 10px; margin:6px 0; font-size:13px; font-weight:600;">
+            ⚠️ You picked a bottom point — in the photo, click directly below the roof corner (where it meets the ground), not the base of the wall (on buildings with overhanging roofs, the wall base does not match the model)</div>
+          <p class="warpHint" id="camHint" data-i18n="tex.cam_hint">
+            1. Click a marker in the 3D view (yellow = corner, orange = face center) → 2. click the same spot in the photo; repeat for at least 6 pairs. The selected marker turns large and orange (pick corners where they are clearly visible; face centers are easier for bands, eaves, etc.). Matched points get the same number in the photo and the 3D view.</p>
+          <canvas id="camCanvas" style="width:100%; border-radius:6px; background:#222;
+                  cursor:crosshair; display:block;"></canvas>
+          <div id="camPairs" style="font-size:11px; margin:6px 0; color:var(--muted);"></div>
+          <div id="editorBtns2" style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+            <button id="btnCamSolve" class="primary" disabled data-i18n="tex.btn_cam_solve">Align</button>
+            <button id="btnCamCandidates" disabled data-i18n="tex.btn_cam_candidates">Create paste candidates</button>
+            <button id="btnCamResetPairs" data-i18n="tex.btn_cam_reset_pairs">Redo matched points</button>
+            <button id="btnCamPhoto" data-i18n="tex.btn_repick_photo">Choose another photo</button>
+            <button id="btnCamClose" data-i18n="tex.btn_cam_close">Close</button>
+          </div>
+          <div id="camFaces" style="margin-top:8px;"></div>
+          <div id="camApplyBar" style="display:none; margin-top:8px;">
+            <div class="toneRow" style="margin-bottom:6px; font-size:11px; color:var(--muted);
+                 display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+              <label><span data-i18n="tex.tone_match">Match the original face tone</span>
+                <input type="range" id="toneStrengthB" min="0" max="100" value="70" style="vertical-align:middle; width:90px">
+                <span id="toneStrengthBv">70%</span></label>
+              <label><span data-i18n="tex.tone_bright">Brightness</span> <input type="range" id="toneBrightB" min="-30" max="30" value="0"
+                style="vertical-align:middle; width:70px"></label>
+              <label><span data-i18n="tex.tone_temp">Color temperature</span> <input type="range" id="toneTempB" min="-20" max="20" value="0"
+                style="vertical-align:middle; width:70px"></label>
+              <span data-i18n="tex.tone_reapply_note">(after changing, press "Create paste candidates" again to apply)</span>
+            </div>
+            <button id="btnCamApply" class="primary" data-i18n="tex.btn_cam_apply">Apply to checked faces</button>
+          </div>
+        </div>
+      </div>
+      <div id="faceGrid"></div>
+      <div id="editor">
+        <h2 id="editorTitle" data-i18n="tex.editor_title">Replace the face photo</h2>
+        <div id="drop" data-i18n="tex.drop">📷 Drag &amp; drop a photo here (or click to choose one)</div>
+        <input type="file" id="fileInput" accept="image/*" style="display:none">
+        <div id="warpWrap">
+          <p class="warpHint" data-i18n="tex.warp_hint">Drag the four corners of the wall into place in the order top-left → top-right → bottom-right → bottom-left (tilt and keystone distortion are corrected automatically)</p>
+          <canvas id="warpCanvas"></canvas>
+          <div class="toneRow" style="margin-top:8px; font-size:11px; color:var(--muted);
+               display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+            <label><span data-i18n="tex.tone_match">Match the original face tone</span>
+              <input type="range" id="toneStrengthA" min="0" max="100" value="70" style="vertical-align:middle; width:90px">
+              <span id="toneStrengthAv">70%</span></label>
+            <label><span data-i18n="tex.tone_bright">Brightness</span> <input type="range" id="toneBrightA" min="-30" max="30" value="0"
+              style="vertical-align:middle; width:70px"></label>
+            <label><span data-i18n="tex.tone_temp">Color temperature</span> <input type="range" id="toneTempA" min="-20" max="20" value="0"
+              style="vertical-align:middle; width:70px"></label>
+          </div>
+          <div id="editorBtns">
+            <button id="btnApply" class="primary" data-i18n="tex.btn_apply">Apply (preview)</button>
+            <button id="btnResetCorners" data-i18n="tex.btn_reset_corners">Reset corners</button>
+            <button id="btnCancelPhoto" data-i18n="tex.btn_repick_photo">Choose another photo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="changeBar">
+      <span id="changeCount" data-i18n="tex.changed_faces_zero">Changed faces: 0</span>
+      <span style="flex:1"></span>
+      <button id="btnCompare" disabled data-i18n="tex.btn_compare_before" data-i18n-title="tex.btn_compare_title" title="Switches the editing 3D view on the left to the state before your changes">Switch editing 3D to before</button>
+      <button id="btnDiscard" disabled data-i18n="tex.btn_discard">Discard changes</button>
+      <button id="btnPr" class="primary" disabled data-i18n="tex.btn_pr">Create pull request</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalBack">
+  <div id="modal">
+    <h2 data-i18n="tex.modal_title_update">Create a pull request (texture update)</h2>
+    <div class="sub" id="modalTarget"></div>
+    <div id="modalFaces"></div>
+    <label style="font-weight:600; font-size:12px;" data-i18n="tex.reason_label">Reason / supporting details (e.g. shooting date; included in the PR body)</label>
+    <textarea id="prReason" data-i18n-placeholder="tex.reason_placeholder" placeholder="e.g. Updated with facade photos taken on site in 2026-07 (appearance after renovation)"></textarea>
+    <label style="display:block; margin-top:10px; font-size:12px; line-height:1.6;">
+      <input type="checkbox" id="ccAgree" style="vertical-align:-2px">
+      <span data-i18n="tex.cc0_text">The photos I used are my own work and I provide them as CC0 1.0 (public domain dedication; I will not assert moral rights). I confirm that no faces, license plates, etc. are visible, and I have read the </span>
+      <a href="https://github.com/4dcitygml/sample-tokyo-station/blob/main/docs/data-contribution-policy.md"
+         target="_blank" rel="noopener" data-i18n="tex.cc0_policy_link">data contribution policy</a><span data-i18n="tex.cc0_text_after">.</span>
+    </label>
+    <div id="modalBtns">
+      <button id="btnCancel" data-i18n="tex.btn_cancel">Cancel</button>
+      <button id="btnSubmit" class="primary" disabled data-i18n="tex.btn_create">Create</button>
+    </div>
+    <div id="modalResult"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+// ---- State ----
+let tiles = [];
+let currentTile = null;          // {code, buildings:[...]} lightweight version (/api/tile)
+let selected = null;             // selected building {gid, buildingID}
+let faces = [];                  // faces from /api/faces
+let walls = [];                  // walls from /api/faces (normal-direction clusters = facades)
+let faceByPid = new Map();
+let selectedFace = null;         // target of single-face editing (roofs etc.)
+let selectedWall = null;         // target of wall editing
+let atlases = new Map();         // img -> {image: HTMLImage, work: canvas|null, faces:Set(pid)}
+let changedFaces = new Set();    // changed pids
+let newAtlas = null;             // new-assignment mode (#119): {img, width, height} (untextured buildings only)
+let virtualNew = false;          // whether new-assignment mode is active (used to disable auto tone correction etc.)
+let footprintLayers = new Map();
+let photo = null;                // uploaded photo Image
+let corners = [];                // 4 corners on the photo [ [x,y]×4 ] (photo pixel coordinates)
+let dragIdx = -1;
+let comparisonKey = '';
+let comparisonCameraDriver = null;
+let comparisonCameraTimer = null;
+const flatToneAdjustments = new Map();
+const flatToneCommitted = new Map();
+const flatToneTargets = new Map();
+const flatToneBases = new Map();
+
+const CITY_MAP = window.CITY_MAP || {};
+const map = L.map('map').setView(CITY_MAP.center || [35.681, 139.767], CITY_MAP.zoom || 13);
+if (CITY_MAP.tiles === 'osm') {
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+} else {
+  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+    { maxZoom: 18, attribution: t('tex.gsi_attribution', 'GSI Tiles') }).addTo(map);
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+  if (j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ---- Initialization / map (same shape as the attribute editor) ----
+async function init() {
+  const res = await api('/api/tiles');
+  tiles = res.tiles;
+  const layer = L.layerGroup().addTo(map);
+  for (const t of tiles) {
+    if (!t.bounds) continue;
+    const rect = L.rectangle([[t.bounds[0], t.bounds[1]], [t.bounds[2], t.bounds[3]]],
+      { color: '#0969da', weight: 1, fillOpacity: 0.04 }).addTo(layer);
+    rect.bindTooltip(`${t.code}`, { sticky: true });
+    rect.on('click', () => loadTile(t.code));
+  }
+  const q = new URLSearchParams(location.search);
+  const toneLabel = q.get('label');
+  if (toneLabel) {
+    window._toneLabel = toneLabel;
+    document.querySelector('#header h1').textContent +=
+      t('tex.h1_tone_label', '｜{label}', { label: toneLabel });
+    document.querySelector('#header').style.background = '#1a3a5c';  // also change the color to avoid mixing up tabs
+  }
+  if (q.get('tile')) {
+    await loadTile(q.get('tile'));
+    if (q.get('bid') && currentTile) {
+      const b = currentTile.buildings.find(x => x.gid === q.get('bid'));
+      if (b) selectBuilding(b, true);
+    }
+  } else if (tiles.length) {
+    const bs = tiles.map(t => t.bounds).filter(Boolean);
+    if (bs.length) map.fitBounds(bs.map(b => [[b[0], b[1]], [b[2], b[3]]]).flat());
+  }
+}
+
+async function loadTile(code) {
+  if (!confirmDiscard()) return;
+  $('loading').style.display = 'flex';
+  try {
+    const res = await api(`/api/tile/${code}`);
+    currentTile = res.tile;
+    clearSelection();
+    footprintLayers.forEach(l => map.removeLayer(l));
+    footprintLayers.clear();
+    for (const b of currentTile.buildings) {
+      if (!b.footprint || b.footprint.length < 3) continue;
+      const poly = L.polygon(b.footprint,
+        { color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35 }).addTo(map);
+      poly.on('click', () => selectBuilding(b));
+      poly.bindTooltip(b.buildingID || b.gid, { sticky: true });
+      footprintLayers.set(b.gid, poly);
+    }
+    const b0 = currentTile.bounds;
+    if (b0) map.fitBounds([[b0[0], b0[1]], [b0[2], b0[3]]]);
+    $('headerInfo').textContent = t('tex.header_tile_info', 'Mesh {code} ({n} buildings)',
+      { code: currentTile.code, n: currentTile.buildings.length });
+    updateUrl();
+  } catch (e) {
+    alert(t('tex.load_error', 'Load error: ') + e.message);
+  } finally {
+    $('loading').style.display = 'none';
+  }
+}
+
+function confirmDiscard() {
+  if (changedFaces.size === 0) return true;
+  return confirm(t('tex.confirm_discard_move', 'You have unsubmitted edits. Discard them and move on? (PRs are created per building)'));
+}
+
+function clearSelection() {
+  selected = null; faces = []; walls = []; faceByPid.clear();
+  selectedFace = null; selectedWall = null;
+  atlases.clear(); changedFaces.clear(); photo = null;
+  newAtlas = null; virtualNew = false;
+  $('newAssignNote').style.display = 'none';
+  if (typeof camReset === 'function') camReset();
+  $('camLaunch').style.display = 'none';
+  renderFaces(); renderChangeBar(); hideEditor();
+  $('texTitle').textContent = t('tex.tex_title', 'Texture');
+  $('texSub').textContent = '';
+  $('facesEmpty').style.display = 'block';
+  $('viewerFrame').style.display = 'none';
+  $('pane3dEmpty').style.display = 'flex';
+  resetComparison();
+}
+
+async function selectBuilding(b, keep) {
+  if (!keep && selected && selected.gid !== b.gid && !confirmDiscard()) return;
+  if (!selected || selected.gid !== b.gid) {
+    atlases.clear(); changedFaces.clear(); resetComparison();
+  }
+  footprintLayers.forEach((poly, gid) => poly.setStyle(
+    gid === b.gid
+      ? { color: '#d97706', weight: 2.5, fillColor: '#fbbf24', fillOpacity: 0.55 }
+      : { color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35 }));
+  selected = b;
+  $('texTitle').textContent = b.buildingID || b.gid;
+  $('texSub').textContent = b.gid;
+  updateUrl();
+  // 3D (starts in LOD2 view; face-pick integration)
+  const url = `/viewer.html?v=3&tile=${currentTile.code}&bid=${encodeURIComponent(b.gid)}`;
+  $('viewerFrame').src = url;
+  $('viewerFrame').style.display = 'block';
+  $('pane3dEmpty').style.display = 'none';
+  if (b.center) map.panTo(b.center);
+  // Face list
+  $('loading').style.display = 'flex';
+  try {
+    const res = await api(`/api/faces/${currentTile.code}/${encodeURIComponent(b.gid)}`);
+    faces = res.faces;
+    newAtlas = res.newAtlas || null;
+    virtualNew = !!newAtlas;
+    $('newAssignNote').style.display = virtualNew ? 'block' : 'none';
+    walls = (res.walls || []).slice().sort((a, b2) =>
+      (b2.s1 - b2.s0) * (b2.h1 - b2.h0) - (a.s1 - a.s0) * (a.h1 - a.h0));
+    faceByPid = new Map(faces.map(f => [f.pid, f]));
+    $('facesEmpty').style.display = faces.length ? 'none' : 'block';
+    $('facesEmpty').textContent = faces.length ? '' :
+      t('tex.no_lod2_walls', 'This building has no LOD2 (detailed shape) wall faces');
+    camReset();
+    $('camLaunch').style.display = faces.length ? 'block' : 'none';
+    await loadAtlases();
+    renderFaces();
+  } catch (e) {
+    alert(t('tex.faces_error', 'Error loading the face list: ') + e.message);
+  } finally {
+    $('loading').style.display = 'none';
+  }
+}
+
+function updateUrl() {
+  const q = new URLSearchParams();
+  if (currentTile) q.set('tile', currentTile.code);
+  if (selected) q.set('bid', selected.gid);
+  if (window._toneLabel) q.set('label', window._toneLabel);
+  history.replaceState(null, '', '?' + q.toString());
+}
+
+// ---- Atlas loading ----
+function loadImage(url) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error(t('tex.image_load_error', 'Could not load the image (if it is an iPhone HEIC file, convert it to JPEG)')));
+    img.src = url;
+  });
+}
+async function loadAtlases() {
+  const imgs = [...new Set(faces.map(f => f.img))];
+  for (const img of imgs) {
+    if (atlases.has(img)) continue;
+    if (newAtlas && img === newAtlas.img) {
+      // New-assignment mode: locally generate a blank atlas at the server-planned size (no original image exists)
+      const c = document.createElement('canvas');
+      c.width = newAtlas.width; c.height = newAtlas.height;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#b7bcc3'; ctx.fillRect(0, 0, c.width, c.height);
+      const image = await loadImage(c.toDataURL('image/png'));
+      atlases.set(img, { image, work: null, faces: new Set() });
+    } else {
+      const image = await loadImage(`/textures/${img}`);
+      atlases.set(img, { image, work: null, faces: new Set() });
+    }
+  }
+}
+function workCanvas(img) {
+  // Working copy for baking (created from the original atlas on first access)
+  const a = atlases.get(img);
+  if (!a.work) {
+    const c = document.createElement('canvas');
+    c.width = a.image.naturalWidth; c.height = a.image.naturalHeight;
+    c.getContext('2d').drawImage(a.image, 0, 0);
+    a.work = c;
+  }
+  return a.work;
+}
+
+// UV -> pixel rectangle inside the atlas (same math as the viewer's cropUV; CityGML's UV origin is bottom-left)
+function uvRect(face) {
+  const a = atlases.get(face.img);
+  const iw = a.image.naturalWidth, ih = a.image.naturalHeight;
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const [u, v] of face.uv) {
+    if (u < u0) u0 = u;
+    if (u > u1) u1 = u;
+    if (v < v0) v0 = v;
+    if (v > v1) v1 = v;
+  }
+  return {
+    x: Math.round(u0 * iw), y: Math.round((1 - v1) * ih),
+    w: Math.max(1, Math.round((u1 - u0) * iw)),
+    h: Math.max(1, Math.round((v1 - v0) * ih)),
+  };
+}
+
+// ---- Face list rendering (wall groups + other faces) ----
+function faceThumb(f, maxW, maxH, version = 'current') {
+  const cv = document.createElement('canvas');
+  const r = uvRect(f);
+  const scale = Math.min(1, maxW / r.w, maxH / r.h);
+  cv.width = Math.max(1, Math.round(r.w * scale));
+  cv.height = Math.max(1, Math.round(r.h * scale));
+  const atlas = atlases.get(f.img);
+  const src = version === 'before' ? atlas.image : (atlas.work || atlas.image);
+  cv.getContext('2d').drawImage(src, r.x, r.y, r.w, r.h, 0, 0, cv.width, cv.height);
+  return cv;
+}
+
+// Composite wall thumbnail: lay each member face's current texture at its position in wall coordinates
+function wallThumb(w, maxW, maxH, version = 'current') {
+  const wm = w.s1 - w.s0, hm = w.h1 - w.h0;
+  const scale = Math.min(maxW / wm, maxH / hm);
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(wm * scale));
+  cv.height = Math.max(1, Math.round(hm * scale));
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#dde1e6'; ctx.fillRect(0, 0, cv.width, cv.height);
+  for (const pid of w.faces) {
+    const f = faceByPid.get(pid);
+    if (!f || !f.ring2d) continue;
+    const ss = f.ring2d.map(p => p[0]), hs = f.ring2d.map(p => p[1]);
+    const x = (Math.min(...ss) - w.s0) * scale;
+    const y = (w.h1 - Math.max(...hs)) * scale;
+    const fw = (Math.max(...ss) - Math.min(...ss)) * scale;
+    const fh = (Math.max(...hs) - Math.min(...hs)) * scale;
+    if (fw < 0.5 || fh < 0.5) continue;
+    const r = uvRect(f);
+    const atlas = atlases.get(f.img);
+    const src = version === 'before' ? atlas.image : (atlas.work || atlas.image);
+    ctx.drawImage(src, r.x, r.y, r.w, r.h, x, y, Math.max(1, fw), Math.max(1, fh));
+  }
+  return cv;
+}
+
+function comparisonUrl(role) {
+  return `/viewer.html?v=4&tile=${currentTile.code}&bid=${encodeURIComponent(selected.gid)}` +
+    `&compare=${role}`;
+}
+
+function resetComparison() {
+  comparisonKey = '';
+  comparisonCameraDriver = null;
+  clearTimeout(comparisonCameraTimer);
+  flatToneAdjustments.clear();
+  flatToneCommitted.clear();
+  flatToneTargets.clear();
+  flatToneBases.clear();
+  $('comparisonPanel').style.display = 'none';
+  $('flatCompareGrid').innerHTML = '';
+  for (const id of ['viewerBefore', 'viewerAfter']) {
+    const frame = $(id);
+    frame.src = 'about:blank';
+  }
+}
+
+function changedFacePreview(f) {
+  const atlas = atlases.get(f.img);
+  if (!atlas || !atlas.work) return null;
+  const r = uvRect(f);
+  const canvas = document.createElement('canvas');
+  canvas.width = r.w; canvas.height = r.h;
+  canvas.getContext('2d').drawImage(atlas.work, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+function syncComparisonViewer(role) {
+  const frame = $(role === 'before' ? 'viewerBefore' : 'viewerAfter');
+  if (!frame.contentWindow) return;
+  frame.contentWindow.postMessage({ type: 'showTexture' }, '*');
+  const items = [];
+  if (role === 'after') {
+    for (const pid of changedFaces) {
+      const face = faceByPid.get(pid);
+      const dataUrl = face && changedFacePreview(face);
+      if (dataUrl) items.push({ pid, dataUrl });
+    }
+  }
+  frame.contentWindow.postMessage(
+    { type: 'setPreviewTextures', items, on: role === 'after' }, '*');
+}
+
+function applyFlatTone(canvas, value) {
+  canvas.style.filter = `brightness(${100 + Number(value)}%)`;
+}
+
+function captureFlatToneBases(pids) {
+  for (const pid of pids) {
+    if (flatToneBases.has(pid) || !changedFaces.has(pid)) continue;
+    const face = faceByPid.get(pid);
+    if (!face) continue;
+    const r = uvRect(face);
+    const source = workCanvas(face.img);
+    const base = document.createElement('canvas');
+    base.width = r.w; base.height = r.h;
+    base.getContext('2d').drawImage(source, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    flatToneBases.set(pid, base);
+  }
+}
+
+function applySubmittedTone(pids, value) {
+  const targets = [...new Set(pids)].filter(pid => changedFaces.has(pid) && faceByPid.has(pid));
+  if (!targets.length) return;
+  if (Number(value) !== 0) captureFlatToneBases(targets);
+  for (const pid of targets) {
+    const base = flatToneBases.get(pid);
+    if (!base) continue;
+    const face = faceByPid.get(pid);
+    const r = uvRect(face);
+    const adjusted = document.createElement('canvas');
+    adjusted.width = base.width; adjusted.height = base.height;
+    const ctx = adjusted.getContext('2d');
+    ctx.filter = `brightness(${100 + Number(value)}%)`;
+    ctx.drawImage(base, 0, 0);
+    workCanvas(face.img).getContext('2d').drawImage(adjusted, r.x, r.y);
+    atlases.get(face.img).faces.add(pid);
+    postToViewer({
+      type: 'previewTexture', pid,
+      dataUrl: adjusted.toDataURL('image/jpeg', 0.92),
+    });
+  }
+}
+
+function restoreFlatToneBases(pids) {
+  for (const pid of pids) {
+    const base = flatToneBases.get(pid);
+    const face = faceByPid.get(pid);
+    if (!base || !face) continue;
+    const r = uvRect(face);
+    workCanvas(face.img).getContext('2d').drawImage(base, r.x, r.y);
+    flatToneBases.delete(pid);
+  }
+}
+
+function reapplyCommittedTones(pids) {
+  const changed = new Set(pids);
+  for (const [key, targets] of flatToneTargets) {
+    if (!key.endsWith('|after') || !targets.some(pid => changed.has(pid))) continue;
+    const value = flatToneCommitted.get(key) || 0;
+    if (value) applySubmittedTone(targets, value);
+  }
+}
+
+function replaceFlatCanvas(target, fresh) {
+  target.width = fresh.width; target.height = fresh.height;
+  target.getContext('2d').drawImage(fresh, 0, 0);
+}
+
+function appendFlatComparison(label, pids, beforeFactory, afterFactory) {
+  const item = document.createElement('div');
+  item.className = 'flatCompareItem';
+  const title = document.createElement('b');
+  title.textContent = label;
+  item.appendChild(title);
+  const pair = document.createElement('div');
+  pair.className = 'flatPair';
+  for (const [version, factory] of [['before', beforeFactory], ['after', afterFactory]]) {
+    const canvas = factory();
+    const figure = document.createElement('figure');
+    figure.className = `flatSide ${version}`;
+    const caption = document.createElement('figcaption');
+    caption.textContent = version === 'before' ? t('tex.before', 'Before') : t('tex.after', 'After');
+    figure.appendChild(caption);
+    figure.appendChild(canvas);
+
+    const toneKey = `${comparisonKey}|${label}|${version}`;
+    flatToneTargets.set(toneKey, pids.slice());
+    const toneValue = flatToneAdjustments.get(toneKey) || 0;
+    let committedValue = flatToneCommitted.get(toneKey) || 0;
+    const toneControl = document.createElement('label');
+    toneControl.className = 'flatToneControl';
+    const toneText = document.createElement('span');
+    toneText.textContent = version === 'before'
+      ? t('tex.tone_display', 'Display tone') : t('tex.tone_submit', 'Submitted tone');
+    const toneInput = document.createElement('input');
+    toneInput.type = 'range';
+    toneInput.min = '-50';
+    toneInput.max = '50';
+    toneInput.step = '1';
+    toneInput.value = String(toneValue);
+    toneInput.setAttribute('aria-label', version === 'before'
+      ? t('tex.tone_aria_display', 'Display tone for {label} {version}',
+          { label, version: caption.textContent })
+      : t('tex.tone_aria_submit', 'Submitted tone for {label} {version}',
+          { label, version: caption.textContent }));
+    const toneOutput = document.createElement('output');
+    const showToneValue = value => {
+      const numeric = Number(value);
+      flatToneAdjustments.set(toneKey, numeric);
+      toneOutput.value = `${numeric > 0 ? '+' : ''}${numeric}`;
+      toneOutput.textContent = toneOutput.value;
+      if (version === 'before') {
+        applyFlatTone(canvas, numeric);
+      } else {
+        const ratio = (100 + numeric) / (100 + committedValue);
+        canvas.style.filter = `brightness(${ratio * 100}%)`;
+      }
+    };
+    toneInput.addEventListener('input', () => showToneValue(toneInput.value));
+    if (version === 'after') {
+      toneInput.addEventListener('change', () => {
+        const numeric = Number(toneInput.value);
+        flatToneAdjustments.set(toneKey, numeric);
+        applySubmittedTone(pids, numeric);
+        flatToneCommitted.set(toneKey, numeric);
+        committedValue = numeric;
+        canvas.style.filter = 'none';
+        replaceFlatCanvas(canvas, afterFactory());
+        renderFaces();
+        syncComparisonViewer('after');
+      });
+    }
+    toneControl.append(toneText, toneInput, toneOutput);
+    figure.appendChild(toneControl);
+    showToneValue(toneValue);
+    if (version === 'after' && toneValue === committedValue) canvas.style.filter = 'none';
+    pair.appendChild(figure);
+  }
+  item.appendChild(pair);
+  $('flatCompareGrid').appendChild(item);
+}
+
+function renderFlatComparisons() {
+  $('flatCompareGrid').innerHTML = '';
+  const grouped = new Set();
+  walls.forEach((wall, index) => {
+    if (!wall.faces.some(pid => changedFaces.has(pid))) return;
+    wall.faces.forEach(pid => grouped.add(pid));
+    appendFlatComparison(
+      t('tex.wall_name', 'Wall {id}', { id: String.fromCharCode(65 + index) }),
+      wall.faces.filter(pid => changedFaces.has(pid)),
+      () => wallThumb(wall, 260, 130, 'before'),
+      () => wallThumb(wall, 260, 130, 'after'),
+    );
+  });
+  for (const pid of changedFaces) {
+    if (grouped.has(pid)) continue;
+    const face = faceByPid.get(pid);
+    if (!face) continue;
+    appendFlatComparison(
+      t('tex.roof_name', 'Roof etc. {n}', { n: faces.indexOf(face) + 1 }),
+      [pid],
+      () => faceThumb(face, 180, 120, 'before'),
+      () => faceThumb(face, 180, 120, 'after'),
+    );
+  }
+}
+
+function renderComparison() {
+  if (!selected || changedFaces.size === 0) {
+    if (comparisonKey) resetComparison();
+    return;
+  }
+  $('comparisonPanel').style.display = 'block';
+  const key = `${currentTile.code}/${selected.gid}`;
+  if (comparisonKey !== key) {
+    comparisonKey = key;
+    $('viewerBefore').src = comparisonUrl('before');
+    $('viewerAfter').src = comparisonUrl('after');
+    requestAnimationFrame(() => $('comparisonPanel').scrollIntoView(
+      { behavior: 'smooth', block: 'start' }));
+  }
+  renderFlatComparisons();
+  syncComparisonViewer('before');
+  syncComparisonViewer('after');
+}
+
+function renderFaces() {
+  const grid = $('faceGrid');
+  grid.innerHTML = '';
+  // --- Wall (facade) cards ---
+  walls.forEach((w, wi) => {
+    const members = w.faces.map(p => faceByPid.get(p)).filter(Boolean);
+    if (!members.length) return;
+    const card = document.createElement('div');
+    card.className = 'faceCard wallCard';
+    const editable = members.every(f => f.editable);
+    if (!editable) card.classList.add('disabled');
+    if (members.some(f => changedFaces.has(f.pid))) card.classList.add('changed');
+    if (selectedWall && selectedWall.id === w.id) card.classList.add('selected');
+    card.appendChild(wallThumb(w, 220, 130));
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = t('tex.wall_card_label', 'Wall {id} ({n} faces, {w}×{h} m)', {
+      id: String.fromCharCode(65 + wi), n: members.length,
+      w: (w.s1 - w.s0).toFixed(1), h: (w.h1 - w.h0).toFixed(1),
+    });
+    card.appendChild(lbl);
+    if (members.some(f => changedFaces.has(f.pid))) {
+      const b = document.createElement('span'); b.className = 'badge'; b.textContent = t('tex.badge_changed', 'Changed');
+      card.appendChild(b);
+    }
+    card.onclick = () => { if (editable) selectWall(w); };
+    card.onmouseenter = () => postToViewer({ type: 'highlightFace', pids: w.faces });
+    card.onmouseleave = () => restoreHighlight();
+    grid.appendChild(card);
+  });
+  // --- Faces not belonging to a wall (roofs etc.): largest first ---
+  const loose = faces.filter(f => f.wall === null || f.wall === undefined)
+    .slice().sort((a, b2) => {
+      const ra = uvRect(a), rb = uvRect(b2);
+      return rb.w * rb.h - ra.w * ra.h;
+    });
+  loose.forEach(f => {
+    const card = document.createElement('div');
+    card.className = 'faceCard';
+    if (!f.editable) card.classList.add('disabled');
+    if (changedFaces.has(f.pid)) card.classList.add('changed');
+    if (selectedFace && selectedFace.pid === f.pid) card.classList.add('selected');
+    const r = uvRect(f);
+    card.appendChild(faceThumb(f, 140, 100));
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    lbl.textContent = t('tex.roof_card_label', 'Roof etc. ({w}×{h}px{shared})', {
+      w: r.w, h: r.h,
+      shared: f.shared > 1 ? t('tex.roof_card_shared', ', shared by {n}', { n: f.shared }) : '',
+    });
+    card.appendChild(lbl);
+    if (changedFaces.has(f.pid)) {
+      const b = document.createElement('span'); b.className = 'badge'; b.textContent = t('tex.badge_changed', 'Changed');
+      card.appendChild(b);
+    }
+    card.title = f.editable ? f.pid : t('tex.shared_uneditable', 'Cannot edit: this face is shared by multiple buildings');
+    card.onclick = () => { if (f.editable) selectFace(f.pid); };
+    card.onmouseenter = () => postToViewer({ type: 'highlightFace', pids: [f.pid] });
+    card.onmouseleave = () => restoreHighlight();
+    grid.appendChild(card);
+  });
+}
+
+function restoreHighlight() {
+  if (selectedWall) postToViewer({ type: 'highlightFace', pids: selectedWall.faces });
+  else if (selectedFace) postToViewer({ type: 'highlightFace', pids: [selectedFace.pid] });
+  else postToViewer({ type: 'highlightFace', pids: [] });
+}
+
+function selectFace(pid) {
+  selectedFace = faceByPid.get(pid) || null;
+  selectedWall = null;
+  renderFaces();
+  postToViewer({ type: 'highlightFace', pids: selectedFace ? [pid] : [] });
+  if (selectedFace) {
+    $('editor').style.display = 'block';
+    $('editorTitle').textContent = t('tex.editor_title_single', 'Replace the face photo (roof etc., single face)');
+    resetPhoto();
+    $('editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } else {
+    hideEditor();
+  }
+}
+
+function selectWall(w) {
+  selectedWall = w;
+  selectedFace = null;
+  renderFaces();
+  postToViewer({ type: 'highlightFace', pids: w.faces });
+  $('editor').style.display = 'block';
+  const wi = walls.indexOf(w);
+  const wallParams = {
+    id: String.fromCharCode(65 + wi), n: w.faces.length,
+    w: (w.s1 - w.s0).toFixed(1), h: (w.h1 - w.h0).toFixed(1),
+  };
+  $('editorTitle').textContent = virtualNew
+    ? t('tex.wall_editor_title_new',
+        'Assign new photos to wall {id} (auto-split across {n} faces; whole wall {w}×{h} m)',
+        wallParams)
+    : t('tex.wall_editor_title_replace',
+        'Replace the photos of wall {id} (auto-split across {n} faces; whole wall {w}×{h} m)',
+        wallParams);
+  resetPhoto();
+  $('editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function hideEditor() { $('editor').style.display = 'none'; resetPhoto(); }
+function postToViewer(msg) {
+  const f = $('viewerFrame');
+  if (f.style.display !== 'none' && f.contentWindow) f.contentWindow.postMessage(msg, '*');
+}
+// Face pick from 3D (select the wall if the face belongs to one)
+window.addEventListener('message', ev => {
+  const m = ev.data || {};
+  if (m.type === 'facePick' && faceByPid.has(m.pid)) {
+    const f = faceByPid.get(m.pid);
+    if (f.wall !== null && f.wall !== undefined) {
+      const w = walls.find(x => x.id === f.wall);
+      if (w) { selectWall(w); return; }
+    }
+    if (f.editable) selectFace(m.pid);
+  } else if (m.type === 'viewerReady' && (m.role === 'before' || m.role === 'after')) {
+    syncComparisonViewer(m.role);
+  } else if (m.type === 'viewerReady' && !m.role &&
+             ev.source === $('viewerFrame').contentWindow) {
+    if ($('camEditor').style.display !== 'none') {
+      postToViewer({ type: 'vertexMode', on: true });
+      syncCameraMarkers();
+    }
+  } else if (m.type === 'viewerCamera' && m.state &&
+             (m.role === 'before' || m.role === 'after')) {
+    const beforeWindow = $('viewerBefore').contentWindow;
+    const afterWindow = $('viewerAfter').contentWindow;
+    const expected = m.role === 'before' ? beforeWindow : afterWindow;
+    if (ev.source !== expected) return;
+    if (comparisonCameraDriver && comparisonCameraDriver !== ev.source) return;
+    comparisonCameraDriver = ev.source;
+    clearTimeout(comparisonCameraTimer);
+    comparisonCameraTimer = setTimeout(() => { comparisonCameraDriver = null; }, 180);
+    const target = m.role === 'before' ? afterWindow : beforeWindow;
+    if (target) target.postMessage({ type: 'setCamera', state: m.state }, '*');
+  }
+});
+
+// ---- Photo upload / corner dragging ----
+$('drop').onclick = () => $('fileInput').click();
+$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('drop').ondrop = e => {
+  e.preventDefault(); $('drop').classList.remove('over');
+  if (e.dataTransfer.files[0]) loadPhoto(e.dataTransfer.files[0]);
+};
+$('fileInput').onchange = e => { if (e.target.files[0]) loadPhoto(e.target.files[0]); };
+
+function resetPhoto() {
+  photo = null; corners = [];
+  $('drop').style.display = 'block';
+  $('warpWrap').style.display = 'none';
+}
+$('btnCancelPhoto').onclick = resetPhoto;
+
+function loadPhoto(file) {
+  const url = URL.createObjectURL(file);
+  loadImage(url).then(img => {
+    photo = img;
+    const w = img.naturalWidth, h = img.naturalHeight;
+    corners = [[w*.1, h*.1], [w*.9, h*.1], [w*.9, h*.9], [w*.1, h*.9]];
+    $('drop').style.display = 'none';
+    $('warpWrap').style.display = 'block';
+    drawWarpCanvas();
+  }).catch(e => alert(e.message));
+}
+$('btnResetCorners').onclick = () => {
+  if (!photo) return;
+  const w = photo.naturalWidth, h = photo.naturalHeight;
+  corners = [[w*.1, h*.1], [w*.9, h*.1], [w*.9, h*.9], [w*.1, h*.9]];
+  drawWarpCanvas();
+};
+
+function canvasScale() {
+  const cv = $('warpCanvas');
+  return cv.width / photo.naturalWidth;
+}
+function drawWarpCanvas() {
+  const cv = $('warpCanvas');
+  const maxW = cv.parentElement.clientWidth - 2 || 380;
+  const s = Math.min(1, maxW / photo.naturalWidth, 420 / photo.naturalHeight);
+  cv.width = Math.round(photo.naturalWidth * s);
+  cv.height = Math.round(photo.naturalHeight * s);
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(photo, 0, 0, cv.width, cv.height);
+  // Corners and frame
+  ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  corners.forEach(([x, y], i) => {
+    const px = x * s, py = y * s;
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  });
+  ctx.closePath(); ctx.stroke();
+  const names = [t('tex.corner_tl', 'top left'), t('tex.corner_tr', 'top right'),
+                 t('tex.corner_br', 'bottom right'), t('tex.corner_bl', 'bottom left')];
+  corners.forEach(([x, y], i) => {
+    const px = x * s, py = y * s;
+    ctx.fillStyle = i === dragIdx ? '#ff6b6b' : '#ffd54f';
+    ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), px, py + 3.5);
+    ctx.fillStyle = 'rgba(0,0,0,.65)';
+    ctx.fillRect(px - 14, py + 9, 28, 13);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(names[i], px, py + 19);
+  });
+}
+function canvasPos(ev) {
+  const cv = $('warpCanvas');
+  const rect = cv.getBoundingClientRect();
+  const x = (ev.clientX - rect.left) * (cv.width / rect.width) / canvasScale();
+  const y = (ev.clientY - rect.top) * (cv.height / rect.height) / canvasScale();
+  return [x, y];
+}
+$('warpCanvas').addEventListener('pointerdown', ev => {
+  if (!photo) return;
+  const [x, y] = canvasPos(ev);
+  let best = -1, bestD = 1e18;
+  corners.forEach(([cx, cy], i) => {
+    const d = (cx - x) ** 2 + (cy - y) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  dragIdx = best;
+  $('warpCanvas').setPointerCapture(ev.pointerId);
+  drawWarpCanvas();
+});
+$('warpCanvas').addEventListener('pointermove', ev => {
+  if (dragIdx < 0 || !photo) return;
+  const [x, y] = canvasPos(ev);
+  corners[dragIdx] = [
+    Math.max(0, Math.min(photo.naturalWidth, x)),
+    Math.max(0, Math.min(photo.naturalHeight, y)),
+  ];
+  drawWarpCanvas();
+});
+$('warpCanvas').addEventListener('pointerup', () => { dragIdx = -1; drawWarpCanvas(); });
+
+// ---- Keystone correction (homography + grid-subdivided drawing) ----
+function solveHomography(src, dst) {
+  // Solve the projective transform H for dst(x,y) -> src(u,v) (8-unknown system, Gaussian elimination)
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = dst[i], [u, v] = src[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
+  }
+  const n = 8;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    if (Math.abs(M[c][c]) < 1e-12) throw new Error(t('tex.invalid_corners', 'Invalid corner positions (e.g. all on one line)'));
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  const h = M.map((row, i) => row[n] / row[i]);
+  return (x, y) => {
+    const d = h[6] * x + h[7] * y + 1;
+    return [(h[0] * x + h[1] * y + h[2]) / d, (h[3] * x + h[4] * y + h[5]) / d];
+  };
+}
+
+function warpPhoto(w, h) {
+  // Projective-correct corners (4 corners on the photo) into a w×h rectangle and return a canvas
+  const H = solveHomography(corners, [[0, 0], [w, 0], [w, h], [0, h]]);
+  return warpByMapping(photo, H, w, h);
+}
+
+// Generic warp: draw with mapFn(x,y)->[sx,sy] giving the src coordinate for each point of dst(w×h)
+// (grid subdivision; each cell approximated affinely. Also used by camera-alignment mode)
+function warpByMapping(srcImg, mapFn, w, h) {
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  const ctx = out.getContext('2d');
+  const N = 16;
+  for (let gy = 0; gy < N; gy++) {
+    for (let gx = 0; gx < N; gx++) {
+      const x0 = w * gx / N, x1 = w * (gx + 1) / N;
+      const y0 = h * gy / N, y1 = h * (gy + 1) / N;
+      drawTri(ctx, mapFn, [x0, y0], [x1, y0], [x0, y1]);
+      drawTri(ctx, mapFn, [x1, y1], [x0, y1], [x1, y0]);
+    }
+  }
+  function drawTri(ctx2, Hf, p0, p1, p2) {
+    const s0 = Hf(p0[0], p0[1]), s1 = Hf(p1[0], p1[1]), s2 = Hf(p2[0], p2[1]);
+    if (!s0 || !s1 || !s2) return;
+    // Affine coefficients for src triangle -> dst triangle
+    const den = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s2[0] - s0[0]) * (s1[1] - s0[1]);
+    if (Math.abs(den) < 1e-9) return;
+    const a = ((p1[0] - p0[0]) * (s2[1] - s0[1]) - (p2[0] - p0[0]) * (s1[1] - s0[1])) / den;
+    const bb = ((p1[1] - p0[1]) * (s2[1] - s0[1]) - (p2[1] - p0[1]) * (s1[1] - s0[1])) / den;
+    const c = ((p2[0] - p0[0]) * (s1[0] - s0[0]) - (p1[0] - p0[0]) * (s2[0] - s0[0])) / den;
+    const d = ((p2[1] - p0[1]) * (s1[0] - s0[0]) - (p1[1] - p0[1]) * (s2[0] - s0[0])) / den;
+    const e = p0[0] - a * s0[0] - c * s0[1];
+    const f = p0[1] - bb * s0[0] - d * s0[1];
+    ctx2.save();
+    ctx2.beginPath();
+    ctx2.moveTo(p0[0], p0[1]); ctx2.lineTo(p1[0], p1[1]); ctx2.lineTo(p2[0], p2[1]);
+    ctx2.closePath(); ctx2.clip();
+    ctx2.setTransform(a, bb, c, d, e, f);
+    ctx2.drawImage(srcImg, 0, 0);
+    ctx2.restore();
+    ctx2.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  return out;
+}
+
+// ---- Baking (single face / wall) ----
+function affineLSQ(srcPts, dstPts) {
+  // Affine least squares for src(X,Y) -> dst(U,V): U=aX+cY+e, V=bX+dY+f
+  let sxx = 0, sxy = 0, sx = 0, syy = 0, sy = 0;
+  let sux = 0, suy = 0, su = 0, svx = 0, svy = 0, sv = 0;
+  const n = srcPts.length;
+  for (let i = 0; i < n; i++) {
+    const [X, Y] = srcPts[i], [U, V] = dstPts[i];
+    sxx += X * X; sxy += X * Y; sx += X; syy += Y * Y; sy += Y;
+    sux += U * X; suy += U * Y; su += U;
+    svx += V * X; svy += V * Y; sv += V;
+  }
+  const M = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]];
+  const det3 = A =>
+    A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) -
+    A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) +
+    A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+  const det = det3(M);
+  if (Math.abs(det) < 1e-6) return null;  // degenerate (band-like faces etc.)
+  const solve = rhs => {
+    const out = [];
+    for (let col = 0; col < 3; col++) {
+      const C = M.map(r => r.slice());
+      for (let r = 0; r < 3; r++) C[r][col] = rhs[r];
+      out.push(det3(C) / det);
+    }
+    return out;
+  };
+  const [a, c, e] = solve([sux, suy, su]);
+  const [b, d, f] = solve([svx, svy, sv]);
+  return { a, b, c, d, e, f };
+}
+
+function applySingleFace() {
+  restoreFlatToneBases([selectedFace.pid]);
+  const r = uvRect(selectedFace);
+  const warped = toneCorrect(warpPhoto(r.w, r.h), 'A', replacedTarget([selectedFace]));
+  const work = workCanvas(selectedFace.img);
+  work.getContext('2d').drawImage(warped, r.x, r.y);
+  atlases.get(selectedFace.img).faces.add(selectedFace.pid);
+  changedFaces.add(selectedFace.pid);
+  postToViewer({ type: 'previewTexture', pid: selectedFace.pid,
+                 dataUrl: warped.toDataURL('image/jpeg', 0.92) });
+  reapplyCommittedTones([selectedFace.pid]);
+}
+
+function applyWall() {
+  const w = selectedWall;
+  restoreFlatToneBases(w.faces);
+  // Resolution [px/m]: estimated from member faces' texture density (take the max; long side capped at 4096px)
+  let ppm = 0;
+  for (const pid of w.faces) {
+    const f = faceByPid.get(pid);
+    const r = uvRect(f);
+    const ss = f.ring2d.map(p => p[0]);
+    const sw = Math.max(...ss) - Math.min(...ss);
+    if (sw > 0.1) ppm = Math.max(ppm, r.w / sw);
+  }
+  ppm = Math.min(ppm || 50, 4096 / Math.max(w.s1 - w.s0, w.h1 - w.h0));
+  const W = Math.max(8, Math.round((w.s1 - w.s0) * ppm));
+  const H = Math.max(8, Math.round((w.h1 - w.h0) * ppm));
+  const wallImg = toneCorrect(warpPhoto(W, H), 'A',
+    replacedTarget(w.faces.map(p2 => faceByPid.get(p2)).filter(Boolean)));  // target = current tone of the wall being replaced
+
+  for (const pid of w.faces) {
+    const f = faceByPid.get(pid);
+    const a = atlases.get(f.img);
+    const work = workCanvas(f.img);
+    const iw = a.image.naturalWidth, ih = a.image.naturalHeight;
+    const r = uvRect(f);
+    // Solve the affine from vertex correspondences (ring2d[i] <-> uv[i]). Wall image coordinates are y-down
+    const n = Math.min(f.uv.length, f.ring2d.length);
+    const src = [], dst = [];
+    for (let i = 0; i < n; i++) {
+      src.push([(f.ring2d[i][0] - w.s0) * ppm, (w.h1 - f.ring2d[i][1]) * ppm]);
+      dst.push([f.uv[i][0] * iw, (1 - f.uv[i][1]) * ih]);
+    }
+    const T = affineLSQ(src, dst);
+    const ctx = work.getContext('2d');
+    if (T) {
+      ctx.save();
+      ctx.beginPath();
+      dst.forEach(([u, v], i) => i ? ctx.lineTo(u, v) : ctx.moveTo(u, v));
+      ctx.closePath();
+      ctx.clip();
+      ctx.setTransform(T.a, T.b, T.c, T.d, T.e, T.f);
+      ctx.drawImage(wallImg, 0, 0);
+      ctx.restore();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    } else {
+      // Degenerate faces (extreme bands etc.): paste via wall-coordinate bbox -> UV rectangle mapping
+      const ss = f.ring2d.map(p => p[0]), hs = f.ring2d.map(p => p[1]);
+      const sx = (Math.min(...ss) - w.s0) * ppm;
+      const sy = (w.h1 - Math.max(...hs)) * ppm;
+      const swp = Math.max(1, (Math.max(...ss) - Math.min(...ss)) * ppm);
+      const shp = Math.max(1, (Math.max(...hs) - Math.min(...hs)) * ppm);
+      ctx.drawImage(wallImg, sx, sy, swp, shp, r.x, r.y, r.w, r.h);
+    }
+    a.faces.add(pid);
+    changedFaces.add(pid);
+    const pv = document.createElement('canvas');
+    pv.width = r.w; pv.height = r.h;
+    pv.getContext('2d').drawImage(work, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    postToViewer({ type: 'previewTexture', pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
+  }
+  reapplyCommittedTones(w.faces);
+}
+
+// ---- Apply button (branches on wall / single face) ----
+$('btnApply').onclick = () => {
+  if (!photo) return;
+  try {
+    if (selectedWall) applyWall();
+    else if (selectedFace) applySingleFace();
+    else return;
+  } catch (e) { alert(e.message); return; }
+  if (comparing) setCompare(false);
+  postToViewer({ type: 'showTexture' });  // show real textures on surrounding faces too, to check blending
+  renderFaces();
+  renderChangeBar();
+  resetPhoto();
+};
+
+function renderChangeBar() {
+  $('changeCount').innerHTML =
+    t('tex.changed_faces', 'Changed faces: {n}', { n: `<b>${changedFaces.size}</b>` });
+  $('btnDiscard').disabled = changedFaces.size === 0;
+  $('btnPr').disabled = changedFaces.size === 0;
+  $('btnCompare').disabled = changedFaces.size === 0;
+  if (changedFaces.size === 0 && comparing) setCompare(false);
+  renderComparison();
+}
+
+// ---- Before/after comparison (temporarily turn the 3D previews off) ----
+let comparing = false;
+function setCompare(on) {
+  comparing = on;
+  $('btnCompare').classList.toggle('comparing', on);
+  $('btnCompare').textContent = on
+    ? t('tex.btn_compare_after', 'Switch editing 3D back to after')
+    : t('tex.btn_compare_before', 'Switch editing 3D to before');
+  postToViewer({ type: 'setPreviewsOn', on: !on });
+}
+$('btnCompare').onclick = () => setCompare(!comparing);
+$('btnDiscard').onclick = () => {
+  if (changedFaces.size && confirm(t('tex.confirm_discard_all', 'Discard all pending edits?'))) {
+    for (const a of atlases.values()) { a.work = null; a.faces.clear(); }
+    changedFaces.clear();
+    postToViewer({ type: 'clearPreviews' });
+    renderFaces(); renderChangeBar();
+  }
+};
+
+// ---- PR ----
+$('btnPr').onclick = () => {
+  if (!selected || changedFaces.size === 0) return;
+  document.querySelector('#modal h2').textContent =
+    virtualNew ? t('tex.modal_title_new', 'Create a pull request (new textures)')
+               : t('tex.modal_title_update', 'Create a pull request (texture update)');
+  $('modalTarget').textContent =
+    t('tex.modal_target', 'Target: {name} (mesh {code} / this one building only)',
+      { name: selected.buildingID || selected.gid, code: currentTile.code });
+  const imgs = [...atlases.entries()].filter(([, a]) => a.work && a.faces.size);
+  $('modalFaces').innerHTML =
+    (virtualNew
+      ? t('tex.modal_faces_new', 'Changed faces: {n} / new images added: {m}:',
+          { n: changedFaces.size, m: imgs.length })
+      : t('tex.modal_faces_update', 'Changed faces: {n} / images updated: {m}:',
+          { n: changedFaces.size, m: imgs.length })) + '<br>' +
+    imgs.map(([img, a]) => t('tex.modal_faces_item', '- {img} ({n} faces)', {
+      img: virtualNew
+        ? t('tex.modal_faces_new_atlas', '(new atlas, one image per building)') : esc(img),
+      n: a.faces.size,
+    })).join('<br>');
+  $('modalResult').innerHTML = '';
+  $('ccAgree').checked = false;
+  $('btnSubmit').disabled = true;
+  $('modalBack').style.display = 'flex';
+};
+$('ccAgree').onchange = () => { $('btnSubmit').disabled = !$('ccAgree').checked; };
+$('btnCancel').onclick = () => { $('modalBack').style.display = 'none'; };
+
+function canvasToBase64(canvas) {
+  return new Promise(res => canvas.toBlob(blob => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1]);
+    fr.readAsDataURL(blob);
+  }, 'image/jpeg', 0.92));
+}
+
+$('btnSubmit').onclick = async () => {
+  $('btnSubmit').disabled = true;
+  $('modalResult').innerHTML = '<span class="spinner"></span> ' +
+    t('tex.pr_progress', 'Generating images → apply → branch → commit → push → PR …');
+  try {
+    const images = [];
+    for (const [img, a] of atlases.entries()) {
+      if (a.work && a.faces.size) {
+        images.push({ orig: img, data: await canvasToBase64(a.work) });
+      }
+    }
+    const res = await api('/api/pr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tile: currentTile.code,
+        gid: selected.gid,
+        faceCount: changedFaces.size,
+        reason: $('prReason').value,
+        consentCC0: $('ccAgree').checked,
+        images,
+      }),
+    });
+    let html = t('tex.pr_result_branch', '✅ Branch {branch} (commit {commit})',
+      { branch: `<b>${esc(res.branch)}</b>`, commit: esc(res.commit) });
+    if (res.prUrl) html += '<br>' + t('tex.pr_created', 'Pull request created: ') +
+      `<a href="${res.prUrl}" target="_blank" rel="noopener">${esc(res.prUrl)}</a>`;
+    else if (res.compareUrl) html += `<br><a href="${res.compareUrl}" target="_blank" rel="noopener">` +
+      t('tex.pr_create_here', 'Create the pull request from here') + '</a>';
+    if (res.note) html += `<br><span style="color:var(--muted)">${esc(res.note)}</span>`;
+    $('modalResult').innerHTML = html;
+    for (const a of atlases.values()) { a.work = null; a.faces.clear(); }
+    changedFaces.clear();
+    postToViewer({ type: 'clearPreviews' });
+    renderChangeBar();
+    // Reload (after the PR we're back on main, so the original textures are shown)
+    const code = currentTile.code, gid = selected.gid;
+    const r2 = await api(`/api/tile/${code}`);
+    currentTile = r2.tile;
+    const b = currentTile.buildings.find(x => x.gid === gid);
+    if (b) selectBuilding(b, true);
+  } catch (e) {
+    $('modalResult').innerHTML = '<span style="color:var(--danger)">' +
+      t('tex.pr_error', '❌ {msg}', { msg: esc(e.message) }) + '</span>';
+    $('btnSubmit').disabled = false;
+  }
+};
+
+// ==========================================================================
+// Tone correction (at submission) — pull the new photo toward "the current tone
+// of the faces being replaced". After the citywide batch conversion, sun/shade
+// directionality is baked in, so we match a per-face measured target instead of
+// a citywide goal (north faces stay north-like, south faces south-like).
+// In YCbCr, match mean/variance for Y but only the mean for Cb/Cr, and leave
+// chroma variance untouched (preserves intended color changes like repainting)
+// ==========================================================================
+let toneStandard = null;  // fallback when no target can be measured
+fetch('/api/tonestandard').then(r => r.json())
+  .then(j => { toneStandard = j.standard; }).catch(() => {});
+
+function readTone(which) {
+  return {
+    strength: Number($('toneStrength' + which).value) / 100,
+    bright: Number($('toneBright' + which).value),
+    temp: Number($('toneTemp' + which).value),
+  };
+}
+['A', 'B'].forEach(w => {
+  $('toneStrength' + w).oninput = () =>
+    { $('toneStrength' + w + 'v').textContent = $('toneStrength' + w).value + '%'; };
+});
+
+// Region statistics of a canvas/image (Y mean, Y std dev, Cb/Cr means; transparent pixels excluded, subsampled)
+function regionStats(src, sx, sy0, sw, sh) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
+  c.getContext('2d').drawImage(src, sx, sy0, sw, sh, 0, 0, c.width, c.height);
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0, sy = 0, sy2 = 0, scb = 0, scr = 0;
+  for (let i = 0; i < d.length; i += 16) {
+    if (d[i + 3] === 0) continue;
+    const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    sy += y; sy2 += y * y;
+    scb += 128 + (d[i + 2] - y) * 0.564;
+    scr += 128 + (d[i] - y) * 0.713;
+    n++;
+  }
+  if (n < 16) return null;
+  const my = sy / n;
+  return {
+    y_mean: my,
+    y_std: Math.sqrt(Math.max(1, sy2 / n - my * my)),
+    cb_mean: scb / n,
+    cr_mean: scr / n,
+  };
+}
+
+// Use statistics of the faces being replaced (current appearance = work preferred) as the target
+function replacedTarget(faceList) {
+  if (virtualNew) return null;  // new assignment: the "current tone" is a blank placeholder, so don't match it
+  let n = 0, acc = { y_mean: 0, y_std: 0, cb_mean: 0, cr_mean: 0 };
+  for (const f of faceList) {
+    const a = atlases.get(f.img);
+    const src = a.work || a.image;
+    const r = uvRect(f);
+    const st = regionStats(src, r.x, r.y, r.w, r.h);
+    if (!st) continue;
+    const w = r.w * r.h;
+    acc.y_mean += st.y_mean * w; acc.y_std += st.y_std * w;
+    acc.cb_mean += st.cb_mean * w; acc.cr_mean += st.cr_mean * w;
+    n += w;
+  }
+  if (!n) return null;
+  return { y_mean: acc.y_mean / n, y_std: acc.y_std / n,
+           cb_mean: acc.cb_mean / n, cr_mean: acc.cr_mean / n };
+}
+
+function toneCorrect(canvas, which, target) {
+  const t = readTone(which);
+  // For new assignments, don't apply the citywide standard (tone_standard) either (cities without a standard use the photo as-is)
+  const ref0 = target || (virtualNew ? null : toneStandard);
+  if ((!ref0 || t.strength === 0) && !t.bright && !t.temp) return canvas;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  // Statistics (transparent pixels excluded; subsampled every 4 pixels)
+  let n = 0, sy = 0, sy2 = 0, scb = 0, scr = 0;
+  for (let i = 0; i < d.length; i += 16) {
+    if (d[i + 3] === 0) continue;
+    const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    sy += y; sy2 += y * y;
+    scb += 128 + (d[i + 2] - y) * 0.564;
+    scr += 128 + (d[i] - y) * 0.713;
+    n++;
+  }
+  if (!n) return canvas;
+  const my = sy / n, sd = Math.sqrt(Math.max(1, sy2 / n - my * my));
+  const mcb = scb / n, mcr = scr / n;
+  const ref = ref0 || { y_mean: my, y_std: sd, cb_mean: mcb, cr_mean: mcr };
+  const k = ref0 ? t.strength : 0;
+  const gain = 1 + k * (Math.min(1.6, ref.y_std / sd) - 1);
+  const yOff = k * (ref.y_mean - my) + t.bright;
+  const cbOff = k * (ref.cb_mean - mcb) - t.temp * 0.8;
+  const crOff = k * (ref.cr_mean - mcr) + t.temp * 0.8;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    let y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const cb = 128 + (b - y) * 0.564 + cbOff;
+    const cr = 128 + (r - y) * 0.713 + crOff;
+    y = (y - my) * gain + my + yOff;
+    d[i]     = Math.max(0, Math.min(255, y + 1.403 * (cr - 128)));
+    d[i + 1] = Math.max(0, Math.min(255, y - 0.344 * (cb - 128) - 0.714 * (cr - 128)));
+    d[i + 2] = Math.max(0, Math.min(255, y + 1.773 * (cb - 128)));
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+// ==========================================================================
+// Camera-alignment mode — PnP (DLT) + projective texturing
+// Estimate the camera pose of a single photo from correspondence points and bake
+// onto every face visible in it. Invisible pixels (back faces, self-occlusion,
+// outside the frame) keep the original texture.
+// ==========================================================================
+let camPhoto = null;          // photo Image
+let camPairs = [];            // [{p3:[x,y,z] (local m), p2:[px,py] (photo px), pt:[lon,lat,z]}]
+let camPending3D = null;      // vertex chosen in the 3D view, awaiting a photo click
+let camPendingPoint = null;   // [lon,lat,z] for sending the same point back to the 3D side
+let camP = null;              // 3x4 camera matrix (local m -> photo px)
+let camGeom = null;           // full-face geometry from /api/building (for occlusion)
+let camOrigin = null;         // local coordinate origin [lon0, lat0]
+let camZmin = null;           // lowest elevation of the building's LOD2 [m] (used to detect bottom vertices, #109/#119)
+let camCandidates = [];       // [{pid, patch: canvas, bbox, coverage, checked}]
+
+function camLL2m(p) {
+  const kx = 111320 * Math.cos(camOrigin[1] * Math.PI / 180), ky = 110540;
+  return [(p[0] - camOrigin[0]) * kx, (p[1] - camOrigin[1]) * ky, p[2]];
+}
+
+// ---- Linear algebra helpers ----
+function gaussSolve(M, rhs) {
+  // Solve M x = rhs (partial pivoting). M is n×n (destructive)
+  const n = rhs.length;
+  const A = M.map((row, i) => [...row, rhs[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k <= n; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  return A.map((row, i) => row[n] / row[i]);
+}
+
+function lsqSolve(rows, rhs, n) {
+  // Normal-equation solution of the overdetermined system rows·x ≈ rhs (rows: m×n)
+  const M = Array.from({ length: n }, () => new Array(n).fill(0));
+  const b = new Array(n).fill(0);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    for (let a = 0; a < n; a++) {
+      b[a] += r[a] * rhs[i];
+      for (let c = a; c < n; c++) M[a][c] += r[a] * r[c];
+    }
+  }
+  for (let a = 0; a < n; a++) for (let c = 0; c < a; c++) M[a][c] = M[c][a];
+  return gaussSolve(M, b);
+}
+
+// ---- DLT (with normalization): correspondence points -> 3x4 camera matrix ----
+function dltSolve(pairs) {
+  if (pairs.length < 6) return null;
+  // Hartley normalization
+  const c3 = [0, 0, 0], c2 = [0, 0];
+  for (const { p3, p2 } of pairs) {
+    c3[0] += p3[0]; c3[1] += p3[1]; c3[2] += p3[2];
+    c2[0] += p2[0]; c2[1] += p2[1];
+  }
+  const n = pairs.length;
+  c3.forEach((v, i) => c3[i] = v / n); c2.forEach((v, i) => c2[i] = v / n);
+  let d3 = 0, d2 = 0;
+  for (const { p3, p2 } of pairs) {
+    d3 += Math.hypot(p3[0] - c3[0], p3[1] - c3[1], p3[2] - c3[2]);
+    d2 += Math.hypot(p2[0] - c2[0], p2[1] - c2[1]);
+  }
+  const s3 = Math.sqrt(3) / (d3 / n || 1), s2 = Math.sqrt(2) / (d2 / n || 1);
+
+  // Least-squares for the 11 components of P in normalized coordinates (p34 fixed to 1)
+  const rows = [], rhs = [];
+  for (const { p3, p2 } of pairs) {
+    const X = (p3[0] - c3[0]) * s3, Y = (p3[1] - c3[1]) * s3, Z = (p3[2] - c3[2]) * s3;
+    const x = (p2[0] - c2[0]) * s2, y = (p2[1] - c2[1]) * s2;
+    rows.push([X, Y, Z, 1, 0, 0, 0, 0, -x * X, -x * Y, -x * Z]); rhs.push(x);
+    rows.push([0, 0, 0, 0, X, Y, Z, 1, -y * X, -y * Y, -y * Z]); rhs.push(y);
+  }
+  const p = lsqSolve(rows, rhs, 11);
+  if (!p) return null;
+  const Pn = [
+    [p[0], p[1], p[2], p[3]],
+    [p[4], p[5], p[6], p[7]],
+    [p[8], p[9], p[10], 1],
+  ];
+  // Denormalization: P = T2^-1 · Pn · T3 (T3: p -> normalized, T2^-1: normalized -> px)
+  const T3 = [
+    [s3, 0, 0, -s3 * c3[0]],
+    [0, s3, 0, -s3 * c3[1]],
+    [0, 0, s3, -s3 * c3[2]],
+    [0, 0, 0, 1],
+  ];
+  const T2inv = [
+    [1 / s2, 0, c2[0]],
+    [0, 1 / s2, c2[1]],
+    [0, 0, 1],
+  ];
+  const PnT3 = Array.from({ length: 3 }, (_, i) =>
+    Array.from({ length: 4 }, (_, j) =>
+      Pn[i][0] * T3[0][j] + Pn[i][1] * T3[1][j] + Pn[i][2] * T3[2][j] + Pn[i][3] * T3[3][j]));
+  const P = Array.from({ length: 3 }, (_, i) =>
+    Array.from({ length: 4 }, (_, j) =>
+      T2inv[i][0] * PnT3[0][j] + T2inv[i][1] * PnT3[1][j] + T2inv[i][2] * PnT3[2][j]));
+  // Fix the sign so that w>0 for points in front
+  let wpos = 0;
+  for (const { p3 } of pairs) {
+    const w = P[2][0] * p3[0] + P[2][1] * p3[1] + P[2][2] * p3[2] + P[2][3];
+    wpos += (w > 0 ? 1 : -1);
+  }
+  if (wpos < 0) for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++) P[i][j] = -P[i][j];
+  return P;
+}
+
+function camProject(P, p3) {
+  const w = P[2][0] * p3[0] + P[2][1] * p3[1] + P[2][2] * p3[2] + P[2][3];
+  return [
+    (P[0][0] * p3[0] + P[0][1] * p3[1] + P[0][2] * p3[2] + P[0][3]) / w,
+    (P[1][0] * p3[0] + P[1][1] * p3[1] + P[1][2] * p3[2] + P[1][3]) / w,
+    w,
+  ];
+}
+
+function camReprojError(P, pairs) {
+  let s = 0;
+  for (const { p3, p2 } of pairs) {
+    const [x, y] = camProject(P, p3);
+    s += (x - p2[0]) ** 2 + (y - p2[1]) ** 2;
+  }
+  return Math.sqrt(s / pairs.length);
+}
+
+// ---- Homography least squares (n>=4; face atlas px -> photo px) ----
+function homographyLSQ(src, dst) {
+  const rows = [], rhs = [];
+  for (let i = 0; i < src.length; i++) {
+    const [X, Y] = src[i], [x, y] = dst[i];
+    rows.push([X, Y, 1, 0, 0, 0, -x * X, -x * Y]); rhs.push(x);
+    rows.push([0, 0, 0, X, Y, 1, -y * X, -y * Y]); rhs.push(y);
+  }
+  const h = lsqSolve(rows, rhs, 8);
+  if (!h) return null;
+  return (X, Y) => {
+    const d = h[6] * X + h[7] * Y + 1;
+    if (Math.abs(d) < 1e-12) return null;
+    return [(h[0] * X + h[1] * Y + h[2]) / d, (h[3] * X + h[4] * Y + h[5]) / d];
+  };
+}
+
+// ---- Z-buffer (photo space, reduced resolution). Scanline fill supporting concave polygons ----
+function planeFit(pts2, vals) {
+  // Least-squares plane a x + b y + c for [x,y] -> val
+  const rows = pts2.map(([x, y]) => [x, y, 1]);
+  return lsqSolve(rows, vals, 3);
+}
+
+function scanlinePolygon(poly, cb) {
+  // Scan poly: [[x,y],...] with the even-odd rule and call cb(x, y) for each interior integer coordinate
+  const ys = poly.map(p => p[1]);
+  const y0 = Math.max(0, Math.floor(Math.min(...ys)));
+  const y1 = Math.ceil(Math.max(...ys));
+  for (let y = y0; y <= y1; y++) {
+    const xs = [];
+    const yc = y + 0.5;
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
+      if ((ay <= yc && by > yc) || (by <= yc && ay > yc)) {
+        xs.push(ax + (yc - ay) / (by - ay) * (bx - ax));
+      }
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const xa = Math.max(0, Math.round(xs[k])), xb = Math.round(xs[k + 1]);
+      for (let x = xa; x <= xb; x++) cb(x, y);
+    }
+  }
+}
+
+function buildZBuffer(P, pw, ph) {
+  const zs = Math.min(1, 1200 / Math.max(pw, ph));
+  const zw = Math.ceil(pw * zs), zh = Math.ceil(ph * zs);
+  const zbuf = new Float32Array(zw * zh);  // maximum of 1/w (larger = nearer)
+  for (const face of camGeom) {
+    const proj = [];
+    let ok = true;
+    for (const p of face.ptsm) {
+      const [x, y, w] = camProject(P, p);
+      if (w <= 0) { ok = false; break; }  // faces partly behind the camera are omitted as occluders (conservative)
+      proj.push([x * zs, y * zs]);
+    }
+    if (!ok || proj.length < 3) continue;
+    const invw = face.ptsm.map(p => 1 / camProject(P, p)[2]);
+    const abc = planeFit(proj, invw);
+    if (!abc) continue;
+    scanlinePolygon(proj, (x, y) => {
+      if (x < 0 || y < 0 || x >= zw || y >= zh) return;
+      const v = abc[0] * x + abc[1] * y + abc[2];
+      const idx = y * zw + x;
+      if (v > zbuf[idx]) zbuf[idx] = v;
+    });
+  }
+  return { zbuf, zw, zh, zs };
+}
+
+// ---- UI ----
+function syncCameraMarkers() {
+  postToViewer({
+    type: 'setMatchedPoints',
+    items: camPairs.filter(pair => pair.pt).map(pair => ({ pt: pair.pt })),
+  });
+  postToViewer({ type: 'pendingPoint', pt: camPendingPoint });
+}
+
+function camReset() {
+  camPhoto = null; camPairs = []; camPending3D = null; camPendingPoint = null; camP = null;
+  camGeom = null; camCandidates = []; camZmin = null;
+  $('camEditor').style.display = 'none';
+  $('camWork').style.display = 'none';
+  $('camDrop').style.display = 'block';
+  $('camFaces').innerHTML = '';
+  $('camApplyBar').style.display = 'none';
+  $('camBaseWarn').style.display = 'none';
+  syncCameraMarkers();
+  postToViewer({ type: 'vertexMode', on: false });
+}
+
+$('btnCamera').onclick = async () => {
+  selectedFace = null; selectedWall = null;
+  hideEditor(); renderFaces();
+  $('camEditor').style.display = 'block';
+  postToViewer({ type: 'vertexMode', on: true });
+  syncCameraMarkers();
+  camOrigin = null;
+  const f0 = faces.find(f => f.ring3d && f.ring3d.length);
+  if (f0) camOrigin = [f0.ring3d[0][0], f0.ring3d[0][1]];
+  // Fetch full-face geometry for occlusion computation
+  try {
+    const res = await api(`/api/building/${currentTile.code}/${encodeURIComponent(selected.gid)}`);
+    camGeom = (res.building.lod2 || []).map(f => ({
+      pid: f.id, ptsm: f.pts.map(camLL2m),
+    }));
+    camZmin = null;
+    for (const f of camGeom) for (const p of f.ptsm) {
+      if (camZmin === null || p[2] < camZmin) camZmin = p[2];
+    }
+  } catch (e) { alert(t('tex.geom_error', 'Failed to load geometry: ') + e.message); camReset(); }
+};
+$('btnCamClose').onclick = camReset;
+
+$('camDrop').onclick = () => $('camFileInput').click();
+$('camDrop').ondragover = e => { e.preventDefault(); };
+$('camDrop').ondrop = e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) camLoadPhoto(e.dataTransfer.files[0]);
+};
+$('camFileInput').onchange = e => { if (e.target.files[0]) camLoadPhoto(e.target.files[0]); };
+
+function camLoadPhoto(file) {
+  loadImage(URL.createObjectURL(file)).then(img => {
+    camPhoto = img; camPairs = []; camPending3D = null; camPendingPoint = null; camP = null;
+    syncCameraMarkers();
+    $('camDrop').style.display = 'none';
+    $('camWork').style.display = 'block';
+    camDraw();
+  }).catch(e => alert(e.message));
+}
+$('btnCamPhoto').onclick = () => {
+  camPhoto = null; camPairs = []; camPending3D = null; camPendingPoint = null;
+  camP = null; camCandidates = [];
+  syncCameraMarkers();
+  $('camWork').style.display = 'none';
+  $('camDrop').style.display = 'block';
+  $('camFaces').innerHTML = ''; $('camApplyBar').style.display = 'none';
+};
+$('btnCamResetPairs').onclick = () => {
+  camPairs = []; camPending3D = null; camPendingPoint = null; camP = null; camCandidates = [];
+  syncCameraMarkers();
+  $('camFaces').innerHTML = ''; $('camApplyBar').style.display = 'none';
+  $('camBaseWarn').style.display = 'none';
+  camDraw();
+};
+
+// Vertex / face-center pick from the 3D view
+window.addEventListener('message', ev => {
+  const m = ev.data || {};
+  if (m.type === 'vertexPick' && $('camEditor').style.display !== 'none') {
+    camPending3D = camLL2m(m.pt);
+    camPendingPoint = m.pt.slice();
+    camPendingKind = m.kind === 'center' ? t('tex.face_center', 'face center') : t('tex.corner_vertex', 'corner (vertex)');
+    // Warn prominently for bottom vertices (the model's wall bottom = directly below the eave corner; with overhanging eaves it differs from the real wall base)
+    $('camBaseWarn').style.display =
+      (m.kind !== 'center' && camZmin !== null && camPending3D[2] <= camZmin + 0.75)
+        ? 'block' : 'none';
+    postToViewer({ type: 'pendingPoint', pt: m.pt });  // highlight large and orange on the 3D side
+    camDraw();
+  }
+});
+let camPendingKind = '';
+
+function camScale() {
+  return $('camCanvas').width / camPhoto.naturalWidth;
+}
+function camDraw() {
+  if (!camPhoto) return;
+  const cv = $('camCanvas');
+  const maxW = cv.parentElement.clientWidth - 2 || 380;
+  const s0 = Math.min(1, maxW / camPhoto.naturalWidth, 460 / camPhoto.naturalHeight);
+  cv.width = Math.round(camPhoto.naturalWidth * s0);
+  cv.height = Math.round(camPhoto.naturalHeight * s0);
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(camPhoto, 0, 0, cv.width, cv.height);
+  const s = camScale();
+  // If aligned, overlay the wireframe (to check the fit)
+  if (camP && camGeom) {
+    ctx.strokeStyle = 'rgba(0,229,255,.8)'; ctx.lineWidth = 1;
+    for (const face of camGeom) {
+      const proj = face.ptsm.map(p => camProject(camP, p));
+      if (proj.some(q => q[2] <= 0)) continue;
+      ctx.beginPath();
+      proj.forEach(([x, y], i) => i ? ctx.lineTo(x * s, y * s) : ctx.moveTo(x * s, y * s));
+      ctx.closePath(); ctx.stroke();
+    }
+  }
+  // Correspondence points
+  camPairs.forEach((pr, i) => {
+    const [x, y] = pr.p2;
+    ctx.fillStyle = '#ffd54f';
+    ctx.beginPath(); ctx.arc(x * s, y * s, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), x * s, y * s + 3.5);
+  });
+  // Status display
+  const st = camPending3D
+    ? '<b style="color:#d97706">' + t('tex.cam_click_pending',
+        '→ In the photo, click the {kind} shown large and orange in the 3D view',
+        { kind: camPendingKind }) + '</b>'
+    : t('tex.cam_pick_marker', 'Click a marker in the 3D view (<b style="color:#b8860b">yellow = corner</b>, <b style="color:#d97706">orange = face center</b>; matched points keep the same number in the photo and the 3D view)');
+  $('camPairs').innerHTML =
+    t('tex.cam_pairs_count', 'Matched points: {n} pairs (6 or more enable alignment) ',
+      { n: camPairs.length }) +
+    camPairs.map((_, i) => `<a href="#" data-i="${i}" class="delPair">✕${i + 1}</a>`).join(' ') +
+    `<br>${st}` +
+    (camP ? '<br>' + t('tex.cam_solved',
+        'Aligned: reprojection error {err}px (fine if the cyan wireframe overlaps the building; add matched points if it is off)',
+        { err: camReprojError(camP, camPairs).toFixed(1) }) : '');
+  document.querySelectorAll('.delPair').forEach(a => a.onclick = e => {
+    e.preventDefault();
+    camPairs.splice(Number(a.dataset.i), 1);
+    syncCameraMarkers();
+    camP = null; camDraw(); camUpdateButtons();
+  });
+  camUpdateButtons();
+}
+function camUpdateButtons() {
+  $('btnCamSolve').disabled = camPairs.length < 6;
+  $('btnCamCandidates').disabled = !camP;
+}
+
+$('camCanvas').addEventListener('pointerdown', ev => {
+  if (!camPhoto || !camPending3D) return;
+  const cv = $('camCanvas');
+  const rect = cv.getBoundingClientRect();
+  const x = (ev.clientX - rect.left) * (cv.width / rect.width) / camScale();
+  const y = (ev.clientY - rect.top) * (cv.height / rect.height) / camScale();
+  camPairs.push({ p3: camPending3D, p2: [x, y], pt: camPendingPoint && camPendingPoint.slice() });
+  camPending3D = null;
+  camPendingPoint = null;
+  $('camBaseWarn').style.display = 'none';
+  syncCameraMarkers();  // show ①, ②… on the 3D side in the same order as the photo
+  camP = null;
+  camDraw();
+});
+
+$('btnCamSolve').onclick = () => {
+  const P = dltSolve(camPairs);
+  if (!P) { alert(t('tex.solve_failed', 'Alignment failed (check that the points are not all on one line or in one plane)')); return; }
+  const err = camReprojError(P, camPairs);
+  camP = P;
+  if (err > 20) alert(t('tex.reproj_error_large',
+    'The reprojection error is rather large ({err}px). Add or re-check matched points',
+    { err: err.toFixed(1) }));
+  camDraw();
+};
+
+// ---- Building paste candidates (per-face visibility mask + partial bake patches) ----
+$('btnCamCandidates').onclick = () => {
+  if (!camP || !camPhoto) return;
+  const pw = camPhoto.naturalWidth, ph = camPhoto.naturalHeight;
+  const Z = buildZBuffer(camP, pw, ph);
+  // Tone-correct the whole photo once (per-face statistics are unstable for thin bands)
+  const camSrc = document.createElement('canvas');
+  camSrc.width = pw; camSrc.height = ph;
+  camSrc.getContext('2d').drawImage(camPhoto, 0, 0);
+  toneCorrect(camSrc, 'B', replacedTarget(faces.filter(f => f.editable)));
+  camCandidates = [];
+  for (const f of faces) {
+    if (!f.editable || !f.ring3d) continue;
+    const ptsm = f.ring3d.map(camLL2m);
+    const proj = ptsm.map(p => camProject(camP, p));
+    if (proj.some(q => q[2] <= 0)) continue;  // behind the camera
+    const a = atlases.get(f.img);
+    const iw = a.image.naturalWidth, ih = a.image.naturalHeight;
+    const r = uvRect(f);
+    // Homography between atlas px <-> photo px (from vertex correspondences)
+    const n = Math.min(f.uv.length, ptsm.length);
+    const uvPx = [], phPx = [];
+    for (let i = 0; i < n; i++) {
+      uvPx.push([f.uv[i][0] * iw, (1 - f.uv[i][1]) * ih]);
+      phPx.push([proj[i][0], proj[i][1]]);
+    }
+    const H = n >= 4 ? homographyLSQ(uvPx, phPx) : null;
+    const T = H ? null : affineLSQ(uvPx, phPx);
+    if (!H && !T) continue;
+    const mapFn = H || ((X, Y) => [T.a * X + T.c * Y + T.e, T.b * X + T.d * Y + T.f]);
+    // The face's 1/w plane (a linear function of photo coordinates)
+    const abc = planeFit(proj.map(q => [q[0], q[1]]), proj.map(q => 1 / q[2]));
+    if (!abc) continue;
+    // Visibility mask (tested per atlas pixel inside the bbox)
+    const mask = document.createElement('canvas');
+    mask.width = r.w; mask.height = r.h;
+    const mctx = mask.getContext('2d');
+    const mdata = mctx.createImageData(r.w, r.h);
+    const poly = uvPx.map(([x, y]) => [x - r.x, y - r.y]);
+    let vis = 0, tot = 0;
+    scanlinePolygon(poly, (x, y) => {
+      if (x < 0 || y < 0 || x >= r.w || y >= r.h) return;
+      tot++;
+      const p = mapFn(x + r.x + 0.5, y + r.y + 0.5);
+      if (!p) return;
+      const [px, py] = p;
+      if (px < 0 || py < 0 || px >= pw || py >= ph) return;
+      const zx = Math.min(Z.zw - 1, Math.round(px * Z.zs));
+      const zy = Math.min(Z.zh - 1, Math.round(py * Z.zs));
+      const faceInvw = abc[0] * px + abc[1] * py + abc[2];
+      if (faceInvw <= 0) return;
+      if (Z.zbuf[zy * Z.zw + zx] > faceInvw * 1.01) return;  // another face is in front
+      vis++;
+      const o = (y * r.w + x) * 4;
+      mdata.data[o] = mdata.data[o + 1] = mdata.data[o + 2] = 255;
+      mdata.data[o + 3] = 255;
+    });
+    if (!tot || vis / tot < 0.02) continue;
+    mctx.putImageData(mdata, 0, 0);
+    // Patch = warp of the corrected photo (bbox) ∩ mask (2px feathered border)
+    const warped = warpByMapping(camSrc, (x, y) => mapFn(x + r.x, y + r.y), r.w, r.h);
+    const patch = document.createElement('canvas');
+    patch.width = r.w; patch.height = r.h;
+    const pctx = patch.getContext('2d');
+    pctx.drawImage(warped, 0, 0);
+    pctx.globalCompositeOperation = 'destination-in';
+    pctx.filter = 'blur(2px)';
+    pctx.drawImage(mask, 0, 0);
+    pctx.filter = 'none';
+    pctx.globalCompositeOperation = 'source-over';
+    camCandidates.push({ pid: f.pid, patch, r, coverage: vis / tot, checked: vis / tot >= 0.3 });
+  }
+  camRenderCandidates();
+};
+
+function camPreviewCandidate(c, on) {
+  // 3D preview: send the appearance with the patch overlaid on the current texture
+  const f = faceByPid.get(c.pid);
+  const src = atlases.get(f.img).work || atlases.get(f.img).image;
+  const pv = document.createElement('canvas');
+  pv.width = c.r.w; pv.height = c.r.h;
+  const ctx = pv.getContext('2d');
+  ctx.drawImage(src, c.r.x, c.r.y, c.r.w, c.r.h, 0, 0, c.r.w, c.r.h);
+  if (on) ctx.drawImage(c.patch, 0, 0);
+  postToViewer({ type: 'previewTexture', pid: c.pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
+}
+
+function camRenderCandidates() {
+  const box = $('camFaces');
+  if (!camCandidates.length) {
+    box.innerHTML = '<span style="color:var(--muted)">' +
+      t('tex.no_visible_faces', 'No editable faces visible in the photo were found') + '</span>';
+    $('camApplyBar').style.display = 'none';
+    return;
+  }
+  camCandidates.sort((a, b) => b.coverage - a.coverage);
+  box.innerHTML = '<b style="font-size:12px">' +
+    t('tex.candidates_title', 'Paste candidates (visible share; check the preview in the 3D view)') + '</b><br>' +
+    camCandidates.map((c, i) =>
+      `<label style="display:inline-block; margin:3px 10px 3px 0; font-size:12px;">
+         <input type="checkbox" data-i="${i}" ${c.checked ? 'checked' : ''}>
+         ${t('tex.candidate_face', 'Face {n} ({p}%)',
+             { n: faces.indexOf(faceByPid.get(c.pid)) + 1, p: Math.round(c.coverage * 100) })}
+       </label>`).join('');
+  box.querySelectorAll('input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    const c = camCandidates[Number(cb.dataset.i)];
+    c.checked = cb.checked;
+    camPreviewCandidate(c, c.checked);
+  });
+  camCandidates.forEach(c => camPreviewCandidate(c, c.checked));
+  $('camApplyBar').style.display = 'block';
+}
+
+$('btnCamApply').onclick = () => {
+  let applied = 0;
+  const applyingPids = camCandidates.filter(c => c.checked).map(c => c.pid);
+  restoreFlatToneBases(applyingPids);
+  for (const c of camCandidates) {
+    if (!c.checked) continue;
+    const f = faceByPid.get(c.pid);
+    const work = workCanvas(f.img);
+    work.getContext('2d').drawImage(c.patch, c.r.x, c.r.y);
+    atlases.get(f.img).faces.add(c.pid);
+    changedFaces.add(c.pid);
+    camPreviewCandidate(c, false);  // baked into work, so the current crop = post-apply appearance
+    const pv = document.createElement('canvas');
+    pv.width = c.r.w; pv.height = c.r.h;
+    pv.getContext('2d').drawImage(work, c.r.x, c.r.y, c.r.w, c.r.h, 0, 0, c.r.w, c.r.h);
+    postToViewer({ type: 'previewTexture', pid: c.pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
+    applied++;
+  }
+  reapplyCommittedTones(applyingPids);
+  camCandidates = [];
+  $('camFaces').innerHTML = '';
+  $('camApplyBar').style.display = 'none';
+  if (comparing) setCompare(false);
+  if (applied) postToViewer({ type: 'showTexture' });
+  renderFaces();
+  renderChangeBar();
+  if (applied) alert(t('tex.applied_n_faces',
+    'Applied to {n} faces (before creating the PR you can add more from another photo)',
+    { n: applied }));
+};
+
+
+// Show unexpected errors on screen (so beginners can see them without opening the console)
+window.addEventListener('error', ev => showErrBanner(ev.message));
+window.addEventListener('unhandledrejection', ev => showErrBanner(String(ev.reason)));
+function showErrBanner(msg) {
+  let b = document.getElementById('errBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'errBanner';
+    b.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);' +
+      'background:#c92a2a;color:#fff;padding:8px 16px;border-radius:8px;z-index:5000;' +
+      'font-size:12px;max-width:80vw;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+    b.onclick = () => b.remove();
+    document.body.appendChild(b);
+  }
+  b.textContent = '⚠ Error: ' + msg + ' (click to close)';
+}
+
+init();
+</script>
+</body>
+</html>

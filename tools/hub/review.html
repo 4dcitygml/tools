@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="review.title">Review change proposals — Building data management</title>
+<style>
+  :root {
+    --bg:#f5f6f8; --card:#fff; --border:#d8dee4; --text:#1f2933; --muted:#66717f;
+    --accent:#0969da; --ok:#1f883d; --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5;
+    --danger:#cf222e; --danger-bg:#ffebe9; --change:#d1242f; --shadow:0 8px 24px rgba(31,35,40,.08);
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
+    color:var(--text); background:var(--bg); font-size:14px; }
+  header { height:58px; padding:0 22px; background:#24292f; color:#fff; display:flex;
+    align-items:center; gap:16px; }
+  header a { color:#c9d1d9; text-decoration:none; }
+  header h1 { margin:0; font-size:16px; font-weight:650; }
+  header .account { margin-left:auto; color:#c9d1d9; font-size:12px; }
+  header .account b { color:#fff; }
+  #demoBanner { background:#fff3bf; color:#5f4300; border-bottom:1px solid #e9c46a; padding:9px 22px;
+    text-align:center; font-weight:650; }
+  .layout { display:grid; grid-template-columns:330px minmax(0,1fr); min-height:calc(100vh - 58px); }
+  aside { background:#fff; border-right:1px solid var(--border); padding:18px 14px; }
+  .sideHead { display:flex; align-items:center; margin:0 4px 12px; }
+  .sideHead h2 { margin:0; font-size:15px; }
+  .sideHead button { margin-left:auto; }
+  .queueNote { color:var(--muted); font-size:12px; line-height:1.6; margin:0 4px 14px; }
+  .queue { display:flex; flex-direction:column; gap:8px; }
+  .queueSectionTitle { display:flex; align-items:center; justify-content:space-between; margin:2px 3px 8px;
+    color:#116329; font-size:12px; font-weight:750; }
+  .queueSectionTitle span { min-width:22px; padding:1px 7px; border-radius:999px; background:var(--ok-bg); text-align:center; }
+  .queueEmpty { color:var(--muted); border:1px dashed var(--border); border-radius:8px; padding:14px 10px;
+    text-align:center; font-size:12px; line-height:1.6; }
+  .adjustingGroup { border-top:1px solid var(--border); margin-top:14px; padding-top:13px; }
+  .adjustingGroup > summary { display:flex; align-items:center; gap:6px; color:#82071e; font-size:12px; font-weight:750;
+    list-style:none; cursor:pointer; }
+  .adjustingGroup > summary::-webkit-details-marker { display:none; }
+  .adjustingGroup > summary::before { content:'▶'; font-size:9px; transition:transform .15s; }
+  .adjustingGroup[open] > summary::before { transform:rotate(90deg); }
+  .adjustingQueue { display:flex; flex-direction:column; gap:8px; margin-top:9px; }
+  .queueItem { width:100%; text-align:left; border:1px solid var(--border); background:#fff; border-radius:9px;
+    padding:11px 12px; cursor:pointer; color:var(--text); }
+  .queueItem:hover { border-color:#8c959f; background:#f6f8fa; }
+  .queueItem.active { border:2px solid var(--accent); padding:10px 11px; background:#f0f7ff; }
+  .queueItem.adjusting { border-left:4px solid var(--danger); padding-left:9px; background:#fffafa; }
+  .queueItem.adjusting.active { border:2px solid var(--danger); border-left-width:4px; padding:10px 11px 10px 9px; background:var(--danger-bg); }
+  .qtop { display:flex; align-items:center; gap:7px; margin-bottom:6px; }
+  .num { color:var(--muted); font-family:ui-monospace,monospace; font-size:12px; }
+  .kind { padding:2px 7px; border-radius:999px; font-size:10px; font-weight:700; }
+  .kind.attribute { background:#ddf4ff; color:#0550ae; }
+  .kind.texture { background:#fbefff; color:#8250df; }
+  .kind.geometry { background:#fff1e5; color:#9a6700; }
+  .example { margin-left:auto; color:var(--warn); font-size:10px; }
+  .qtitle { font-weight:750; line-height:1.45; font-size:14px; font-family:ui-monospace,monospace; }
+  .qsummary { color:var(--text); font-size:12px; line-height:1.45; margin-top:5px; }
+  .qmeta { color:var(--muted); font-size:11px; margin-top:7px; }
+  .qstate { margin-left:auto; font-size:10px; font-weight:750; white-space:nowrap; }
+  .qstate.ready { color:var(--ok); }
+  .qstate.adjusting { color:var(--danger); }
+  .qsource { display:inline-block; margin-top:8px; padding:3px 8px; border-radius:999px; color:#82071e;
+    background:var(--danger-bg); font-size:10px; font-weight:750; }
+  .qsource.reviewer { color:#512a97; background:#fbefff; }
+  .qsource.latest { color:#633c01; background:var(--warn-bg); }
+  .qsource.checking { color:#57606a; background:#eef1f4; }
+  main { min-width:0; padding:22px 26px 120px; max-width:1180px; width:100%; margin:0 auto; }
+  .empty { color:var(--muted); text-align:center; padding:80px 20px; line-height:1.8; }
+  .spinner { display:inline-block; width:15px; height:15px; border:2px solid #c7ccd1;
+    border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:-3px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .detailHead { display:flex; gap:12px; align-items:flex-start; margin-bottom:16px; }
+  .detailHead .headText { flex:1; min-width:0; }
+  .detailHead h2 { font-size:20px; line-height:1.45; margin:4px 0 5px; }
+  .meta { color:var(--muted); font-size:12px; }
+  .ghLink { color:var(--accent); text-decoration:none; white-space:nowrap; padding-top:7px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:11px; padding:16px 18px;
+    margin-bottom:15px; box-shadow:0 1px 2px rgba(31,35,40,.03); }
+  .card h3 { margin:0 0 12px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  .statusCard { padding:14px 16px; }
+  .overall { display:flex; align-items:center; gap:10px; margin-bottom:11px; font-weight:750; }
+  .overall.pass { color:var(--ok); }
+  .overall.fail { color:var(--danger); }
+  .overall.pending { color:var(--warn); }
+  .checkpointStrip { display:flex; flex-wrap:wrap; gap:8px; }
+  button.checkpoint { border-width:2px; border-radius:999px; padding:8px 12px; font-weight:700; background:#fff; }
+  button.checkpoint.pass { color:#116329; border-color:#56b870; background:var(--ok-bg); }
+  button.checkpoint.fail { color:#82071e; border-color:#ff8182; background:var(--danger-bg); }
+  button.checkpoint.pending { color:#633c01; border-color:#d4a72c; background:var(--warn-bg); }
+  button.checkpoint.na { color:#57606a; border-color:#afb8c1; background:#eef1f4; }
+  button.checkpoint.active { box-shadow:0 0 0 3px rgba(9,105,218,.14); }
+  .checkpointDetail { margin-top:11px; padding:10px 12px; border-radius:8px; line-height:1.65; background:#f6f8fa; }
+  .checkpointDetail.fail { background:var(--danger-bg); color:#82071e; }
+  .checkpointDetail.pending { background:var(--warn-bg); color:#633c01; }
+  .checkpointDetail.na { color:#57606a; background:#eef1f4; }
+  .checkpointDetail .response { margin-top:4px; font-weight:700; }
+  .retryPanel { display:flex; align-items:center; gap:10px; margin-top:11px; padding:9px 11px;
+    border:1px solid #b6d7ff; border-radius:8px; color:#174e87; background:#f0f7ff; font-size:12px; }
+  .retryPanel span { flex:1; line-height:1.55; }
+  button.retryButton { color:#fff; border-color:var(--accent); background:var(--accent); font-weight:700; }
+  .coordinationNotice { border:1px solid #ff8182; border-left:5px solid var(--danger); border-radius:9px;
+    padding:12px 14px; margin-bottom:15px; color:#82071e; background:var(--danger-bg); line-height:1.65; }
+  .coordinationNotice.reviewer { border-color:#cbb5f6; border-left-color:#8250df; color:#512a97; background:#fbefff; }
+  .changeCard { border:3px solid var(--change); padding:15px 16px; box-shadow:var(--shadow); }
+  .changeCard h3 { color:#9f1d28; }
+  .changeMeta { display:flex; flex-direction:column; gap:4px; margin:-3px 0 12px; line-height:1.55; }
+  .changeMeta b { color:#64131a; }
+  .changeMeta span { color:var(--muted); font-size:12px; }
+  .changeHint { color:var(--muted); font-size:12px; margin:-5px 0 13px; }
+  .changeContext { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(220px,.75fr); gap:14px;
+    margin-top:16px; padding-top:15px; border-top:1px solid #ffd2d2; }
+  .changeContext h4 { margin:0 0 7px; font-size:13px; }
+  table { width:100%; border-collapse:separate; border-spacing:0; border:1px solid var(--border); border-radius:8px;
+    overflow:hidden; font-size:13px; }
+  th,td { text-align:left; padding:10px 11px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { background:#f6f8fa; color:var(--muted); font-size:11px; }
+  tr:last-child td { border-bottom:0; }
+  td.before { background:var(--danger-bg); color:#82071e; text-decoration:line-through; }
+  td.after { background:var(--ok-bg); color:#116329; font-weight:650; }
+  td.arrow { width:34px; text-align:center; color:var(--muted); background:#fff; }
+  .textureRows { display:flex; flex-direction:column; gap:14px; }
+  .texturePair { display:grid; grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr); gap:8px; align-items:center; }
+  .textureFig { margin:0; min-width:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#fff; }
+  .textureFig.beforeFig { border-color:#ff8182; }
+  .textureFig.afterFig { border-color:#56b870; }
+  .textureFig .cap { padding:7px 9px; font-size:11px; font-weight:700; }
+  .beforeFig .cap { background:var(--danger-bg); color:#82071e; }
+  .afterFig .cap { background:var(--ok-bg); color:#116329; }
+  .textureFig img { display:block; width:100%; height:260px; object-fit:contain; background-color:#e9ecef;
+    background-image:linear-gradient(45deg,#d9dde1 25%,transparent 25%),linear-gradient(-45deg,#d9dde1 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#d9dde1 75%),linear-gradient(-45deg,transparent 75%,#d9dde1 75%);
+    background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0; }
+  .textureFig code { display:block; padding:7px 9px; overflow-wrap:anywhere; font-size:10px; color:var(--muted); }
+  .textureArrow { text-align:center; font-size:20px; color:var(--muted); }
+  .reason { white-space:pre-wrap; line-height:1.75; background:#f6f8fa; border-radius:8px; padding:12px 14px; }
+  .reason.missing { color:var(--danger); background:var(--danger-bg); font-weight:650; }
+  .evidence { margin:12px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px; }
+  .evidence a { color:var(--accent); text-decoration:none; }
+  .noEvidence { color:var(--muted); margin:11px 0 0; font-size:12px; }
+  .checks { display:flex; flex-direction:column; gap:8px; }
+  .check { display:flex; align-items:center; gap:9px; border:1px solid var(--border); border-radius:8px; padding:9px 11px; }
+  .check .status { font-weight:700; }
+  .check.ok .status { color:var(--ok); }
+  .check.bad .status { color:var(--danger); }
+  .check a { margin-left:auto; color:var(--accent); text-decoration:none; font-size:12px; }
+  .preview { display:block; color:var(--accent); text-decoration:none; border:1px solid #b6d7ff; background:#f0f7ff;
+    border-radius:8px; padding:11px 13px; margin-top:12px; font-weight:650; }
+  .visualGrid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .visualPane { min-width:0; border:1px solid var(--border); border-radius:9px; overflow:hidden; background:#fff; }
+  .visualTitle { display:flex; align-items:center; min-height:42px; padding:9px 11px; background:#f6f8fa;
+    border-bottom:1px solid var(--border); font-size:12px; font-weight:750; }
+  iframe.previewFrame, iframe.mapFrame { display:block; width:100%; height:420px; border:0; background:#eef1f4; }
+  .visualActions { padding:9px 10px; border-top:1px solid var(--border); }
+  .visualActions a { display:block; color:var(--accent); text-decoration:none; font-weight:650; }
+  .visualActions small { display:block; color:var(--muted); margin-top:5px; line-height:1.5; }
+  .modelMissing { display:flex; min-height:420px; align-items:center; justify-content:center; padding:30px;
+    color:var(--danger); background:var(--danger-bg); text-align:center; line-height:1.7; }
+  .history { position:relative; display:flex; flex-direction:column; gap:0; }
+  .historyItem { position:relative; margin-left:10px; padding:0 0 18px 24px; border-left:2px solid #d8dee4; }
+  .historyItem:last-child { padding-bottom:0; }
+  .historyDot { position:absolute; left:-7px; top:2px; width:12px; height:12px; border-radius:50%; background:#8c959f; border:2px solid #fff; }
+  .historyItem.current { border-left-color:var(--accent); }
+  .historyItem.current .historyDot { background:var(--accent); }
+  .historyTitle { font-weight:650; line-height:1.5; }
+  .historyMeta { color:var(--muted); font-size:11px; margin-top:3px; }
+  .historyStatus { display:inline-block; padding:2px 7px; margin-right:6px; border-radius:999px; background:#eef1f4; font-size:10px; }
+  .historyItem.current .historyStatus { color:#0550ae; background:#ddf4ff; }
+  .techLink { color:var(--muted); text-decoration:none; white-space:nowrap; padding-top:7px; font-size:12px; }
+  details { border-top:1px solid #eef0f2; padding-top:10px; margin-top:10px; }
+  summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .inspectionTechnical { margin-top:13px; }
+  .technicalBody { margin-top:12px; }
+  .technicalBody h4 { margin:14px 0 8px; font-size:12px; }
+  .technicalBody h4:first-child { margin-top:0; }
+  .file { display:flex; gap:8px; padding:7px 0; border-bottom:1px solid #f0f2f4; font-size:12px; }
+  .file code { overflow-wrap:anywhere; }
+  .file .stat { margin-left:auto; color:var(--muted); white-space:nowrap; }
+  .warnBox,.okBox { border-radius:8px; padding:10px 12px; line-height:1.6; margin-bottom:9px; }
+  .warnBox { border:1px solid #ff8182; background:var(--danger-bg); color:#82071e; }
+  .okBox { border:1px solid #82cf93; background:var(--ok-bg); color:#116329; }
+  .feedbackHint { color:var(--muted); font-size:12px; line-height:1.65; margin:-4px 0 11px; }
+  .feedbackTemplates { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:10px; }
+  button.feedbackChoice { text-align:left; padding:7px 10px; border-radius:999px; font-size:12px; background:#fff; }
+  button.feedbackChoice:hover,button.feedbackChoice.active { border-color:#8250df; color:#6639ba; background:#fbefff; }
+  .feedbackCard textarea { width:100%; min-height:90px; resize:vertical; border:1px solid var(--border); border-radius:8px;
+    padding:10px 12px; font:inherit; line-height:1.65; }
+  .feedbackCard textarea:focus { outline:3px solid rgba(130,80,223,.14); border-color:#8250df; }
+  .feedbackActions { display:flex; align-items:center; gap:10px; margin-top:9px; }
+  .feedbackActions small { flex:1; color:var(--muted); line-height:1.5; }
+  button.feedbackSend { color:#fff; border-color:#8250df; background:#8250df; font-weight:700; }
+  button.feedbackSend:hover { background:#6639ba; }
+  .feedbackSent { margin-top:10px; padding:9px 11px; border-radius:8px; color:#512a97; background:#fbefff; }
+  .actionBar { position:fixed; left:330px; right:0; bottom:0; background:rgba(255,255,255,.97);
+    border-top:1px solid var(--border); box-shadow:0 -5px 18px rgba(31,35,40,.08); padding:13px 26px;
+    display:flex; align-items:center; gap:14px; z-index:20; }
+  .actionBar .confirm { flex:1; line-height:1.45; }
+  .actionBar .confirm label { cursor:pointer; font-weight:650; }
+  .actionBar .confirm small { display:block; color:var(--muted); margin:3px 0 0 23px; }
+  button { font:inherit; border:1px solid var(--border); border-radius:7px; background:#f6f8fa; padding:7px 13px;
+    cursor:pointer; }
+  button:hover { background:#eef1f4; }
+  button.primary { background:var(--ok); border-color:var(--ok); color:#fff; font-weight:700; padding:10px 22px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #seal { display:none; border:2px solid var(--ok); color:var(--ok); border-radius:8px; padding:7px 13px;
+    font-weight:750; transform:rotate(-2deg); }
+  #toast { position:fixed; left:50%; top:72px; transform:translateX(-50%); background:#24292f; color:#fff;
+    border-radius:8px; padding:9px 16px; display:none; z-index:100; box-shadow:var(--shadow); }
+  @media(max-width:820px) {
+    .layout { grid-template-columns:1fr; }
+    aside { border-right:0; border-bottom:1px solid var(--border); }
+    .queue { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+    main { padding:18px 14px 130px; }
+    .actionBar { left:0; padding:12px 14px; align-items:flex-end; }
+    .detailHead { flex-direction:column; }
+    .texturePair { grid-template-columns:1fr; }
+    .textureArrow { transform:rotate(90deg); }
+    .changeContext,.visualGrid { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a href="/" data-i18n="review.back">← Back</a>
+  <h1 data-i18n="review.header">✅ Review change proposals</h1>
+  <div class="account" id="account" data-i18n="review.checking_connection">Checking connection…</div>
+</header>
+<div id="demoBanner" hidden data-i18n="review.demo_banner">Demo mode — approving changes nothing in the real data or history</div>
+<div class="layout">
+  <aside>
+    <div class="sideHead"><h2 data-i18n="review.building_list">Buildings</h2><button id="reload" data-i18n="review.reload">Refresh</button></div>
+    <p class="queueNote" data-i18n="review.queue_note">Only proposals awaiting the reviewer are shown at the top. Everything else is grouped, with reasons, under "Waiting for the proposer".</p>
+    <div class="queue" id="queue"><div class="empty"><span class="spinner"></span> <span data-i18n="review.loading">Loading…</span></div></div>
+  </aside>
+  <main id="main"><div class="empty" data-i18n="review.select_building">Select a building on the left.</div></main>
+</div>
+<div class="actionBar" id="actionBar" hidden>
+  <div class="confirm">
+    <label><input type="checkbox" id="confirmed"> <span data-i18n="review.confirm_label">I have checked the changes, the supporting documents, and the automated check results</span></label>
+    <small data-i18n="review.approve_note">Even after approval, the original published data is never modified directly.</small>
+  </div>
+  <div id="seal" data-i18n="review.approved_seal">✓ Approved</div>
+  <button class="primary" id="approve" disabled data-i18n="review.approve_btn">Approve this proposal</button>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const initialParams = new URLSearchParams(location.search);
+const demo = initialParams.get('demo') === '1';
+const requestedBuilding = initialParams.get('building');
+let selected = null, current = null, queueData = null, approved = false;
+if (demo) $('demoBanner').hidden = false;
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function kindLabel(kind) { return {attribute:t('review.kind_attribute','Attributes'),texture:t('review.kind_texture','Texture'),geometry:t('review.kind_geometry','Building shape')}[kind] || t('review.kind_other','Other'); }
+function statusLabel(c) {
+  if (c.status!=='completed') return t('review.check_running','In progress');
+  return {success:t('review.check_pass','Passed'),neutral:t('review.check_pass','Passed'),failure:t('review.check_fail','Failed'),cancelled:t('review.check_cancelled','Cancelled'),skipped:t('review.check_skipped','Not applicable')}[c.conclusion] || t('review.check_attention','Needs attention');
+}
+function ago(iso) {
+  if (!iso) return '';
+  const sec = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (sec < 3600) return t('hub.ago_min','{n} min ago',{n:Math.max(0,Math.floor(sec/60))});
+  if (sec < 86400) return t('hub.ago_hour','{n} hr ago',{n:Math.floor(sec/3600)});
+  return t('hub.ago_day','{n} days ago',{n:Math.floor(sec/86400)});
+}
+function toast(msg) {
+  const t=$('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3500);
+}
+function rememberBuilding(buildingId) {
+  if (!buildingId) return;
+  const url=new URL(location.href);
+  url.searchParams.set('building',buildingId);
+  history.replaceState(null,'',url);
+}
+async function api(path, opts) {
+  const r=await fetch(path,opts); const j=await r.json().catch(()=>({ok:false,error:`HTTP ${r.status}`}));
+  if (!r.ok || j.ok===false) throw new Error(j.error || `HTTP ${r.status}`); return j;
+}
+
+async function loadQueue() {
+  $('queue').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading','Loading…')+'</div>';
+  try {
+    queueData=await api('/api/reviews'+(demo?'?demo=1':''));
+    $('account').innerHTML=`${t('review.reviewer_label','Reviewer')} <b>@${esc(queueData.login)}</b><br>${queueData.canReview?t('review.can_review','Can approve'):t('review.view_only','View only')}`;
+    let items=[...queueData.items];
+    if (demo) items.sort((a,b)=>(b.example?1:0)-(a.example?1:0));
+    if (!items.length) { $('queue').innerHTML='<div class="empty">'+t('review.queue_empty','Nothing is waiting for approval.')+'</div>'; return; }
+    const groupBuildings=list=>{
+      const grouped=new Map();
+      list.forEach(it=>{const id=it.buildingId || t('review.building_id_checking','Confirming the building ID (proposal {n})',{n:it.number});
+        if (!grouped.has(id)) grouped.set(id,[]); grouped.get(id).push(it);});
+      return [...grouped.entries()].map(([buildingId,proposals])=>{
+        proposals.sort((a,b)=>String(b.updated).localeCompare(String(a.updated)));
+        return {buildingId,proposals,latest:(demo?proposals.find(x=>x.example):null)||proposals[0]};
+      });
+    };
+    const sourceLabel={reviewer:t('review.source_reviewer','Question from the reviewer'),latest:t('review.source_latest','Merge in the latest version'),checking:t('review.source_checking','Automated checks running'),draft:t('review.source_draft','Draft in progress'),ci:t('review.source_ci','CI found issues')};
+    const renderBuildings=(buildings,state='reviewer_waiting')=>buildings.map(g=>`<button class="queueItem ${state==='reviewer_waiting'?'':'adjusting'} ${g.proposals.some(x=>selected===x.number)?'active':''}" data-n="${g.latest.number}" data-building="${esc(g.buildingId)}">
+      <div class="qtop"><span class="kind ${esc(g.latest.kind)}">${kindLabel(g.latest.kind)}</span>
+      ${g.proposals.length>1?`<span class="num">${t('review.proposals_count','{n} proposals',{n:g.proposals.length})}</span>`:''}
+      ${g.proposals.some(x=>x.example)?`<span class="example">${t('review.demo_item','Demo item')}</span>`:''}
+      <span class="qstate ${state==='reviewer_waiting'?'ready':'adjusting'}">${state==='reviewer_waiting'?t('review.ci_passed','Automated checks passed'):t('review.awaiting_response','Awaiting response')}</span></div>
+      <div class="qtitle">${esc(g.buildingId)}</div><div class="qsummary">${esc(g.latest.title)}</div>
+      ${state==='proposer_waiting'?`<span class="qsource ${esc(g.latest.waitingSource)}">${esc(sourceLabel[g.latest.waitingSource] || t('review.source_attention','Needs attention'))}</span>`:''}
+      ${state==='proposer_waiting'&&g.latest.adjustmentReasons?.length?`<div class="qsummary">${esc(g.latest.adjustmentReasons.join(t('review.reason_sep',', ')))}</div>`:''}
+      <div class="qmeta">${t('review.author_label','Proposed by')} @${esc(g.latest.author)}${t('review.meta_sep',' · ')}${ago(g.latest.updated)}</div></button>`).join('');
+    const reviewerItems=items.filter(x=>x.queueStatus==='reviewer_waiting');
+    const proposerItems=items.filter(x=>x.queueStatus==='proposer_waiting');
+    const reviewerBuildings=groupBuildings(reviewerItems), proposerBuildings=groupBuildings(proposerItems);
+    $('queue').innerHTML=`<div class="queueSectionTitle">${t('review.reviewer_waiting','Waiting for the reviewer')} <span>${reviewerBuildings.length}</span></div>
+      ${reviewerBuildings.length?renderBuildings(reviewerBuildings):'<div class="queueEmpty">'+t('review.queue_none','No proposals currently need review.')+'</div>'}
+      ${proposerBuildings.length?`<details class="adjustingGroup"><summary>${t('review.proposer_waiting_count','Waiting for the proposer ({n} buildings)',{n:proposerBuildings.length})}</summary>
+        <div class="adjustingQueue">${renderBuildings(proposerBuildings,'proposer_waiting')}</div></details>`:''}`;
+    const queueButtons=[...document.querySelectorAll('.queueItem')];
+    queueButtons.forEach(b=>b.onclick=()=>selectPr(Number(b.dataset.n)));
+    const requestedButton=requestedBuilding
+      ? queueButtons.find(b=>b.dataset.building===requestedBuilding)
+      : null;
+    if (selected===null && requestedButton) selectPr(Number(requestedButton.dataset.n));
+    if (selected===null && reviewerItems.length) selectPr(reviewerItems[0].number);
+    if (selected===null && !reviewerItems.length) {
+      $('main').innerHTML='<div class="empty">'+t('review.none_for_reviewer','No proposals currently need the reviewer\'s attention.')+'<br>'+t('review.none_for_reviewer_hint','If needed, open "Waiting for the proposer" at the bottom left to check progress.')+'</div>';
+      $('actionBar').hidden=true;
+    }
+  } catch(e) {
+    $('queue').innerHTML=`<div class="empty">${t('review.fetch_error','Could not fetch the list.')}<br>${esc(e.message)}</div>`;
+    $('account').innerHTML='<b>'+t('review.need_connection','A connection to the change history is required')+'</b>';
+  }
+}
+
+async function selectPr(number) {
+  selected=number; approved=false; $('actionBar').hidden=true;
+  rememberBuilding(queueData?.items?.find(x=>x.number===number)?.buildingId);
+  document.querySelectorAll('.queueItem').forEach(b=>b.classList.toggle('active',Number(b.dataset.n)===number));
+  $('main').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading_detail','Loading the proposed changes…')+'</div>';
+  try { current=await api(`/api/reviews/${number}`); rememberBuilding(current.buildingId); renderDetail(); }
+  catch(e) { $('main').innerHTML=`<div class="empty">${t('review.load_error','Could not load it.')}<br>${esc(e.message)}</div>`; }
+}
+
+function renderChanges(d) {
+  if (!d.changes.length) return '<div class="warnBox">'+t('review.no_change_table','A human-readable change table could not be extracted automatically. Also check the changed files below.')+'</div>';
+  if (d.kind==='texture') return `<div class="textureRows">${d.changes.map(c=>`<div class="texturePair">
+    <figure class="textureFig beforeFig"><div class="cap">${t('review.before','Before')}</div>${c.beforeAsset?`<img src="${esc(c.beforeAsset)}" alt="${t('review.before_texture_alt','Texture before the change')}">`:''}<code>${esc(c.before)||t('review.none_value','(none)')}</code></figure>
+    <div class="textureArrow">→</div>
+    <figure class="textureFig afterFig"><div class="cap">${t('review.after','After')}</div>${c.afterAsset?`<img src="${esc(c.afterAsset)}" alt="${t('review.after_texture_alt','Texture after the change')}">`:''}<code>${esc(c.after)}</code></figure>
+  </div>`).join('')}</div>`;
+  return `<table><thead><tr><th>${t('review.th_item','Item')}</th><th>${t('review.before','Before')}</th><th></th><th>${t('review.after','After')}</th></tr></thead><tbody>${d.changes.map(c=>
+    `<tr><td><b>${esc(c.label)}</b></td><td class="before">${esc(c.before)||t('review.none_value','(none)')}</td><td class="arrow">→</td><td class="after">${esc(c.after)}</td></tr>`
+  ).join('')}</tbody></table>`;
+}
+function renderChecks(d) {
+  if (!d.checks.length) return '<div class="warnBox">'+t('review.no_checks','Automated check results are not available.')+'</div>';
+  return `<div class="checks">${d.checks.map(c=>{const ok=c.status==='completed'&&['success','neutral'].includes(c.conclusion);
+    return `<div class="check ${ok?'ok':'bad'}"><span>${ok?'✅':'⚠️'}</span><span>${esc(c.name)}</span>
+      <span class="status">${statusLabel(c)}</span>${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener">${t('review.check_log','Check log ↗')}</a>`:''}</div>`;}).join('')}</div>`;
+}
+function renderFiles(d) {
+  if (!d.files.length) return '<div class="queueEmpty">'+t('review.no_files','No changed files were recorded.')+'</div>';
+  return d.files.map(f=>`<div class="file"><code>${esc(f.path)}</code>
+    <span class="stat">+${f.additions} / -${f.deletions}</span></div>`).join('');
+}
+function renderHistory(d) {
+  if (!d.history?.length) return '<div class="warnBox">'+t('review.no_history','Could not fetch this building\'s history.')+'</div>';
+  return `<div class="history">${d.history.map(h=>`<div class="historyItem ${h.current?'current':''}">
+    <span class="historyDot"></span><div class="historyTitle"><span class="historyStatus">${esc(h.status)}</span>${esc(h.title)}</div>
+    <div class="historyMeta">${h.updated?new Date(h.updated).toLocaleDateString(window.LANG || 'en'):''}${h.current?t('review.history_current',' — under review on this screen'):''}</div>
+  </div>`).join('')}</div>`;
+}
+function renderEvidence(d) {
+  if (!d.evidenceLinks?.length) return '<p class="noEvidence">'+t('review.no_evidence','No links to documents. Review the proposer\'s explanation and the before/after values.')+'</p>';
+  return `<ul class="evidence">${d.evidenceLinks.map(x=>`<li>📎 <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.label)} ↗</a></li>`).join('')}</ul>`;
+}
+function checkpointIcon(status) { return status==='pass'?'✓':status==='fail'?'✕':status==='na'?'−':'…'; }
+function renderCheckpoints(d) {
+  const points=d.checkpoints || [];
+  const overall=d.allGreen?'pass':points.some(x=>x.status==='fail')?'fail':'pending';
+  const message=overall==='pass'?t('review.ci_passed','Automated checks passed'):
+    overall==='fail'?t('review.ci_attention','CI found issues to address'):t('review.ci_checking','Automated checks running');
+  return `<section class="card statusCard"><div class="overall ${overall}">${checkpointIcon(overall)} ${message}</div>
+    <div class="checkpointStrip">${points.map(p=>`<button class="checkpoint ${esc(p.status)}" data-checkpoint="${esc(p.key)}">
+      ${checkpointIcon(p.status)} ${esc(p.label)}</button>`).join('')}</div>
+    <div class="checkpointDetail" id="checkpointDetail"></div>${renderRetry(d)}${renderTechnical(d)}</section>`;
+}
+function renderRetry(d) {
+  const retry=d.retry || {};
+  if (!retry.kind || retry.kind==='none' || retry.kind==='pending') return '';
+  if (retry.available) return `<div class="retryPanel"><span><b>${esc(retry.label)}</b><br>${esc(retry.reason)}</span>
+    <button type="button" class="retryButton" id="retryCi">${esc(retry.label)}</button></div>`;
+  return `<div class="retryPanel"><span><b>${esc(retry.label)}</b><br>${esc(retry.reason)}</span></div>`;
+}
+function showCheckpoint(key) {
+  const p=current?.checkpoints?.find(x=>x.key===key); if (!p) return;
+  document.querySelectorAll('button.checkpoint').forEach(b=>b.classList.toggle('active',b.dataset.checkpoint===key));
+  const box=$('checkpointDetail'); box.className=`checkpointDetail ${p.status}`;
+  box.innerHTML=`<b>${checkpointIcon(p.status)} ${esc(p.label)}</b>${t('review.checkpoint_sep',' — ')}${esc(p.reason)}
+    ${['fail','pending'].includes(p.status)?`<div class="response">${t('review.response_label','Action: ')}${esc(p.action)}</div>`:''}`;
+}
+function bindCheckpoints(d) {
+  document.querySelectorAll('button.checkpoint').forEach(b=>b.onclick=()=>showCheckpoint(b.dataset.checkpoint));
+  const first=d.checkpoints?.find(x=>x.status==='fail') || d.checkpoints?.find(x=>x.status==='pending') || d.checkpoints?.[0];
+  if (first) showCheckpoint(first.key);
+  const retry=$('retryCi'); if (retry) retry.onclick=requestRetry;
+}
+async function requestRetry() {
+  const btn=$('retryCi'); if (!btn || !current) return;
+  if (!confirm(t('review.retry_confirm','This re-runs the automated checks only; no data is changed. Continue?'))) return;
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.retry_requesting','Requesting…');
+  try {
+    const result=await api(`/api/reviews/${current.number}/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo})});
+    btn.textContent=t('review.retry_accepted','Re-check requested'); toast(result.message || t('review.retry_accepted_toast','The re-check was accepted. Please wait a few minutes'));
+  } catch(e) { btn.disabled=false; btn.textContent=current.retry.label; toast(t('review.retry_failed_prefix','Could not re-run the checks: ')+e.message); }
+}
+function renderVisuals(d) {
+  const model=d.modelUrl
+    ? `<iframe class="previewFrame" src="${esc(d.modelUrl)}" title="${t('review.model_iframe_title','3D model of the building')}" allowfullscreen></iframe>`
+    : '<div class="modelMissing">'+t('review.model_missing','The 3D model cannot be displayed.')+'<br>'+t('review.model_missing_hint','Check the failure reasons and the required actions.')+'</div>';
+  const map=d.googleMapsEmbedUrl
+    ? `<iframe class="mapFrame" src="${esc(d.googleMapsEmbedUrl)}" title="${t('review.map_iframe_title','Aerial photo of the site on Google Maps')}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`
+    : '<div class="modelMissing">'+t('review.location_missing','The building\'s location is not available.')+'</div>';
+  return `<section class="card"><h3>${t('review.visual_title','🏙️ Compare the 3D model with the site')}</h3><div class="visualGrid">
+    <div class="visualPane"><div class="visualTitle">${t('review.model_pane_title','3D model from the building data')}${d.modelIsComparison?t('review.model_compare',' (before / after)'):t('review.model_current',' (current)')}</div>${model}
+      <div class="visualActions"><a href="${esc(d.modelUrl || '#')}" target="_blank" rel="noopener">${t('review.model_open','Open the 3D model in full size ↗')}</a></div></div>
+    <div class="visualPane"><div class="visualTitle">${t('review.map_pane_title','Aerial photo of the site (Google Maps)')}</div>${map}
+      <div class="visualActions">${d.googleMapsUrl?`<a href="${esc(d.googleMapsUrl)}" target="_blank" rel="noopener">${t('review.map_open','Open the 3D view in Google Maps ↗')}</a>
+        <small>${t('review.map_layers_hint','After it opens, choose the 3D view under "Layers".')}</small>`:'<small>'+t('review.geo_missing','Location data is not available.')+'</small>'}</div></div>
+  </div></section>`;
+}
+function renderTechnical(d) {
+  return `<details class="inspectionTechnical"><summary>${t('review.technical_summary','Detailed records of checks and changed files')}</summary>
+    <div class="technicalBody"><h4>${t('review.checks_heading','Automated check log')}</h4>${renderChecks(d)}
+      <h4>${t('review.files_count','Changed files ({n})',{n:d.files.length})}</h4>${renderFiles(d)}</div></details>`;
+}
+const feedbackTemplates = [
+  t('review.tpl_photo_orientation','The photo orientation looks wrong. Please check it.'),
+  t('review.tpl_photo_match','Please confirm that the photo matches the target building.'),
+  t('review.tpl_reason_detail','Please describe the reason for the change in more detail.'),
+  t('review.tpl_add_evidence','Please add supporting documents or on-site photos.'),
+  t('review.tpl_consistency','Please confirm that the before/after values match the explanation.')
+];
+function renderFeedback() {
+  return `<section class="card feedbackCard"><h3>${t('review.feedback_title','💬 Ask the proposer')}</h3>
+    <p class="feedbackHint">${t('review.feedback_hint','If something looks off, pick a template and adjust it as needed. After sending, the proposal moves to "Waiting for the proposer".')}</p>
+    <div class="feedbackTemplates">${feedbackTemplates.map((x,i)=>`<button type="button" class="feedbackChoice" data-feedback="${i}">${esc(x)}</button>`).join('')}
+      <button type="button" class="feedbackChoice" data-feedback-other>${t('review.feedback_other','Other (write your own)')}</button></div>
+    <textarea id="feedbackText" maxlength="1000" placeholder="${t('review.feedback_placeholder','Enter what you would like the proposer to check')}"></textarea>
+    <div class="feedbackActions"><small>${demo?t('review.feedback_demo_note','In demo mode nothing is sent to the PR.'):t('review.feedback_note','This is recorded as a review comment on the proposal\'s PR.')}</small>
+      <button type="button" class="feedbackSend" id="sendFeedback" disabled>${t('review.feedback_send','Send this to the proposer')}</button></div>
+    <div class="feedbackSent" id="feedbackSent" hidden></div></section>`;
+}
+function bindFeedback() {
+  const text=$('feedbackText'), send=$('sendFeedback');
+  document.querySelectorAll('[data-feedback]').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.feedbackChoice').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); text.value=feedbackTemplates[Number(b.dataset.feedback)]; send.disabled=false; text.focus();
+  });
+  document.querySelector('[data-feedback-other]').onclick=e=>{
+    document.querySelectorAll('.feedbackChoice').forEach(x=>x.classList.remove('active'));
+    e.currentTarget.classList.add('active'); text.value=''; send.disabled=true; text.focus();
+  };
+  text.oninput=()=>{send.disabled=text.value.trim().length<5;};
+  send.onclick=sendFeedback;
+}
+async function sendFeedback() {
+  const text=$('feedbackText').value.trim(), btn=$('sendFeedback'); if (text.length<5) return;
+  const label=demo?t('review.feedback_confirm_demo','This sends a demo review comment. The actual PR is not modified.'):t('review.feedback_confirm','This is sent to the proposer; you then wait for a reply or a fix.');
+  if (!confirm(label+'\n\n'+text)) return;
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.sending','Sending…');
+  try {
+    await api(`/api/reviews/${current.number}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,demo})});
+    current.reviewerFeedback=true; $('actionBar').hidden=true; btn.textContent=t('review.sent','Sent');
+    const sent=$('feedbackSent'); sent.hidden=false; sent.textContent=demo?t('review.feedback_sent_demo','Sent as a demo (the PR was not modified)'):t('review.feedback_sent','Sent to the proposer. Review again after their reply or fix.');
+    if (!$('coordinationNotice')) $('main').insertAdjacentHTML('afterbegin',
+      '<div class="coordinationNotice reviewer" id="coordinationNotice"><b>'+t('review.awaiting_proposer','Waiting for the proposer')+'</b><br>'+t('review.awaiting_proposer_feedback','Waiting for a reply to the reviewer\'s comment, or for a fix.')+'</div>');
+    toast(demo?t('review.feedback_toast_demo','Sent a demo review comment'):t('review.feedback_toast','Sent the review comment to the proposer'));
+  } catch(e) { btn.disabled=false; btn.textContent=t('review.feedback_send','Send this to the proposer'); toast(t('review.send_error_prefix','Could not send: ')+e.message); }
+}
+function renderDetail() {
+  const d=current; $('confirmed').checked=false; approved=false; $('seal').style.display='none'; $('approve').style.display='block';
+  // Demo mode ignores the two blockers that only exist because the demo reviews
+  // your own open proposal. Match by the localized catalog strings (same keys the
+  // server used to render them) so the filter works in every locale.
+  const demoIgnorable=[t('hub.blocker_self','You cannot approve a proposal you submitted yourself'), t('hub.blocker_not_open','This proposal is not open')];
+  const blockers=demo ? (d.canDemoApprove?[]:d.blockers.filter(x=>!demoIgnorable.includes(x))) : d.blockers;
+  $('main').innerHTML=`
+    <div class="detailHead"><div class="headText"><div><span class="kind ${esc(d.kind)}">${kindLabel(d.kind)}</span> <span class="num">#${d.number}</span></div>
+      <h2>${esc(d.buildingId || t('review.building_id_pending','Confirming the building ID'))}</h2></div>
+      <a class="techLink" href="${esc(d.url)}" target="_blank" rel="noopener">${t('review.tech_link','Full change record ↗')}</a></div>
+    ${renderCheckpoints(d)}
+    <section class="card changeCard"><h3>${t('review.change_scope_title','◎ What changes in this proposal')}</h3>
+      <div class="changeMeta"><b>${t('review.proposal_label','This proposal: ')}${esc(d.title)}</b>
+        <span>${t('review.author_label','Proposed by')} @${esc(d.author)}${t('review.meta_sep',' · ')}${ago(d.updated)}</span></div>
+      <p class="changeHint">${t('review.change_hint','Review only what is inside the red frame. Red is the current value; green is the value after approval.')}</p>${renderChanges(d)}
+      <div class="changeContext"><div><h4>${t('review.reason_heading','📖 Proposer\'s explanation')}</h4>
+        <div class="reason ${d.reasonOk?'':'missing'}">${d.reasonOk?esc(d.reason):t('review.reason_missing','No reason for the change was given. CI has sent a review comment.')}</div></div>
+        <div><h4>${t('review.evidence_heading','📎 Supporting documents')}</h4>${renderEvidence(d)}</div></div></section>
+    ${renderVisuals(d)}
+    ${renderFeedback()}
+    <section class="card"><h3>${t('review.premise_heading','🛡️ Approval prerequisites')}</h3>${blockers.length
+      ? blockers.map(x=>`<div class="warnBox">⚠️ ${esc(x)}</div>`).join('')
+      : '<div class="okBox">'+t('review.no_blockers','✅ The change scope and automated checks are fine. Approve once you judge the content to be correct.')+'</div>'}</section>
+    <section class="card"><h3>${t('review.history_heading','🕘 Change history of this building')}</h3>${renderHistory(d)}</section>`;
+  if (d.reviewerFeedback) $('main').insertAdjacentHTML('afterbegin',
+    '<div class="coordinationNotice reviewer" id="coordinationNotice"><b>'+t('review.awaiting_proposer','Waiting for the proposer')+'</b><br>'+t('review.awaiting_proposer_feedback','Waiting for a reply to the reviewer\'s comment, or for a fix.')+'</div>');
+  else if (!d.inspectionReady) $('main').insertAdjacentHTML('afterbegin',
+    '<div class="coordinationNotice" id="coordinationNotice"><b>'+t('review.awaiting_proposer','Waiting for the proposer')+'</b><br>'+t('review.awaiting_proposer_ci','CI found issues to address. No action is needed from the reviewer.')+'</div>');
+  bindCheckpoints(d); bindFeedback(); $('actionBar').hidden=d.reviewerFeedback||!d.inspectionReady; updateApprove();
+}
+function updateApprove() {
+  if (!current || approved) return;
+  const ready=demo?current.canDemoApprove:current.canApprove;
+  $('approve').disabled=!ready || !$('confirmed').checked;
+  $('approve').title=ready?'':current.blockers.join(t('review.blocker_sep',' / '));
+}
+async function approve() {
+  if (!current || $('approve').disabled) return;
+  const label=demo?t('review.approve_confirm_demo','This shows a demo approval seal. The real data and change history are not modified.'):t('review.approve_confirm','This records your approval in the building\'s change history.');
+  if (!confirm(label+'\n\n'+t('review.confirm_ok','Continue?'))) return;
+  const btn=$('approve'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.approving','Approving…');
+  try {
+    const r=await api(`/api/reviews/${current.number}/decision`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo})});
+    approved=true; btn.style.display='none'; $('seal').style.display='block'; $('seal').textContent=`${t('review.approved_seal','✓ Approved')}  @${r.reviewer}`;
+    toast(demo?t('review.approve_done_demo','Demo complete (no data was changed)'):t('review.approve_done','Your approval was recorded in the building\'s change history'));
+  } catch(e) { btn.disabled=false; btn.textContent=t('review.approve_btn','Approve this proposal'); toast(t('review.approve_error_prefix','Could not approve: ')+e.message); }
+}
+$('confirmed').onchange=updateApprove;
+$('approve').onclick=approve;
+$('reload').onclick=()=>loadQueue();
+loadQueue();
+</script>
+</body>
+</html>

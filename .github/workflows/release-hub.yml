@@ -1,0 +1,416 @@
+# Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
+# Build the distribution of the integrated front-end (hub) and attach it to Releases on tag push (hub-v*).
+# - Windows: an "all-in-one zip" with the bundled Python embeddable package (PythonPortable)
+#   and MinGit; works through clone/push with no install. The entry point is
+#   start-windows.bat → program/PythonPortable/python.exe program/hub.py.
+#   (Decision 2026-08-28: the Windows distribution is the bundled-Python zip only; the
+#   former PyInstaller exe was removed so there is exactly one launch path to maintain.)
+# - macOS: a zip with no bundled binaries (hub.py + .command + index/review.html).
+#   Unsigned binaries are blocked by Gatekeeper, so we use the CLT-bundled python3 + git (M1).
+#
+# Supply-chain rules (A5/A7): everything fetched at build time (MinGit, Python embeddable)
+# is pinned by exact version URL and verified against a pinned SHA-256 BEFORE extraction.
+# Both zips bundle LICENSE / NOTICE / THIRD_PARTY_NOTICES.md, and the archive contents
+# (entry points, licenses, layout) are asserted per OS before upload.
+#
+# Zip layout (avoiding the #86 dropout): only these three items are visible at the top of the
+# extracted folder:
+#   READ-ME-FIRST.html / start-windows.bat|.command / program/
+# Everything "meaningless to the user" — index/review.html, .py, .bat, preset.json,
+# PortableGit, PythonPortable, license files — is hidden inside program/
+# (app.py's BUNDLE_DIRS also searches there).
+# The editors themselves (attr/tex) are not embedded in the launcher; they are supplied from
+# the clone (this launcher runs in-clone code via importlib with --serve-tool).
+# The data itself is not needed, so only tools/hub is fetched via blob:none + sparse-checkout.
+#
+# Note: the embeddable package ships a python314._pth (site disabled, isolated sys.path).
+# The hub and editors are single-file stdlib-only apps, so this is fine; the
+# "Test extracted bundle" step below runs the bundled python.exe against the extracted
+# layout to prove it (this closes the ._pth open item from handover memo §9.2).
+name: hub release build
+
+on:
+  push:
+    tags: ['hub-v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release-hub.yml'
+      - 'tools/hub/**'
+      - 'tools/attr_editor/app.py'
+      - 'THIRD_PARTY_NOTICES.md'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag to upload directly to specified Release without using Actions temp storage (e.g. hub-v0.2.4)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  # Pinned bundle inputs. Update THIRD_PARTY_NOTICES.md together with these values.
+  MINGIT_URL: https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-64-bit.zip
+  MINGIT_SHA256: 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e
+  PYEMBED_URL: https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip
+  PYEMBED_SHA256: d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            tools/hub
+            tools/attr_editor
+      - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
+        shell: pwsh
+        working-directory: tools/hub
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Set-Location dist
+          function Fetch-Verified([string]$url, [string]$expected, [string]$out) {
+            curl.exe -fLsS $url -o $out
+            if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
+            $actual = (Get-FileHash $out -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected.ToLowerInvariant()) {
+              throw "SHA-256 mismatch: ${out} expected=$expected actual=$actual"
+            }
+          }
+          Fetch-Verified $env:MINGIT_URL $env:MINGIT_SHA256 mingit.zip
+          Fetch-Verified $env:PYEMBED_URL $env:PYEMBED_SHA256 pyembed.zip
+          # MinGit is the official minimal configuration intended for app bundling. The
+          # directory name stays PortableGit for compatibility with existing code.
+          Expand-Archive -LiteralPath .\mingit.zip -DestinationPath .\PortableGit -Force
+          Expand-Archive -LiteralPath .\pyembed.zip -DestinationPath .\PythonPortable -Force
+          if (-not (Test-Path "PortableGit\cmd\git.exe")) { throw "MinGit extraction failed" }
+          if (-not (Test-Path "PythonPortable\python.exe")) { throw "PythonPortable extraction failed" }
+          if (-not (Test-Path "PythonPortable\LICENSE.txt")) { throw "PythonPortable\LICENSE.txt not found" }
+          Remove-Item .\mingit.zip, .\pyembed.zip
+      - name: Test MinGit commands
+        shell: pwsh
+        working-directory: tools/hub/dist
+        run: |
+          $git = (Resolve-Path ".\PortableGit\cmd\git.exe").Path
+          function Run-Git {
+            & $git @args
+            if ($LASTEXITCODE -ne 0) { throw "MinGit command failed: git $args" }
+          }
+          foreach ($required in @(
+            ".\PortableGit\mingw64\bin\git-remote-https.exe",
+            ".\PortableGit\mingw64\bin\git-credential-manager.exe"
+          )) {
+            if (-not (Test-Path $required)) { throw "MinGit required file missing: $required" }
+          }
+          Run-Git --version
+
+          $smoke = Join-Path $env:RUNNER_TEMP "mingit-smoke"
+          $origin = Join-Path $smoke "origin.git"
+          $work = Join-Path $smoke "work"
+          New-Item -ItemType Directory -Force -Path $smoke | Out-Null
+          Run-Git init --bare $origin
+          Run-Git clone $origin $work
+          Run-Git -C $work config user.name "MinGit Smoke Test"
+          Run-Git -C $work config user.email "mingit-smoke@example.invalid"
+          "ok" | Set-Content -Encoding UTF8 (Join-Path $work "smoke.txt")
+          Run-Git -C $work add smoke.txt
+          Run-Git -C $work commit -m "MinGit smoke test"
+          Run-Git -C $work push origin HEAD:main
+          $status = & $git -C $work status --porcelain
+          if ($LASTEXITCODE -ne 0) { throw "MinGit status verification failed" }
+          if ($status) { throw "Working tree is dirty after MinGit verification" }
+      - name: Test bundled Python (._pth isolated mode) runs the hub
+        shell: pwsh
+        working-directory: tools/hub/dist
+        run: |
+          $py = (Resolve-Path ".\PythonPortable\python.exe").Path
+          & $py --version
+          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to start" }
+          # The embeddable ._pth disables site and the script-dir sys.path entry;
+          # the hub must still parse (single-file, stdlib-only).
+          & $py ..\app.py --help *> $null
+          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to run app.py" }
+      - name: Assemble full zip (launcher + .py + PythonPortable + MinGit + licenses)
+        # Build with Python's zipfile to reliably set the UTF-8 flag (EFS) on Japanese file names.
+        shell: python
+        working-directory: tools/hub/dist
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          import os
+          import pathlib
+          import zipfile
+
+          ROOT = "citygml-hub"
+          LIB = f"{ROOT}/program"
+          ref = os.environ.get("RELEASE_TAG") or os.environ.get("GITHUB_REF_NAME", "")
+          version = ref.removeprefix("hub-") if ref.startswith("hub-v") else "dev"
+          artifact = pathlib.Path(f"citygml-hub-{version}-windows-full.zip")
+
+          repo_root = pathlib.Path("../../..")
+          with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
+              # Only these two files are visible at the top level. Embed a "this zip is
+              # for Windows" marker in the entrance page (guides the user before the
+              # steps when opened on the wrong OS, #94)
+              entrance = pathlib.Path("../getting-started.html").read_text(encoding="utf-8")
+              z.writestr(f"{ROOT}/READ-ME-FIRST.html",
+                         entrance.replace("%%BUNDLE_OS%%", "win"))
+              # The launcher doubles as the in-program fallback (dual-layout aware)
+              z.write("../packaging/start-windows.bat", f"{ROOT}/start-windows.bat")
+              # Everything below is hidden in program/
+              z.write("../app.py", f"{LIB}/hub.py")
+              z.write("../index.html", f"{LIB}/index.html")
+              z.write("../review.html", f"{LIB}/review.html")
+              z.write("../packaging/start-windows.bat", f"{LIB}/start-windows.bat")
+              z.write("../preset.json", f"{LIB}/preset.json")
+              z.write(repo_root / "LICENSE", f"{LIB}/LICENSE")
+              z.write(repo_root / "NOTICE", f"{LIB}/NOTICE")
+              z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
+              for bundle in ("PortableGit", "PythonPortable"):
+                  base = pathlib.Path(bundle)
+                  for p in sorted(base.rglob("*")):
+                      if p.is_file():
+                          z.write(p, f"{LIB}/{bundle}/{p.relative_to(base).as_posix()}")
+
+          size_mib = artifact.stat().st_size / (1024 * 1024)
+          print(f"Windows bundle: {size_mib:.2f} MiB")
+          if artifact.stat().st_size > 70 * 1024 * 1024:
+              raise RuntimeError(f"Windows bundle exceeds 70 MiB: {size_mib:.2f} MiB")
+      - name: Verify archive contents (entry points, licenses, layout)
+        shell: python
+        working-directory: tools/hub/dist
+        run: |
+          import hashlib
+          import pathlib
+          import zipfile
+
+          artifacts = list(pathlib.Path().glob("citygml-hub-*-windows-full.zip"))
+          if len(artifacts) != 1:
+              raise RuntimeError(f"Windows distribution zip is not exactly one: {artifacts}")
+          names = set(zipfile.ZipFile(artifacts[0]).namelist())
+          ROOT = "citygml-hub"
+          LIB = f"{ROOT}/program"
+          required = [
+              f"{ROOT}/READ-ME-FIRST.html",
+              f"{ROOT}/start-windows.bat",
+              f"{LIB}/hub.py",
+              f"{LIB}/start-windows.bat",
+              f"{LIB}/index.html",
+              f"{LIB}/review.html",
+              f"{LIB}/preset.json",
+              f"{LIB}/LICENSE",
+              f"{LIB}/NOTICE",
+              f"{LIB}/THIRD_PARTY_NOTICES.md",
+              f"{LIB}/PythonPortable/python.exe",
+              f"{LIB}/PythonPortable/LICENSE.txt",
+              f"{LIB}/PortableGit/cmd/git.exe",
+              f"{LIB}/PortableGit/LICENSE.txt",
+          ]
+          missing = [n for n in required if n not in names]
+          if missing:
+              raise RuntimeError(f"Distribution zip missing required files: {missing}")
+          top = {n.split("/", 2)[1] for n in names if n.startswith(f"{ROOT}/")}
+          allowed_top = {"READ-ME-FIRST.html", "start-windows.bat", "program"}
+          if top - allowed_top:
+              raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - allowed_top}")
+          digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
+          print(f"{artifacts[0].name} sha256={digest}")
+      - name: Test extracted bundle launches with bundled Python and finds bundled Git
+        shell: pwsh
+        working-directory: tools/hub/dist
+        run: |
+          $extracted = Join-Path $env:RUNNER_TEMP "hub-bundle"
+          $artifact = (Get-ChildItem "citygml-hub-*-windows-full.zip").FullName
+          Expand-Archive -LiteralPath $artifact -DestinationPath $extracted -Force
+          $root = Join-Path $extracted "citygml-hub"
+          $lib = Join-Path $root "program"
+          $py = Join-Path $lib "PythonPortable\python.exe"
+
+          # Verify the fallback path to the bundled Git on an unconfigured PC,
+          # unaffected by the runner's Git settings.
+          $env:GIT_CONFIG_GLOBAL = Join-Path $extracted "empty-gitconfig"
+
+          & $py (Join-Path $lib "hub.py") --help *> $null
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Python failed to run hub.py" }
+
+          $check = Join-Path $env:RUNNER_TEMP "bundle-check.py"
+          @'
+          import importlib.util
+          import os
+          import pathlib
+          import sys
+
+          lib = pathlib.Path(sys.argv[1])
+          smoke_repo = pathlib.Path(sys.argv[2])
+
+          spec = importlib.util.spec_from_file_location("hub_bundle_test", lib / "hub.py")
+          hub = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(hub)
+
+          expected_git = (lib / "PortableGit" / "cmd" / "git.exe").resolve()
+          if pathlib.Path(hub.git_cmd()[0]).resolve() != expected_git:
+              raise SystemExit("hub cannot detect bundled MinGit")
+          py_exe, bundled = hub.python_cmd()
+          if not bundled or pathlib.Path(py_exe).resolve().parent != (lib / "PythonPortable").resolve():
+              raise SystemExit("hub cannot detect bundled PythonPortable")
+          if hub.Hub(smoke_repo)._git("rev-parse", "--is-inside-work-tree") != "true":
+              raise SystemExit("hub cannot get repository status with bundled MinGit")
+          print("bundle check OK")
+          '@ | Set-Content -Encoding UTF8 $check
+          $smoke = Join-Path $env:RUNNER_TEMP "mingit-smoke\work"
+          & $py $check $lib $smoke
+          if ($LASTEXITCODE -ne 0) { throw "Bundled bundle verification failed" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # On PRs, only assemble and verify. Do not depend on artifact storage quota.
+        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        with:
+          name: hub-windows
+          path: tools/hub/dist/citygml-hub-*-windows-full.zip
+      - name: Upload Windows package directly to requested Release
+        if: inputs.release_tag != ''
+        shell: bash
+        working-directory: tools/hub/dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="${RELEASE_TAG#hub-}"
+          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-windows-full.zip" --clobber
+
+  macos-zip:
+    # M1: a zip that bundles no binaries and uses the CLT python3 + git (no signing needed).
+    # start-mac.command is stored with the execute bit set (for double-click launch).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: tools/hub
+      - name: Assemble macOS zip
+        # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
+        # names, so build with Python's zipfile (non-ASCII names always get EFS).
+        # Store the .command with mode 0o755 so it runs as-is after download.
+        shell: python
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          import os
+          import zipfile
+
+          def add(z, src, arc, mode=0o644, sub=None):
+              info = zipfile.ZipInfo(arc)
+              info.external_attr = (mode & 0xFFFF) << 16
+              info.compress_type = zipfile.ZIP_DEFLATED
+              with open(src, "rb") as f:
+                  data = f.read()
+              if sub:  # embed the zip's target-OS marker into the entrance page (#94)
+                  data = data.decode("utf-8").replace(*sub).encode("utf-8")
+              z.writestr(info, data)
+
+          base = "tools/hub"
+          ROOT = "citygml-hub"
+          LIB = f"{ROOT}/program"
+          ref = os.environ.get("RELEASE_TAG") or os.environ.get("GITHUB_REF_NAME", "")
+          version = ref.removeprefix("hub-") if ref.startswith("hub-v") else "dev"
+          artifact = f"citygml-hub-{version}-macos.zip"
+          with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
+              # Only these two are visible at the top level
+              add(z, f"{base}/getting-started.html", f"{ROOT}/READ-ME-FIRST.html",
+                  sub=("%%BUNDLE_OS%%", "mac"))
+              add(z, f"{base}/packaging/start-mac.command", f"{ROOT}/start-mac.command", 0o755)
+              # The full body is hidden in program/ (the .command looks in the adjacent program/)
+              add(z, f"{base}/app.py", f"{LIB}/hub.py")
+              add(z, f"{base}/index.html", f"{LIB}/index.html")
+              add(z, f"{base}/review.html", f"{LIB}/review.html")
+              add(z, f"{base}/preset.json", f"{LIB}/preset.json")
+              add(z, "LICENSE", f"{LIB}/LICENSE")
+              add(z, "NOTICE", f"{LIB}/NOTICE")
+              add(z, "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
+      - name: Verify archive contents (entry points, licenses, layout)
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import zipfile
+
+          artifacts = list(pathlib.Path().glob("citygml-hub-*-macos.zip"))
+          if len(artifacts) != 1:
+              raise RuntimeError(f"macOS distribution zip is not exactly one: {artifacts}")
+          zf = zipfile.ZipFile(artifacts[0])
+          names = set(zf.namelist())
+          ROOT = "citygml-hub"
+          LIB = f"{ROOT}/program"
+          required = [
+              f"{ROOT}/READ-ME-FIRST.html",
+              f"{ROOT}/start-mac.command",
+              f"{LIB}/hub.py",
+              f"{LIB}/index.html",
+              f"{LIB}/review.html",
+              f"{LIB}/preset.json",
+              f"{LIB}/LICENSE",
+              f"{LIB}/NOTICE",
+              f"{LIB}/THIRD_PARTY_NOTICES.md",
+          ]
+          missing = [n for n in required if n not in names]
+          if missing:
+              raise RuntimeError(f"Distribution zip missing required files: {missing}")
+          info = zf.getinfo(f"{ROOT}/start-mac.command")
+          if not (info.external_attr >> 16) & 0o100:
+              raise RuntimeError("start-mac.command does not have execute bit")
+          digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
+          print(f"{artifacts[0].name} sha256={digest}")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # On PRs, only assemble and verify. Do not depend on artifact storage quota.
+        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        with:
+          name: hub-macos
+          path: citygml-hub-*-macos.zip
+      - name: Upload macOS package directly to requested Release
+        if: inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="${RELEASE_TAG#hub-}"
+          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-macos.zip" --clobber
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/hub-v')
+    needs: [windows, macos-zip]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: hub-*
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload versioned packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#hub-}"
+          windows="dist/citygml-hub-${version}-windows-full.zip"
+          macos="dist/citygml-hub-${version}-macos.zip"
+          test -f "$windows"
+          test -f "$macos"
+          {
+            echo "citygml-hub (launcher). For Windows: citygml-hub-${version}-windows-full.zip (Python and git bundled, no installation needed), for macOS: citygml-hub-${version}-macos.zip (no binaries, runs on CLT python3/git). After extraction, open 'READ-ME-FIRST.html'."
+            echo
+            echo '```'
+            (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")
+            echo '```'
+          } > notes.md
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "citygml-hub $GITHUB_REF_NAME" \
+              --notes-file notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$windows" "$macos" --clobber

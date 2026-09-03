@@ -1,0 +1,2346 @@
+{
+ "from": "iur-2.0",
+ "lists": {
+  "building.class": {
+   "added": {},
+   "codes": {
+    "3000": {
+     "confidence": "machine",
+     "label": "分類しない建物",
+     "relation": "exact",
+     "to": [
+      "3000"
+     ]
+    },
+    "3001": {
+     "confidence": "machine",
+     "label": "普通建物",
+     "relation": "exact",
+     "to": [
+      "3001"
+     ]
+    },
+    "3002": {
+     "confidence": "machine",
+     "label": "堅ろう建物",
+     "relation": "exact",
+     "to": [
+      "3002"
+     ]
+    },
+    "3003": {
+     "confidence": "machine",
+     "label": "普通無壁舎",
+     "relation": "exact",
+     "to": [
+      "3003"
+     ]
+    },
+    "3004": {
+     "confidence": "machine",
+     "label": "堅ろう無壁舎",
+     "relation": "exact",
+     "to": [
+      "3004"
+     ]
+    }
+   },
+   "from_count": 5,
+   "from_file": "Building_class.xml",
+   "from_sha256": "c381d2466bb4b1285993c8e9885af36860fe34b74c57b2ec21658e4a941cc3a8",
+   "status": "ok",
+   "to_count": 5,
+   "to_file": "Building_class.xml",
+   "to_sha256": "eca1d6c7ec5b7b8928a63575cf9f6670eb375684cf385cec2dae62fda65ad34b"
+  },
+  "building.usage": {
+   "added": {},
+   "codes": {
+    "401": {
+     "confidence": "machine",
+     "label": "業務施設",
+     "relation": "exact",
+     "to": [
+      "401"
+     ]
+    },
+    "402": {
+     "confidence": "machine",
+     "label": "商業施設",
+     "relation": "exact",
+     "to": [
+      "402"
+     ]
+    },
+    "403": {
+     "confidence": "machine",
+     "label": "宿泊施設",
+     "relation": "exact",
+     "to": [
+      "403"
+     ]
+    },
+    "404": {
+     "confidence": "machine",
+     "label": "商業系複合施設",
+     "relation": "exact",
+     "to": [
+      "404"
+     ]
+    },
+    "411": {
+     "confidence": "machine",
+     "label": "住宅",
+     "relation": "exact",
+     "to": [
+      "411"
+     ]
+    },
+    "412": {
+     "confidence": "machine",
+     "label": "共同住宅",
+     "relation": "exact",
+     "to": [
+      "412"
+     ]
+    },
+    "413": {
+     "confidence": "machine",
+     "label": "店舗等併用住宅",
+     "relation": "exact",
+     "to": [
+      "413"
+     ]
+    },
+    "414": {
+     "confidence": "machine",
+     "label": "店舗等併用共同住宅",
+     "relation": "exact",
+     "to": [
+      "414"
+     ]
+    },
+    "415": {
+     "confidence": "machine",
+     "label": "作業所併用住宅",
+     "relation": "exact",
+     "to": [
+      "415"
+     ]
+    },
+    "421": {
+     "confidence": "machine",
+     "label": "官公庁施設",
+     "relation": "exact",
+     "to": [
+      "421"
+     ]
+    },
+    "422": {
+     "confidence": "machine",
+     "label": "文教厚生施設",
+     "relation": "exact",
+     "to": [
+      "422"
+     ]
+    },
+    "431": {
+     "confidence": "machine",
+     "label": "運輸倉庫施設",
+     "relation": "exact",
+     "to": [
+      "431"
+     ]
+    },
+    "441": {
+     "confidence": "machine",
+     "label": "工場",
+     "relation": "exact",
+     "to": [
+      "441"
+     ]
+    },
+    "451": {
+     "confidence": "machine",
+     "label": "農林漁業用施設",
+     "relation": "exact",
+     "to": [
+      "451"
+     ]
+    },
+    "452": {
+     "confidence": "machine",
+     "label": "供給処理施設",
+     "relation": "exact",
+     "to": [
+      "452"
+     ]
+    },
+    "453": {
+     "confidence": "machine",
+     "label": "防衛施設",
+     "relation": "exact",
+     "to": [
+      "453"
+     ]
+    },
+    "454": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "454"
+     ]
+    },
+    "461": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "461"
+     ]
+    }
+   },
+   "from_count": 18,
+   "from_file": "Building_usage.xml",
+   "from_sha256": "31e264059648fb9872794d94e8d525897595507a1b901806aeaabc89ee232b6b",
+   "status": "ok",
+   "to_count": 18,
+   "to_file": "Building_usage.xml",
+   "to_sha256": "b97f63717a6a647bdd9718e429db7165e7bf4f711558afdf76f7428ee06a46b5"
+  },
+  "detail.areaClassificationType": {
+   "added": {},
+   "codes": {
+    "22": {
+     "confidence": "machine",
+     "label": "市街化区域",
+     "relation": "exact",
+     "to": [
+      "22"
+     ]
+    },
+    "23": {
+     "confidence": "machine",
+     "label": "市街化調整区域",
+     "relation": "exact",
+     "to": [
+      "23"
+     ]
+    },
+    "24": {
+     "confidence": "machine",
+     "label": "非線引き用途地域",
+     "relation": "dropped",
+     "to": []
+    },
+    "25": {
+     "confidence": "machine",
+     "label": "非線引き用途白地",
+     "relation": "dropped",
+     "to": []
+    },
+    "31": {
+     "confidence": "machine",
+     "label": "居住誘導区域",
+     "relation": "dropped",
+     "to": []
+    },
+    "32": {
+     "confidence": "machine",
+     "label": "都市機能誘導区域",
+     "relation": "dropped",
+     "to": []
+    }
+   },
+   "from_count": 6,
+   "from_file": "Common_areaClassificationType.xml",
+   "from_sha256": "c1e4c10c436c2e0a87ec73270d6c7100625a18e68d93d79cfb67679e25fc8c1a",
+   "status": "ok",
+   "to_count": 2,
+   "to_file": "Common_areaClassificationType.xml",
+   "to_sha256": "e8ef82887dc0b7198d9fd4a9cc318cd023dadce74a8cb4ad54b7c99b6e02bca6"
+  },
+  "detail.buildingStructureType": {
+   "added": {},
+   "codes": {
+    "601": {
+     "confidence": "machine",
+     "label": "木造・土蔵造",
+     "relation": "exact",
+     "to": [
+      "601"
+     ]
+    },
+    "602": {
+     "confidence": "machine",
+     "label": "鉄骨鉄筋コンクリート造",
+     "relation": "exact",
+     "to": [
+      "602"
+     ]
+    },
+    "603": {
+     "confidence": "machine",
+     "label": "鉄筋コンクリート造",
+     "relation": "exact",
+     "to": [
+      "603"
+     ]
+    },
+    "604": {
+     "confidence": "machine",
+     "label": "鉄骨造",
+     "relation": "exact",
+     "to": [
+      "604"
+     ]
+    },
+    "605": {
+     "confidence": "machine",
+     "label": "軽量鉄骨造",
+     "relation": "exact",
+     "to": [
+      "605"
+     ]
+    },
+    "606": {
+     "confidence": "machine",
+     "label": "レンガ造・コンクリートブロック造・石造",
+     "relation": "exact",
+     "to": [
+      "606"
+     ]
+    },
+    "610": {
+     "confidence": "machine",
+     "label": "非木造",
+     "relation": "exact",
+     "to": [
+      "610"
+     ]
+    },
+    "611": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "611"
+     ]
+    }
+   },
+   "from_count": 8,
+   "from_file": "BuildingDetailAttribute_buildingStructureType.xml",
+   "from_sha256": "99c290b85d8bfc1249b767294efad2778f400515f048241941c66a3f868a324c",
+   "status": "ok",
+   "to_count": 8,
+   "to_file": "BuildingDetailAttribute_buildingStructureType.xml",
+   "to_sha256": "30725ff6a20b03fb727730ec937d306a38241a92063f4ccf82533a7499d41d2d"
+  },
+  "detail.detailedUsage": {
+   "added": {
+    "0": "不明",
+    "6110": "田",
+    "6200": "採草放牧地",
+    "90": "不整合"
+   },
+   "codes": {
+    "1110": {
+     "confidence": "machine",
+     "label": "官公庁施設",
+     "relation": "exact",
+     "to": [
+      "1110"
+     ]
+    },
+    "1121": {
+     "confidence": "machine",
+     "label": "教育施設",
+     "relation": "exact",
+     "to": [
+      "1121"
+     ]
+    },
+    "1122": {
+     "confidence": "machine",
+     "label": "文化施設",
+     "relation": "exact",
+     "to": [
+      "1122"
+     ]
+    },
+    "1123": {
+     "confidence": "machine",
+     "label": "宗教施設",
+     "relation": "exact",
+     "to": [
+      "1123"
+     ]
+    },
+    "1131": {
+     "confidence": "machine",
+     "label": "医療施設",
+     "relation": "exact",
+     "to": [
+      "1131"
+     ]
+    },
+    "1132": {
+     "confidence": "machine",
+     "label": "厚生施設",
+     "relation": "exact",
+     "to": [
+      "1132"
+     ]
+    },
+    "1141": {
+     "confidence": "machine",
+     "label": "供給施設",
+     "relation": "exact",
+     "to": [
+      "1141"
+     ]
+    },
+    "1142": {
+     "confidence": "machine",
+     "label": "処理施設",
+     "relation": "exact",
+     "to": [
+      "1142"
+     ]
+    },
+    "1210": {
+     "confidence": "machine",
+     "label": "事務所建築物",
+     "relation": "exact",
+     "to": [
+      "1210"
+     ]
+    },
+    "1221": {
+     "confidence": "machine",
+     "label": "商業施設",
+     "relation": "exact",
+     "to": [
+      "1221"
+     ]
+    },
+    "1222": {
+     "confidence": "machine",
+     "label": "公衆浴場等",
+     "relation": "exact",
+     "to": [
+      "1222"
+     ]
+    },
+    "1230": {
+     "confidence": "machine",
+     "label": "住商併用建物",
+     "relation": "exact",
+     "to": [
+      "1230"
+     ]
+    },
+    "1241": {
+     "confidence": "machine",
+     "label": "宿泊施設",
+     "relation": "exact",
+     "to": [
+      "1241"
+     ]
+    },
+    "1242": {
+     "confidence": "machine",
+     "label": "遊興施設",
+     "relation": "exact",
+     "to": [
+      "1242"
+     ]
+    },
+    "1251": {
+     "confidence": "machine",
+     "label": "スポーツ施設",
+     "relation": "exact",
+     "to": [
+      "1251"
+     ]
+    },
+    "1252": {
+     "confidence": "machine",
+     "label": "興行施設",
+     "relation": "exact",
+     "to": [
+      "1252"
+     ]
+    },
+    "1310": {
+     "confidence": "machine",
+     "label": "独立住宅",
+     "relation": "exact",
+     "to": [
+      "1310"
+     ]
+    },
+    "1320": {
+     "confidence": "machine",
+     "label": "集合住宅",
+     "relation": "exact",
+     "to": [
+      "1320"
+     ]
+    },
+    "1410": {
+     "confidence": "machine",
+     "label": "専用工場",
+     "relation": "exact",
+     "to": [
+      "1410"
+     ]
+    },
+    "1420": {
+     "confidence": "machine",
+     "label": "住居併用工場",
+     "relation": "exact",
+     "to": [
+      "1420"
+     ]
+    },
+    "1431": {
+     "confidence": "machine",
+     "label": "運輸施設等",
+     "relation": "exact",
+     "to": [
+      "1431"
+     ]
+    },
+    "1432": {
+     "confidence": "machine",
+     "label": "倉庫施設等",
+     "relation": "exact",
+     "to": [
+      "1432"
+     ]
+    },
+    "1500": {
+     "confidence": "machine",
+     "label": "農林漁業施設",
+     "relation": "exact",
+     "to": [
+      "1500"
+     ]
+    },
+    "2100": {
+     "candidates": {
+      "2101": "屋外利用地・仮設建物(太陽光発電)",
+      "2102": "屋外利用地・仮設建物(屋外駐車場)",
+      "2103": "屋外利用地・仮設建物(その他)"
+     },
+     "confidence": "machine",
+     "label": "屋外利用地・仮設建物",
+     "relation": "refined",
+     "to": [
+      "2101",
+      "2102",
+      "2103"
+     ]
+    },
+    "2200": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "2200"
+     ]
+    },
+    "3000": {
+     "candidates": {
+      "3001": "公園、運動場等(ゴルフ場)",
+      "3002": "公園、運動場等(その他)"
+     },
+     "confidence": "machine",
+     "label": "公園、運動場等",
+     "relation": "refined",
+     "to": [
+      "3001",
+      "3002"
+     ]
+    },
+    "4000": {
+     "confidence": "machine",
+     "label": "未利用地等",
+     "relation": "exact",
+     "to": [
+      "4000"
+     ]
+    },
+    "5100": {
+     "confidence": "machine",
+     "label": "道路",
+     "relation": "exact",
+     "to": [
+      "5100"
+     ]
+    },
+    "5200": {
+     "confidence": "machine",
+     "label": "鉄道・港湾等",
+     "relation": "exact",
+     "to": [
+      "5200"
+     ]
+    },
+    "6120": {
+     "confidence": "machine",
+     "label": "畑",
+     "relation": "exact",
+     "to": [
+      "6120"
+     ]
+    },
+    "6130": {
+     "confidence": "machine",
+     "label": "樹園地",
+     "relation": "exact",
+     "to": [
+      "6130"
+     ]
+    },
+    "7000": {
+     "confidence": "machine",
+     "label": "水面・河川・水路",
+     "relation": "exact",
+     "to": [
+      "7000"
+     ]
+    },
+    "8000": {
+     "confidence": "machine",
+     "label": "原野",
+     "relation": "exact",
+     "to": [
+      "8000"
+     ]
+    },
+    "9000": {
+     "confidence": "machine",
+     "label": "森林",
+     "relation": "exact",
+     "to": [
+      "9000"
+     ]
+    }
+   },
+   "from_count": 34,
+   "from_file": "BuildingDetailAttribute_detailedUsage.xml",
+   "from_sha256": "4530995173911e5f6ddd9d91452b42b2b4ffa63175a4b043f726b9e245f8ccb0",
+   "status": "ok",
+   "to_count": 41,
+   "to_file": "BuildingDetailAttribute_detailedUsage.xml",
+   "to_sha256": "5bf7c3afb6877843bfed40ca3a20b3f7f583894be325d0140028eb998dea4fdc"
+  },
+  "detail.districtsAndZonesType": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "用途地域の指定をしない区域",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "第1種低層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "10": {
+     "confidence": "machine",
+     "label": "商業地域",
+     "relation": "exact",
+     "to": [
+      "10"
+     ]
+    },
+    "11": {
+     "confidence": "machine",
+     "label": "準工業地域",
+     "relation": "exact",
+     "to": [
+      "11"
+     ]
+    },
+    "12": {
+     "confidence": "machine",
+     "label": "工業地域",
+     "relation": "exact",
+     "to": [
+      "12"
+     ]
+    },
+    "13": {
+     "confidence": "machine",
+     "label": "工業専用地域",
+     "relation": "exact",
+     "to": [
+      "13"
+     ]
+    },
+    "14": {
+     "confidence": "machine",
+     "label": "特別用途地区",
+     "relation": "exact",
+     "to": [
+      "14"
+     ]
+    },
+    "15": {
+     "confidence": "machine",
+     "label": "特定用途制限地域",
+     "relation": "exact",
+     "to": [
+      "15"
+     ]
+    },
+    "16": {
+     "confidence": "machine",
+     "label": "特例容積率適用地区",
+     "relation": "exact",
+     "to": [
+      "16"
+     ]
+    },
+    "17": {
+     "confidence": "machine",
+     "label": "高層住居誘導地区",
+     "relation": "exact",
+     "to": [
+      "17"
+     ]
+    },
+    "18": {
+     "confidence": "machine",
+     "label": "高度地区",
+     "relation": "exact",
+     "to": [
+      "18"
+     ]
+    },
+    "19": {
+     "confidence": "machine",
+     "label": "高度利用地区",
+     "relation": "exact",
+     "to": [
+      "19"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "第2種低層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "20": {
+     "confidence": "machine",
+     "label": "特定街区",
+     "relation": "exact",
+     "to": [
+      "20"
+     ]
+    },
+    "21": {
+     "confidence": "machine",
+     "label": "都市再生特別地区",
+     "relation": "exact",
+     "to": [
+      "21"
+     ]
+    },
+    "22": {
+     "confidence": "machine",
+     "label": "居住調整地域",
+     "relation": "exact",
+     "to": [
+      "22"
+     ]
+    },
+    "23": {
+     "confidence": "machine",
+     "label": "特定用途誘導地区",
+     "relation": "exact",
+     "to": [
+      "23"
+     ]
+    },
+    "24": {
+     "confidence": "machine",
+     "label": "防火地域",
+     "relation": "exact",
+     "to": [
+      "24"
+     ]
+    },
+    "25": {
+     "confidence": "machine",
+     "label": "準防火地域",
+     "relation": "exact",
+     "to": [
+      "25"
+     ]
+    },
+    "26": {
+     "confidence": "machine",
+     "label": "特定防災街区整備地区",
+     "relation": "exact",
+     "to": [
+      "26"
+     ]
+    },
+    "27": {
+     "confidence": "machine",
+     "label": "景観地区",
+     "relation": "exact",
+     "to": [
+      "27"
+     ]
+    },
+    "28": {
+     "confidence": "machine",
+     "label": "風致地区",
+     "relation": "exact",
+     "to": [
+      "28"
+     ]
+    },
+    "29": {
+     "confidence": "machine",
+     "label": "駐車場整備地区",
+     "relation": "exact",
+     "to": [
+      "29"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "第1種中高層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "30": {
+     "confidence": "machine",
+     "label": "臨港地区",
+     "relation": "exact",
+     "to": [
+      "30"
+     ]
+    },
+    "31": {
+     "confidence": "machine",
+     "label": "歴史的風土特別保存地区",
+     "relation": "exact",
+     "to": [
+      "31"
+     ]
+    },
+    "32": {
+     "confidence": "machine",
+     "label": "第1種歴史的風土保存地区",
+     "relation": "exact",
+     "to": [
+      "32"
+     ]
+    },
+    "33": {
+     "confidence": "machine",
+     "label": "第2種歴史的風土保存地区",
+     "relation": "exact",
+     "to": [
+      "33"
+     ]
+    },
+    "34": {
+     "confidence": "machine",
+     "label": "緑地保全地域",
+     "relation": "exact",
+     "to": [
+      "34"
+     ]
+    },
+    "35": {
+     "confidence": "machine",
+     "label": "特別緑地保存地区",
+     "note": "relabeled: 特別緑地保全地区",
+     "relation": "exact",
+     "to": [
+      "35"
+     ]
+    },
+    "36": {
+     "confidence": "machine",
+     "label": "緑化地域",
+     "relation": "exact",
+     "to": [
+      "36"
+     ]
+    },
+    "37": {
+     "confidence": "machine",
+     "label": "流通業務地区",
+     "relation": "exact",
+     "to": [
+      "37"
+     ]
+    },
+    "38": {
+     "confidence": "machine",
+     "label": "生産緑地地区",
+     "relation": "exact",
+     "to": [
+      "38"
+     ]
+    },
+    "39": {
+     "confidence": "machine",
+     "label": "伝統的建造物群保存地区",
+     "relation": "exact",
+     "to": [
+      "39"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "第2種中高層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "40": {
+     "confidence": "machine",
+     "label": "航空機騒音障害防止地区",
+     "relation": "exact",
+     "to": [
+      "40"
+     ]
+    },
+    "41": {
+     "confidence": "machine",
+     "label": "航空機騒音障害防止特別地区",
+     "relation": "exact",
+     "to": [
+      "41"
+     ]
+    },
+    "42": {
+     "confidence": "machine",
+     "label": "居住環境向上用途誘導地区",
+     "relation": "exact",
+     "to": [
+      "42"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "第1種住居地域",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "第2種住居地域",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "準住居地域",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "田園住居地域",
+     "relation": "exact",
+     "to": [
+      "8"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "近隣商業地域",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 43,
+   "from_file": "Common_districtsAndZonesType.xml",
+   "from_sha256": "f0f94c43c31a3c691e90d73432c9cb41378fb09c0280606e72081e45ea0f2412",
+   "status": "ok",
+   "to_count": 43,
+   "to_file": "Common_districtsAndZonesType.xml",
+   "to_sha256": "60d968cfab4065c131ac7c4e18c0426652d08f30824b2a799fed1ab51ea7dda6"
+  },
+  "detail.fireproofStructureType": {
+   "added": {},
+   "codes": {
+    "1001": {
+     "confidence": "machine",
+     "label": "耐火",
+     "relation": "exact",
+     "to": [
+      "1001"
+     ]
+    },
+    "1002": {
+     "confidence": "machine",
+     "label": "準耐火造",
+     "relation": "exact",
+     "to": [
+      "1002"
+     ]
+    },
+    "1003": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "1003"
+     ]
+    },
+    "1011": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "1011"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "BuildingDetailAttribute_fireproofStructureType.xml",
+   "from_sha256": "68e56225c995157d79ed68d9161c252067fd660c3bd2cde07f4637309594b88f",
+   "status": "ok",
+   "to_count": 4,
+   "to_file": "BuildingDetailAttribute_fireproofStructureType.xml",
+   "to_sha256": "497743bc3853b32437d724b52cc94f5fae54dab0ca16620f9d32a65357047095"
+  },
+  "detail.landUseType": {
+   "added": {
+    "224": "低未利用土地（用途に供されていない空地、空家・空き店舗・空施設の存する土地等）"
+   },
+   "codes": {
+    "201": {
+     "confidence": "machine",
+     "label": "田",
+     "note": "relabeled: 田（水田）",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "2021": {
+     "candidates": {
+      "202": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）",
+      "260": "農地（田、畑の区分がない）"
+     },
+     "confidence": "machine",
+     "label": "畑",
+     "relation": "refined",
+     "to": [
+      "202",
+      "260"
+     ]
+    },
+    "2022": {
+     "candidates": {
+      "202": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）"
+     },
+     "confidence": "machine",
+     "label": "樹園地",
+     "relation": "refined",
+     "to": [
+      "202"
+     ]
+    },
+    "2023": {
+     "candidates": {
+      "202": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）"
+     },
+     "confidence": "machine",
+     "label": "採草地",
+     "relation": "refined",
+     "to": [
+      "202"
+     ]
+    },
+    "2024": {
+     "candidates": {
+      "202": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）"
+     },
+     "confidence": "machine",
+     "label": "養鶏（牛・豚）場",
+     "relation": "refined",
+     "to": [
+      "202"
+     ]
+    },
+    "203": {
+     "confidence": "machine",
+     "label": "山林（樹林地）",
+     "relation": "exact",
+     "to": [
+      "203"
+     ]
+    },
+    "204": {
+     "confidence": "machine",
+     "label": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）",
+     "relation": "exact",
+     "to": [
+      "204"
+     ]
+    },
+    "2041": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "河川水面",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "2042": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "湖沼",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "2043": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "ため池",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "2044": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "用水路",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "2045": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "濠",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "2046": {
+     "candidates": {
+      "204": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）"
+     },
+     "confidence": "machine",
+     "label": "運河水面",
+     "relation": "refined",
+     "to": [
+      "204"
+     ]
+    },
+    "205": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "その他自然地（原野・牧野、荒れ地、低湿地、河川敷・河原、海浜、湖岸）",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2051": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "原野・牧野",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2052": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "荒れ地",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2053": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "低湿地",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2054": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "河川敷・河原",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2055": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "海浜",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "2056": {
+     "candidates": {
+      "205": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）"
+     },
+     "confidence": "machine",
+     "label": "湖岸",
+     "relation": "refined",
+     "to": [
+      "205"
+     ]
+    },
+    "211": {
+     "confidence": "machine",
+     "label": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）",
+     "relation": "exact",
+     "to": [
+      "211"
+     ]
+    },
+    "2111": {
+     "candidates": {
+      "211": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）",
+      "261": "宅地（住宅用地、商業用地等の区分が無い）"
+     },
+     "confidence": "machine",
+     "label": "住宅",
+     "relation": "refined",
+     "to": [
+      "211",
+      "261"
+     ]
+    },
+    "2112": {
+     "candidates": {
+      "211": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）"
+     },
+     "confidence": "machine",
+     "label": "共同住宅",
+     "relation": "refined",
+     "to": [
+      "211"
+     ]
+    },
+    "2113": {
+     "candidates": {
+      "211": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）"
+     },
+     "confidence": "machine",
+     "label": "店舗等併用住宅",
+     "relation": "refined",
+     "to": [
+      "211"
+     ]
+    },
+    "2114": {
+     "candidates": {
+      "211": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）"
+     },
+     "confidence": "machine",
+     "label": "店舗等併用共同住宅",
+     "relation": "refined",
+     "to": [
+      "211"
+     ]
+    },
+    "2115": {
+     "candidates": {
+      "211": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）"
+     },
+     "confidence": "machine",
+     "label": "作業所併用住宅",
+     "relation": "refined",
+     "to": [
+      "211"
+     ]
+    },
+    "212": {
+     "confidence": "machine",
+     "label": "商業用地",
+     "note": "relabeled: 商業用地（業務施設、商業施設、宿泊施設、商業系複合施設）",
+     "relation": "exact",
+     "to": [
+      "212"
+     ]
+    },
+    "2121": {
+     "candidates": {
+      "212": "商業用地（業務施設、商業施設、宿泊施設、商業系複合施設）"
+     },
+     "confidence": "machine",
+     "label": "業務施設",
+     "relation": "refined",
+     "to": [
+      "212"
+     ]
+    },
+    "2122": {
+     "candidates": {
+      "212": "商業用地（業務施設、商業施設、宿泊施設、商業系複合施設）"
+     },
+     "confidence": "machine",
+     "label": "商業施設",
+     "relation": "refined",
+     "to": [
+      "212"
+     ]
+    },
+    "2123": {
+     "candidates": {
+      "212": "商業用地（業務施設、商業施設、宿泊施設、商業系複合施設）"
+     },
+     "confidence": "machine",
+     "label": "宿泊施設",
+     "relation": "refined",
+     "to": [
+      "212"
+     ]
+    },
+    "2124": {
+     "confidence": "machine",
+     "label": "商業系用途複合施設",
+     "relation": "dropped",
+     "to": []
+    },
+    "213": {
+     "confidence": "machine",
+     "label": "工業用地",
+     "note": "relabeled: 工業用地（工場）",
+     "relation": "exact",
+     "to": [
+      "213"
+     ]
+    },
+    "214": {
+     "confidence": "machine",
+     "label": "公益施設用地",
+     "note": "relabeled: 公益施設用地（官公庁施設、文教厚生施設、供給処理施設）",
+     "relation": "exact",
+     "to": [
+      "214"
+     ]
+    },
+    "2141": {
+     "candidates": {
+      "214": "公益施設用地（官公庁施設、文教厚生施設、供給処理施設）"
+     },
+     "confidence": "machine",
+     "label": "官公庁施設",
+     "relation": "refined",
+     "to": [
+      "214"
+     ]
+    },
+    "2142": {
+     "candidates": {
+      "214": "公益施設用地（官公庁施設、文教厚生施設、供給処理施設）"
+     },
+     "confidence": "machine",
+     "label": "文教厚生施設",
+     "relation": "refined",
+     "to": [
+      "214"
+     ]
+    },
+    "2143": {
+     "candidates": {
+      "214": "公益施設用地（官公庁施設、文教厚生施設、供給処理施設）"
+     },
+     "confidence": "machine",
+     "label": "供給処理施設",
+     "relation": "refined",
+     "to": [
+      "214"
+     ]
+    },
+    "215": {
+     "confidence": "machine",
+     "label": "道路用地（道路、駅前広場）",
+     "note": "relabeled: 道路用地（道路、駅前広場、私有地内に存在する沿道用途の「私道」または、私有地の一部分であるものの公共の通行に供されている土地の部分）",
+     "relation": "exact",
+     "to": [
+      "215"
+     ]
+    },
+    "2151": {
+     "candidates": {
+      "215": "道路用地（道路、駅前広場、私有地内に存在する沿道用途の「私道」または、私有地の一部分であるものの公共の通行に供されている土地の部分）",
+      "223": "その他④（その他①～③以外の用途に供されている都市的土地利用（建物跡地、資材置場、改変工事中の土地）、法面（道路、造成地等の主利用に含まれない法面））",
+      "262": "道路・鉄軌道敷（道路と交通施設用地が混在）"
+     },
+     "confidence": "machine",
+     "label": "道路",
+     "relation": "refined",
+     "to": [
+      "215",
+      "223",
+      "262"
+     ]
+    },
+    "2152": {
+     "candidates": {
+      "215": "道路用地（道路、駅前広場、私有地内に存在する沿道用途の「私道」または、私有地の一部分であるものの公共の通行に供されている土地の部分）"
+     },
+     "confidence": "machine",
+     "label": "駅前広場",
+     "relation": "refined",
+     "to": [
+      "215"
+     ]
+    },
+    "216": {
+     "confidence": "machine",
+     "label": "交通施設用地",
+     "note": "relabeled: 交通施設用地（運輸倉庫施設）",
+     "relation": "exact",
+     "to": [
+      "216"
+     ]
+    },
+    "217": {
+     "confidence": "machine",
+     "label": "公共空地（公園・緑地、広場、運動場、墓園）",
+     "relation": "exact",
+     "to": [
+      "217"
+     ]
+    },
+    "2171": {
+     "candidates": {
+      "217": "公共空地（公園・緑地、広場、運動場、墓園）"
+     },
+     "confidence": "machine",
+     "label": "公園・緑地",
+     "relation": "refined",
+     "to": [
+      "217"
+     ]
+    },
+    "2172": {
+     "candidates": {
+      "215": "道路用地（道路、駅前広場、私有地内に存在する沿道用途の「私道」または、私有地の一部分であるものの公共の通行に供されている土地の部分）",
+      "217": "公共空地（公園・緑地、広場、運動場、墓園）"
+     },
+     "confidence": "machine",
+     "label": "広場",
+     "relation": "refined",
+     "to": [
+      "215",
+      "217"
+     ]
+    },
+    "2173": {
+     "candidates": {
+      "217": "公共空地（公園・緑地、広場、運動場、墓園）"
+     },
+     "confidence": "machine",
+     "label": "運動場",
+     "relation": "refined",
+     "to": [
+      "217"
+     ]
+    },
+    "2174": {
+     "candidates": {
+      "217": "公共空地（公園・緑地、広場、運動場、墓園）"
+     },
+     "confidence": "machine",
+     "label": "墓園",
+     "relation": "refined",
+     "to": [
+      "217"
+     ]
+    },
+    "218": {
+     "confidence": "machine",
+     "label": "その他公的施設用地（防衛施設用地）",
+     "relation": "exact",
+     "to": [
+      "218"
+     ]
+    },
+    "219": {
+     "confidence": "machine",
+     "label": "農林漁業施設用地",
+     "note": "relabeled: 農林漁業施設用地（農林漁業用施設）",
+     "relation": "exact",
+     "to": [
+      "219"
+     ]
+    },
+    "220": {
+     "candidates": {
+      "220": "その他①（ゴルフ場）"
+     },
+     "confidence": "machine",
+     "label": "その他の空地①（ゴルフ場）",
+     "relation": "refined",
+     "to": [
+      "220"
+     ]
+    },
+    "221": {
+     "candidates": {
+      "221": "その他②（太陽光発電のシステムを直接整備している土地）"
+     },
+     "confidence": "machine",
+     "label": "その他空地②（太陽光発電のシステムを直接整備している土地）",
+     "relation": "refined",
+     "to": [
+      "221"
+     ]
+    },
+    "222": {
+     "candidates": {
+      "222": "その他③（平面駐車場）"
+     },
+     "confidence": "machine",
+     "label": "その他の空地③（平面駐車場）",
+     "relation": "refined",
+     "to": [
+      "222"
+     ]
+    },
+    "223": {
+     "candidates": {
+      "223": "その他④（その他①～③以外の用途に供されている都市的土地利用（建物跡地、資材置場、改変工事中の土地）、法面（道路、造成地等の主利用に含まれない法面））"
+     },
+     "confidence": "machine",
+     "label": "その他の空地④（その他の空地①～③以外の都市的土地利用：建物跡地、資源置場、改変工事中の土地、法面（道路、造成地等の主利用に含まれない法面））",
+     "relation": "refined",
+     "to": [
+      "223"
+     ]
+    },
+    "2231": {
+     "candidates": {
+      "223": "その他④（その他①～③以外の用途に供されている都市的土地利用（建物跡地、資材置場、改変工事中の土地）、法面（道路、造成地等の主利用に含まれない法面））"
+     },
+     "confidence": "machine",
+     "label": "建物跡地",
+     "relation": "refined",
+     "to": [
+      "223"
+     ]
+    },
+    "2232": {
+     "confidence": "machine",
+     "label": "資材置き場",
+     "relation": "dropped",
+     "to": []
+    },
+    "2233": {
+     "confidence": "machine",
+     "label": "改変中の土地",
+     "relation": "dropped",
+     "to": []
+    },
+    "2234": {
+     "candidates": {
+      "223": "その他④（その他①～③以外の用途に供されている都市的土地利用（建物跡地、資材置場、改変工事中の土地）、法面（道路、造成地等の主利用に含まれない法面））"
+     },
+     "confidence": "machine",
+     "label": "法面（道路、造成地等の主利用に含まれない法面）",
+     "relation": "refined",
+     "to": [
+      "223"
+     ]
+    },
+    "231": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "231"
+     ]
+    },
+    "251": {
+     "confidence": "machine",
+     "label": "可住地",
+     "relation": "exact",
+     "to": [
+      "251"
+     ]
+    },
+    "252": {
+     "confidence": "machine",
+     "label": "非可住地",
+     "relation": "exact",
+     "to": [
+      "252"
+     ]
+    },
+    "260": {
+     "candidates": {
+      "260": "農地（田、畑の区分がない）"
+     },
+     "confidence": "machine",
+     "label": "農地（田、畑の区分が無い）",
+     "relation": "refined",
+     "to": [
+      "260"
+     ]
+    },
+    "261": {
+     "confidence": "machine",
+     "label": "宅地（住宅用地、商業用地等の区分が無い）",
+     "relation": "exact",
+     "to": [
+      "261"
+     ]
+    },
+    "262": {
+     "confidence": "machine",
+     "label": "道路・鉄軌道敷（道路と交通施設用地が混在）",
+     "relation": "exact",
+     "to": [
+      "262"
+     ]
+    },
+    "263": {
+     "candidates": {
+      "263": "空地（その他①～④の区分が無い）"
+     },
+     "confidence": "machine",
+     "label": "空地（その他の空地①～④の区分が無い）",
+     "relation": "refined",
+     "to": [
+      "263"
+     ]
+    }
+   },
+   "from_count": 63,
+   "from_file": "Common_landUseType.xml",
+   "from_sha256": "e87d33420db91e842a53f107d95dab8fe7df002849b11becc367c10e75771ac7",
+   "status": "ok",
+   "to_count": 26,
+   "to_file": "Common_landUseType.xml",
+   "to_sha256": "e96bef2efc05c401b37e75939295c351705ebfdd8210a942d41106284b8f1f3d"
+  },
+  "detail.urbanPlanType": {
+   "added": {},
+   "codes": {
+    "21": {
+     "confidence": "machine",
+     "label": "都市計画区域",
+     "relation": "exact",
+     "to": [
+      "21"
+     ]
+    },
+    "26": {
+     "confidence": "machine",
+     "label": "準都市計画区域",
+     "relation": "exact",
+     "to": [
+      "26"
+     ]
+    },
+    "27": {
+     "confidence": "machine",
+     "label": "都市計画区域外",
+     "relation": "exact",
+     "to": [
+      "27"
+     ]
+    }
+   },
+   "from_count": 3,
+   "from_file": "Common_urbanPlanType.xml",
+   "from_sha256": "6660ac2137dde03f3a510f8c90e3a2a8cb0229ee066708bfc0b6b001ba0162bc",
+   "status": "ok",
+   "to_count": 3,
+   "to_file": "Common_urbanPlanType.xml",
+   "to_sha256": "2af693622db1b66bf7e7604491a91a99c979f271899d405baef247beb8ad7f76"
+  },
+  "generic.keyValue.key": {
+   "added": {
+    "107": "建物修正フラグ"
+   },
+   "codes": {
+    "10": {
+     "candidates": {
+      "100": "建物構造コード"
+     },
+     "confidence": "machine",
+     "label": "構造",
+     "relation": "refined",
+     "to": [
+      "100"
+     ]
+    },
+    "100": {
+     "confidence": "machine",
+     "label": "建物構造コード",
+     "relation": "exact",
+     "to": [
+      "100"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "延べ面積換算コード",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "変化フラグ",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "過年度修正フラグ",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "調整フラグ",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "高度地区",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "防火及び準防火地域",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "LOD1の立ち上げに使用する建築物の高さ",
+     "relation": "dropped",
+     "to": []
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "建物利用現況（大分類）",
+     "relation": "dropped",
+     "to": []
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "建物利用現況（大分類2）",
+     "relation": "dropped",
+     "to": []
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "建物利用現況（中分類）",
+     "relation": "dropped",
+     "to": []
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "建物利用現況（小分類）",
+     "relation": "dropped",
+     "to": []
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "建物利用現況（詳細分類）",
+     "relation": "dropped",
+     "to": []
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "建物利用現況（詳細分類2）",
+     "relation": "dropped",
+     "to": []
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "建物利用現況（詳細分類3）",
+     "relation": "dropped",
+     "to": []
+    }
+   },
+   "from_count": 16,
+   "from_file": "KeyValuePairAttribute_key.xml",
+   "from_sha256": "849a468454751729ef19493de7648c1795cbd1d18bff9b3ec681acddc8780158",
+   "status": "ok",
+   "to_count": 8,
+   "to_file": "KeyValuePairAttribute_key.xml",
+   "to_sha256": "90c4d3e745ce44b860ff93c7f4ebeb309b8969c1abebf169666c6d1079485819"
+  },
+  "quality.appearanceSrcDesc": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "空中写真",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "MMS画像",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "現地写真",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "疑似テクスチャ",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "BuildingDataQualityAttribute_appearanceSrcDesc.xml",
+   "from_sha256": "f90db8960d4a4f64f741a265fe66e220da1ada9c5cb515af50a1142e972477cc",
+   "status": "ok",
+   "to_count": 4,
+   "to_file": "BuildingDataQualityAttribute_appearanceSrcDesc.xml",
+   "to_sha256": "6e264e53b8cd2a8fc141f5553da1db3a005f3a45067ce546625f8dcc13b6b283"
+  },
+  "quality.geometrySrcDesc": {
+   "added": {
+    "10": "BIMモデル"
+   },
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "現地測量",
+     "relation": "dropped",
+     "to": []
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "地上レーザ測量",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "UAV写真測量",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "空中写真測量",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "既成図数値化",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "修正測量",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "航空レーザ測量",
+     "relation": "exact",
+     "to": [
+      "8"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 10,
+   "from_file": "BuildingDataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "26590447af4afced9cfa436d75eb2b84c6caf876bb4bd41e45eda21c3f291274",
+   "status": "ok",
+   "to_count": 10,
+   "to_file": "BuildingDataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "682e4e772a1ee7de5f4a690e31ccf7a67867a00144d306fc9debe0abac380c4a"
+  },
+  "quality.lod1HeightType": {
+   "added": {
+    "0": "取得不可のため一律値（3m）"
+   },
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "点群から取得_最高高さ",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "点群から取得_中央値",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "点群から取得_平均値",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "点群から取得_最頻値",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "点群から取得_最低値",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "航空写真図化_最高高さ",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "建築確認申請書類等に記載された「建築物の高さ」",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    }
+   },
+   "from_count": 7,
+   "from_file": "BuildingDataQualityAttribute_lod1HeightType.xml",
+   "from_sha256": "9d5d2856f06c27c6dfa92c4b38c7570352bca33625567860b8a6332df37950be",
+   "status": "ok",
+   "to_count": 8,
+   "to_file": "BuildingDataQualityAttribute_lod1HeightType.xml",
+   "to_sha256": "d8fe20593b57c1b244cd2eaeaf8e18f04da16e70c33c4eed3b220cb499509652"
+  },
+  "quality.lodType": {
+   "candidates": {
+    "from": [
+     "BuildingDataQualityAttribute_lodType.xml",
+     "Building_lodType.xml",
+     "DataQualityAttribute_lodType.xml",
+     "Common_lodType.xml"
+    ],
+    "to": [
+     "BuildingDataQualityAttribute_lodType.xml",
+     "Building_lodType.xml",
+     "DataQualityAttribute_lodType.xml",
+     "Common_lodType.xml"
+    ]
+   },
+   "missing": [
+    "from",
+    "to"
+   ],
+   "status": "missing"
+  },
+  "quality.srcScale": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "地図情報レベル2500",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "地図情報レベル1000",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "地図情報レベル500",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    }
+   },
+   "from_count": 3,
+   "from_file": "BuildingDataQualityAttribute_srcScale.xml",
+   "from_sha256": "e6ad9ed46e51ac44e4606db4b66d3270af9b9ed492620fc1c6af55b8d7ee424f",
+   "status": "ok",
+   "to_count": 3,
+   "to_file": "BuildingDataQualityAttribute_srcScale.xml",
+   "to_sha256": "19d457b0229a2e94b08bb6758118898acd0776652f93cdb201c497a502daf0a4"
+  },
+  "quality.thematicSrcDesc": {
+   "added": {
+    "2": "道路基盤地図情報",
+    "3": "道路台帳",
+    "4": "道路施設台帳",
+    "5": "統計調査",
+    "9": "BIMモデル"
+   },
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "写真判読",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "8"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "BuildingDataQualityAttribute_thematicSrcDesc.xml",
+   "from_sha256": "815fd13a6a5cdae28210acdf5ece9471c6f997aba6243903179310d03ab0cabb",
+   "status": "ok",
+   "to_count": 9,
+   "to_file": "BuildingDataQualityAttribute_thematicSrcDesc.xml",
+   "to_sha256": "76c4b39cd51d71d09cbff8dffd6a43e979399def275ff8886bbec10d544a45c9"
+  },
+  "risk.landslide.areaType": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "土砂災害警戒区域（指定済）",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "土砂災害特別警戒区域（指定済）",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "土砂災害警戒区域（指定前）",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "土砂災害特別警戒区域（指定前）",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "BuildingLandSlideRiskAttribute_areaType.xml",
+   "from_sha256": "9d5799a44d710881e78fd48c1c437629e22f064d58596f362e94b7c32db8a75e",
+   "status": "ok",
+   "to_count": 4,
+   "to_file": "LandSlideRiskAttribute_areaType.xml",
+   "to_sha256": "ab5b74ce2182134a117fb51100f06982d20deb00322637b6e1ff38f45cc05da1"
+  },
+  "risk.river.adminType": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "国",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "都道府県",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    }
+   },
+   "from_count": 2,
+   "from_file": "BuildingRiverFloodingRiskAttribute_adminType.xml",
+   "from_sha256": "0e4b6f59efb698b349998628d9d52ed0f7e3650debb490897911998d4ba04aa6",
+   "status": "ok",
+   "to_count": 2,
+   "to_file": "RiverFloodingRiskAttribute_adminType.xml",
+   "to_sha256": "7162e7bc9601b5c357e31198a8df78d68c6865a4d862e1c1216575945def8e24"
+  },
+  "risk.river.rank": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "0.5m未満",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "0.5m以上3m未満",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "3m以上5m未満",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "5m以上10m未満",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "10m以上20m未満",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "20m以上",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "BuildingRiverFloodingRiskAttribute_rank.xml",
+   "from_sha256": "d53c60296e295fbdc593b11a87b300e848c4f52b5ffa39aa716a0b7871b40396",
+   "status": "ok",
+   "to_count": 6,
+   "to_file": "RiverFloodingRiskAttribute_rank.xml",
+   "to_sha256": "a1ebbe1837be7175ad72ea5a8a2ab3d2fcb7e795e16ba02892228477016148fc"
+  },
+  "risk.river.scale": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "L1（計画規模）",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "L2（想定最大規模）",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    }
+   },
+   "from_count": 2,
+   "from_file": "BuildingRiverFloodingRiskAttribute_scale.xml",
+   "from_sha256": "255c3052b6e2caf7195e99d9565ebe4df7a6926511120f1eb23251310fbacc50",
+   "status": "ok",
+   "to_count": 2,
+   "to_file": "RiverFloodingRiskAttribute_scale.xml",
+   "to_sha256": "cad7ee5a0b16608830991ab2d01b61db597ab89bb1c8a9058df269b9b7e043cf"
+  }
+ },
+ "schemaVersion": 1,
+ "summary": {
+  "dropped": 16,
+  "exact": 181,
+  "lists": 19,
+  "missing": 1,
+  "refined": 45,
+  "reviewed": 0
+ },
+ "to": "iur-3.0"
+}

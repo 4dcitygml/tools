@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>3DCityDB — Official repository sync</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><h1>3DCityDB — Official repository sync</h1><span>4dcitygml</span></header>
+<main>
+  <section>
+    <h2>Connection status</h2>
+    <div id="status" class="loading">Checking…</div>
+    <button id="sync" class="primary" disabled>Sync</button>
+    <p class="hint">Sync only reviews differences. It does not change GitHub or your working tree.</p>
+  </section>
+  <section id="result" hidden>
+    <h2>Sync results</h2>
+    <div id="summary"></div>
+    <div id="selection" class="selection-summary" hidden>
+      <span id="selectedBuilding"></span>
+      <button id="changeSelection">Change selection</button>
+    </div>
+    <div id="changes"></div>
+  </section>
+  <section id="proposal" hidden>
+    <h2>Open a PR to the official repository</h2>
+    <p id="versioning"></p>
+    <label>Public author
+      <input id="author" placeholder="Auto-filled from 3DCityDB FEATURE.updating_person">
+    </label>
+    <label>Reason for update
+      <textarea id="reason" placeholder="Auto-filled from 3DCityDB FEATURE.reason_for_update"></textarea>
+    </label>
+    <label>Source / lineage
+      <textarea id="source" placeholder="Auto-filled from 3DCityDB FEATURE.lineage"></textarea>
+    </label>
+    <label>Additional notes (optional)<textarea id="notes"></textarea></label>
+    <button id="createPr" class="primary">Create pull request</button>
+    <div id="prResult"></div>
+  </section>
+  <div id="error" role="alert"></div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

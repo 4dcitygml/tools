@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/4dcitygml/tools/blob/main/schemas/provenance/bulk-manifest.schema.json",
+  "title": "4dcitygml bulk submission provenance manifest",
+  "description": "Provenance of a program-generated (bulk) PR: materials, builder, invocation, products, and per-building evidence. Vocabulary follows SLSA/in-toto provenance. See docs/bulk-submission-provenance.md.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "repository",
+    "scope",
+    "plan_issue",
+    "materials",
+    "builder",
+    "invocation",
+    "products",
+    "evidence",
+    "sample_audit",
+    "generated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "enum": [
+        "source-baseline",
+        "scope-extract",
+        "source-update",
+        "identity-baseline",
+        "identity-correction",
+        "layout",
+        "carry-forward",
+        "schema-update",
+        "schema-migration"
+      ]
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "mesh",
+        "municipality"
+      ],
+      "properties": {
+        "mesh": {
+          "type": "string",
+          "pattern": "^[0-9]{8,9}$"
+        },
+        "municipality": {
+          "type": "string",
+          "pattern": "^[0-9]{5}$"
+        },
+        "edition_from": {
+          "type": "string"
+        },
+        "edition_to": {
+          "type": "string"
+        }
+      }
+    },
+    "plan_issue": {
+      "type": "string",
+      "format": "uri"
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "uri",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string",
+            "format": "uri"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "acquired": {
+            "type": "string",
+            "format": "date"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "sha256",
+                "bytes"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "builder": {
+      "type": "object",
+      "required": [
+        "tools_repo",
+        "tools_commit",
+        "script"
+      ],
+      "properties": {
+        "tools_repo": {
+          "type": "string"
+        },
+        "tools_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "script": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "required": [
+        "command",
+        "environment"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "environment": {
+          "type": "object",
+          "required": [
+            "python"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "buildings": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Kind-specific decisions. identity-*: boundaries, thresholds, links, unlinked. source-update: allowed_paths, targets.",
+      "properties": {
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "id_regime",
+              "shared_ids",
+              "shared_consistent"
+            ],
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "id_regime": {
+                "enum": [
+                  "continuous",
+                  "mixed",
+                  "renumbered"
+                ]
+              },
+              "shared_ids": {
+                "type": "integer"
+              },
+              "shared_consistent": {
+                "type": "integer"
+              },
+              "geometry_matches": {
+                "type": "integer"
+              },
+              "id_persisted": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "thresholds": {
+          "type": "object"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "tier",
+              "method",
+              "iou",
+              "centroid_m",
+              "chain"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/buildingId"
+              },
+              "to": {
+                "$ref": "#/$defs/buildingId"
+              },
+              "tier": {
+                "enum": [
+                  "A",
+                  "B",
+                  "C"
+                ]
+              },
+              "method": {
+                "enum": [
+                  "same_id",
+                  "lod0_fingerprint_1mm",
+                  "mutual_best_iou",
+                  "manual"
+                ]
+              },
+              "iou": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "centroid_m": {
+                "type": "number",
+                "minimum": 0
+              },
+              "hausdorff_m": {
+                "type": "number",
+                "minimum": 0
+              },
+              "area_ratio": {
+                "type": "number",
+                "minimum": 0
+              },
+              "competitor_iou": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "chain": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "unlinked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "tier",
+              "reason"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/buildingId"
+              },
+              "tier": {
+                "enum": [
+                  "C",
+                  "D"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "allowed_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildingId"
+          }
+        }
+      }
+    },
+    "sample_audit": {
+      "type": "object",
+      "required": [
+        "seed",
+        "size",
+        "ids"
+      ],
+      "properties": {
+        "seed": {
+          "type": "integer"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildingId"
+          }
+        },
+        "reviewed_by": {
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "buildingId": {
+      "type": "string",
+      "pattern": "^[0-9]{5}-bldg-[0-9]+$"
+    }
+  }
+}

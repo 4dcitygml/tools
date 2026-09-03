@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="viewer.title">Building 3D view — CityGML Attribute Editor</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+  html, body, #cesiumContainer {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000;
+  }
+  #toolbar {
+    position: absolute; left: 10px; top: 10px; z-index: 1000;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  }
+  .sep { width: 1px; height: 22px; background: rgba(255,255,255,.25); margin: 0 2px; }
+  .btn {
+    padding: 5px 12px; border: none; border-radius: 4px;
+    cursor: pointer; font-size: 12px; font-weight: bold;
+  }
+  .btn-lod   { background: rgba(30,30,30,.75); color: #ccc; border: 1px solid rgba(255,255,255,.25); }
+  .btn-lod.active { color: #000; background: #ffd54f; border-color: #ffd54f; }
+  .btn:disabled { opacity: .28; cursor: not-allowed; filter: grayscale(1); }
+  .btn-layer { background: rgba(0,0,0,.65); color: #fff; border: 1px solid rgba(255,255,255,.35); }
+  .btn.inactive { opacity: .35; }
+  .btn-rot { font-size: 15px; line-height: 1; padding: 4px 10px; touch-action: none; user-select: none; }
+  #info {
+    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,.72); color: #fff;
+    padding: 7px 14px; border-radius: 6px; font-size: 12px;
+    max-width: 92vw; text-align: center; white-space: pre-line;
+  }
+  body.compare #toolbar .compareHide { display: none; }
+  body.compare #toolbar { top: 7px; left: 7px; }
+  body.compare #info { bottom: 7px; padding: 4px 8px; font-size: 10px; }
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+<div id="toolbar">
+  <button id="btnLod0" class="btn btn-lod compareHide"        onclick="setLod('lod0')">LOD0</button>
+  <button id="btnLod1" class="btn btn-lod active compareHide" onclick="setLod('lod1')">LOD1</button>
+  <button id="btnLod2" class="btn btn-lod compareHide"        onclick="setLod('lod2')">LOD2</button>
+  <button id="btnTex"  class="btn btn-lod compareHide"        onclick="toggleTex()" data-i18n="viewer.btn_texture">Texture</button>
+  <div id="sepLayers" class="sep compareHide"></div>
+  <button id="btnPhoto" class="btn btn-layer compareHide"          onclick="setLayer('photo')" data-i18n="viewer.btn_photo">Aerial photo</button>
+  <button id="btnStd"   class="btn btn-layer inactive compareHide" onclick="setLayer('std')" data-i18n="viewer.btn_std_map">Standard map</button>
+  <div class="sep compareHide"></div>
+  <button id="btnRotL" class="btn btn-layer btn-rot" data-i18n-title="viewer.rot_left_title" title="Rotate counterclockwise (hold to keep rotating; orbits around the screen center)">⟲</button>
+  <button id="btnRotR" class="btn btn-layer btn-rot" data-i18n-title="viewer.rot_right_title" title="Rotate clockwise (hold to keep rotating; orbits around the screen center)">⟳</button>
+</div>
+<div id="info" data-i18n="viewer.loading">Loading building data…</div>
+
+<script>
+'use strict';
+Cesium.Ion.defaultAccessToken = '';
+const pageQuery = new URLSearchParams(location.search);
+const compareRole = pageQuery.get('compare') || '';
+if (compareRole) document.body.classList.add('compare');
+
+// Create the Cesium viewer with a bare ellipsoid terrain and most UI widgets
+// stripped away; credits are routed into an off-screen hidden element.
+const hiddenCredits = document.createElement('div');
+hiddenCredits.style.display = 'none';
+
+const viewer = new Cesium.Viewer('cesiumContainer', {
+  terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+  imageryProvider: false,
+  baseLayerPicker: false,
+  geocoder: false,
+  homeButton: false,
+  sceneModePicker: false,
+  navigationHelpButton: false,
+  animation: false,
+  timeline: false,
+  vrButton: false,
+  fullscreenButton: true,
+  creditContainer: hiddenCredits
+});
+
+// No sun lighting on the globe surface.
+viewer.scene.globe.enableLighting = false;
+
+// Ground tiles: follow the city setting (map.tiles in 4dcitygml.json, injected by the
+// server as CITY_MAP). gsi = GSI aerial photo + standard map (served for Japan only),
+// osm = OSM standard map only (worldwide; no aerial layer, so the basemap toggle is hidden).
+const CITY_MAP = window.CITY_MAP || {};
+const INTL_TILES = CITY_MAP.tiles === 'osm';
+
+let photoLayer = null;
+let stdLayer;
+if (INTL_TILES) {
+  stdLayer = viewer.imageryLayers.addImageryProvider(
+    new Cesium.UrlTemplateImageryProvider({
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      maximumLevel: 19,
+      credit: '© OpenStreetMap contributors'
+    })
+  );
+  stdLayer.show = true;
+  for (const id of ['sepLayers', 'btnPhoto', 'btnStd']) {
+    document.getElementById(id).style.display = 'none';
+  }
+} else {
+  photoLayer = viewer.imageryLayers.addImageryProvider(
+    new Cesium.UrlTemplateImageryProvider({
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+      maximumLevel: 18,
+      credit: 'GSI Tiles (Geospatial Information Authority of Japan)'
+    })
+  );
+  stdLayer = viewer.imageryLayers.addImageryProvider(
+    new Cesium.UrlTemplateImageryProvider({
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+      maximumLevel: 18,
+      credit: 'GSI Tiles (Geospatial Information Authority of Japan)'
+    })
+  );
+  // Aerial photo is the default basemap.
+  photoLayer.show = true;
+  stdLayer.show = false;
+}
+
+// Switch between the two basemaps and mark the unselected button as inactive.
+function setLayer(name) {
+  if (!photoLayer) return; // single-basemap mode (worldwide OSM)
+  const photoOn = name === 'photo';
+  photoLayer.show = photoOn;
+  stdLayer.show = !photoOn;
+  document.getElementById('btnPhoto').classList.toggle('inactive', !photoOn);
+  document.getElementById('btnStd').classList.toggle('inactive', photoOn);
+}
+
+// ---- State ----
+let bldg = null;            // response of /api/building
+let entities = [];
+let currentLod = 'lod1';
+let showTex = false;
+let hasLod2 = false;
+const texCache = {};
+let suppressCameraMessage = false;
+let cameraMessagePending = false;
+
+// ---- Parent-window integration (for the texture editor; unused in standalone view) ----
+let faceEntities = {};      // pid -> entity (only while LOD2 is shown)
+let highlightPids = new Set();  // faces to highlight (multiple allowed)
+const previewTex = {};      // pid -> dataURL (replacement preview)
+let previewsOn = true;      // false = temporarily hide previews (for comparing with the original)
+
+window.addEventListener('message', ev => {
+  const m = ev.data || {};
+  if (m.type === 'highlightFace') {
+    highlightPids = new Set(m.pids || (m.pid ? [m.pid] : []));
+    if (highlightPids.size && currentLod !== 'lod2') { setLod('lod2'); return; }
+    render();
+  } else if (m.type === 'previewTexture') {
+    if (m.dataUrl) previewTex[m.pid] = m.dataUrl;
+    else delete previewTex[m.pid];
+    if (currentLod === 'lod2') render();
+  } else if (m.type === 'setPreviewTextures') {
+    for (const k of Object.keys(previewTex)) delete previewTex[k];
+    for (const item of m.items || []) {
+      if (item.pid && item.dataUrl) previewTex[item.pid] = item.dataUrl;
+    }
+    previewsOn = m.on !== false;
+    if (currentLod === 'lod2') render();
+  } else if (m.type === 'clearPreviews') {
+    for (const k of Object.keys(previewTex)) delete previewTex[k];
+    highlightPids = new Set();
+    previewsOn = true;
+    render();
+  } else if (m.type === 'setPreviewsOn') {
+    previewsOn = !!m.on;
+    if (currentLod === 'lod2') render();
+  } else if (m.type === 'showTexture') {
+    if (!showTex) toggleTex();
+    else if (currentLod !== 'lod2') setLod('lod2');
+  } else if (m.type === 'vertexMode') {
+    setVertexMode(!!m.on);
+  } else if (m.type === 'pendingPoint') {
+    setPendingMarker(m.pt || null);
+  } else if (m.type === 'setMatchedPoints') {
+    setMatchedMarkers(m.items || []);
+  } else if (m.type === 'flyToBuilding') {
+    flyToBuilding(0.7);
+  } else if (m.type === 'setCamera' && m.state) {
+    suppressCameraMessage = true;
+    const s = m.state;
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.height),
+      orientation: { heading: s.heading, pitch: s.pitch, roll: s.roll },
+    });
+    requestAnimationFrame(() => { suppressCameraMessage = false; });
+  }
+});
+
+// Viewpoint sync between comparison iframes. The parent screen relays to the other side.
+viewer.camera.percentageChanged = 0.01;
+viewer.camera.changed.addEventListener(() => {
+  if (!compareRole || suppressCameraMessage || cameraMessagePending) return;
+  cameraMessagePending = true;
+  requestAnimationFrame(() => {
+    cameraMessagePending = false;
+    if (suppressCameraMessage) return;
+    const p = viewer.camera.positionCartographic;
+    window.parent.postMessage({
+      type: 'viewerCamera', role: compareRole,
+      state: {
+        lon: Cesium.Math.toDegrees(p.longitude), lat: Cesium.Math.toDegrees(p.latitude),
+        height: p.height, heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch, roll: viewer.camera.roll,
+      },
+    }, '*');
+  });
+});
+
+// ---- Vertex / face-center marker mode (for picking correspondence points in camera alignment) ----
+let vertexEntities = [];
+let pendingMarker = null;  // selected marker (waiting for a photo click)
+let vertexModeRequested = false;
+let matchedPointItems = [];  // 3D points paired with correspondence points on the photo (order preserved)
+
+function _addPickMarker(lon, lat, z, kind) {
+  const isCenter = kind === 'center';
+  const e = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(lon, lat, z),
+    point: {
+      pixelSize: isCenter ? 12 : 11,
+      color: isCenter ? Cesium.Color.ORANGE : Cesium.Color.YELLOW,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 1.5,
+      disableDepthTestDistance: 40,  // ignore depth only at very close range (don't pick hidden points)
+    },
+    label: {
+      text: '', show: false, font: 'bold 18px sans-serif',
+      fillColor: Cesium.Color.ORANGE,
+      outlineColor: Cesium.Color.WHITE,
+      outlineWidth: 5,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      pixelOffset: new Cesium.Cartesian2(0, -25),
+      disableDepthTestDistance: 40,
+    },
+  });
+  e._vertex = [lon, lat, z];
+  e._kind = kind;
+  vertexEntities.push(e);
+}
+
+function setVertexMode(on) {
+  vertexModeRequested = !!on;
+  vertexEntities.forEach(e => viewer.entities.remove(e));
+  vertexEntities = [];
+  pendingMarker = null;
+  if (!vertexModeRequested || !bldg || !bldg.lod2) return;
+  if (currentLod !== 'lod2') setLod('lod2');
+  // Vertices (yellow): merge points within 0.5 m (band-like faces cluster corners vertically)
+  const kx = 111320 * Math.cos(bldg.lod2[0].pts[0][1] * Math.PI / 180), ky = 110540;
+  const seen = new Set();
+  for (const face of bldg.lod2) {
+    for (const [lon, lat, z] of face.pts) {
+      const key = `${Math.round(lon * kx / 0.5)},${Math.round(lat * ky / 0.5)},${Math.round(z / 0.5)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      _addPickMarker(lon, lat, z, 'vertex');
+    }
+  }
+  // Face centers (orange): for faces whose center is easy to spot in a photo (bands, eaves, penthouse walls, etc.)
+  for (const face of bldg.lod2) {
+    const n = face.pts.length;
+    if (n < 3) continue;
+    const c = face.pts.reduce((a, p) => [a[0] + p[0] / n, a[1] + p[1] / n, a[2] + p[2] / n], [0, 0, 0]);
+    _addPickMarker(c[0], c[1], c[2], 'center');
+  }
+  refreshPickMarkerStyles();
+}
+
+function sameMarkerPoint(a, b) {
+  return a && b &&
+    Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9 &&
+    Math.abs(a[2] - b[2]) < 1e-6;
+}
+
+function circledPointNumber(index) {
+  return `${index + 1}`;
+}
+
+function refreshPickMarkerStyles() {
+  for (const marker of vertexEntities) {
+    const matchedIndex = matchedPointItems.findIndex(item => sameMarkerPoint(marker._vertex, item.pt));
+    const selected = marker === pendingMarker || matchedIndex >= 0;
+    marker.point.color = selected
+      ? Cesium.Color.ORANGE
+      : (marker._kind === 'center' ? Cesium.Color.ORANGE : Cesium.Color.YELLOW);
+    marker.point.pixelSize = selected ? 18 : (marker._kind === 'center' ? 12 : 11);
+    marker.point.outlineColor = selected ? Cesium.Color.WHITE : Cesium.Color.BLACK;
+    marker.point.outlineWidth = selected ? 3 : 1.5;
+    marker.label.show = matchedIndex >= 0;
+    marker.label.text = matchedIndex >= 0 ? circledPointNumber(matchedIndex) : '';
+  }
+}
+
+function setMatchedMarkers(items) {
+  matchedPointItems = items.filter(item => Array.isArray(item.pt) && item.pt.length >= 3);
+  refreshPickMarkerStyles();
+}
+
+function setPendingMarker(pt) {
+  // Show the point awaiting a photo click and the matched numbered points with the same highlight style.
+  pendingMarker = pt
+    ? vertexEntities.find(marker => sameMarkerPoint(marker._vertex, pt)) || null
+    : null;
+  refreshPickMarkerStyles();
+}
+
+// Notify the parent on click: vertex markers take priority, otherwise the face (used by the texture editor)
+new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(ev => {
+  if (window.parent === window) return;
+  const picked = viewer.scene.pick(ev.position);
+  const ent = picked && picked.id;
+  if (ent && ent._vertex) {
+    window.parent.postMessage({ type: 'vertexPick', pt: ent._vertex, kind: ent._kind }, '*');
+    return;
+  }
+  const pid = ent && ent._facePid;
+  if (pid) window.parent.postMessage({ type: 'facePick', pid }, '*');
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+function setLod(lod) {
+  if (lod === 'lod2' && !hasLod2) return;
+  currentLod = lod;
+  for (const l of ['lod0', 'lod1', 'lod2']) {
+    const btn = document.getElementById('btnLod' + l.slice(-1));
+    btn.classList.toggle('active', l === lod);
+  }
+  render();
+}
+// Flip textured rendering on/off. Only meaningful when LOD2 data exists;
+// switching to LOD2 triggers its own redraw, otherwise redraw in place.
+function toggleTex() {
+  if (!hasLod2) return;
+  showTex = !showTex;
+  const texBtn = document.getElementById('btnTex');
+  texBtn.classList.toggle('active', showTex);
+  if (currentLod !== 'lod2') {
+    setLod('lod2'); // setLod redraws for us
+    return;
+  }
+  render();
+}
+
+// ---- Orbit rotation (rotate the view around the screen center) ----
+function orbitCenter() {
+  // 3D point at the screen center: try depth pick, then globe pick
+  const canvas = viewer.scene.canvas;
+  const c2 = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+  if (viewer.scene.pickPositionSupported) {
+    const p = viewer.scene.pickPosition(c2);
+    if (Cesium.defined(p)) return p;
+  }
+  const ray = viewer.camera.getPickRay(c2);
+  const g = ray && viewer.scene.globe.pick(ray, viewer.scene);
+  return Cesium.defined(g) ? g : null;
+}
+
+function orbitBy(rad, center) {
+  const cam = viewer.camera;
+  const c = center || orbitCenter();
+  if (!c) return null;
+  const range = Cesium.Cartesian3.distance(cam.position, c);
+  cam.lookAt(c, new Cesium.HeadingPitchRange(cam.heading + rad, cam.pitch, range));
+  cam.lookAtTransform(Cesium.Matrix4.IDENTITY);  // return to normal mouse control
+  return c;
+}
+
+function bindOrbitButton(id, dir) {
+  const btn = document.getElementById(id);
+  const STEP = Cesium.Math.toRadians(15);   // short press: 15°
+  const SPEED = Cesium.Math.toRadians(60);  // long press: 60°/sec
+  const HOLD_MS = 250;                      // presses longer than this rotate continuously
+  let center = null, delay = null, raf = null, prev = 0, held = false;
+  const frame = t => {
+    const dt = Math.min((t - prev) / 1000, 0.1);
+    prev = t;
+    center = orbitBy(dir * SPEED * dt, center) || center;
+    raf = requestAnimationFrame(frame);
+  };
+  const stop = () => {
+    if (!held) return;
+    held = false;
+    clearTimeout(delay);
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    else orbitBy(dir * STEP, center);       // released before continuous rotation began = 1 step
+    center = null;
+  };
+  btn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    center = orbitCenter();
+    if (!center) return;                     // no center available (looking at the sky, etc.)
+    held = true;
+    prev = performance.now();
+    delay = setTimeout(() => { prev = performance.now(); raf = requestAnimationFrame(frame); }, HOLD_MS);
+  });
+  btn.addEventListener('pointerup', stop);
+  btn.addEventListener('pointercancel', stop);
+}
+bindOrbitButton('btnRotL', +1);  // ⟲ building appears to turn left (counterclockwise)
+bindOrbitButton('btnRotR', -1);  // ⟳ building appears to turn right (clockwise)
+
+// Cut the bounding box of a UV set out of a texture atlas and return it as a
+// JPEG data URL. CityGML UVs are bottom-left origin, canvas is top-left, so
+// the vertical start is measured from (1 - vMax).
+function cropUV(img, uvs) {
+  let uMin = Infinity, uMax = -Infinity;
+  let vMin = Infinity, vMax = -Infinity;
+  for (const [u, v] of uvs) {
+    if (u < uMin) uMin = u;
+    if (u > uMax) uMax = u;
+    if (v < vMin) vMin = v;
+    if (v > vMax) vMax = v;
+  }
+
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  const sx = Math.round(uMin * iw);
+  const sy = Math.round((1 - vMax) * ih);
+  const sw = Math.max(1, Math.round((uMax - uMin) * iw));
+  const sh = Math.max(1, Math.round((vMax - vMin) * ih));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  return canvas.toDataURL('image/jpeg');
+}
+
+function loadTex(imgRef, cb) {
+  const url = `/textures/${imgRef}`;
+  const cached = texCache[url];
+  if (cached) {
+    cb(cached);
+    return;
+  }
+  const img = new Image();
+  img.addEventListener('load', () => {
+    texCache[url] = img;
+    cb(img);
+  });
+  img.addEventListener('error', () => cb(null));
+  img.src = url;
+}
+
+// Return CityGML UVs (normalized within the crop rectangle) as Cesium texture coordinates.
+// Without them Cesium maps with its own planar projection, which rotates/flips per face,
+// and on vertical walls the projection degenerates so the texture looks like different
+// content (UVs are normalized against the same bbox as cropUV / the editor's uvRect;
+// the duplicated closing point at the end of uv is dropped)
+function uvTexCoords(face) {
+  const ti = face.id && bldg.tex && bldg.tex[face.id];
+  if (!ti || !ti.uv || ti.uv.length < face.pts.length) return undefined;
+  const us = ti.uv.map(p => p[0]), vs = ti.uv.map(p => p[1]);
+  const u0 = Math.min(...us), du = (Math.max(...us) - u0) || 1;
+  const v0 = Math.min(...vs), dv = (Math.max(...vs) - v0) || 1;
+  return ti.uv.slice(0, face.pts.length).map(
+    p => new Cesium.Cartesian2((p[0] - u0) / du, (p[1] - v0) / dv));
+}
+
+// Cesium internally reverses rings wound clockwise (CW) but does not reverse the
+// textureCoordinates you pass (PolygonGeometryLibrary.polygonsFromHierarchy).
+// So only faces judged CW get a mismatched vertex-to-UV mapping and distort. Run the
+// same test as Cesium (tangent-plane projection -> winding order) ahead of time and,
+// if CW, reverse the vertices and UVs together.
+function windingAligned(positions, tcs) {
+  try {
+    const tp = Cesium.EllipsoidTangentPlane.fromPoints(positions, Cesium.Ellipsoid.WGS84);
+    const p2 = tp.projectPointsOntoPlane(positions);
+    if (p2.length >= 3 &&
+        Cesium.PolygonPipeline.computeWindingOrder2D(p2) === Cesium.WindingOrder.CLOCKWISE) {
+      return [positions.slice().reverse(), tcs.slice().reverse()];
+    }
+  } catch (e) { /* degenerate rings etc. are left as-is */ }
+  return [positions, tcs];
+}
+
+// ---- Rendering ----
+function render() {
+  entities.forEach(e => viewer.entities.remove(e));
+  entities = [];
+  if (!bldg) return;
+  const color = Cesium.Color.fromCssColorString('#4fc3f7');
+
+  if (currentLod === 'lod2' && bldg.lod2 && bldg.lod2.length) {
+    faceEntities = {};
+    for (const [i, face] of bldg.lod2.entries()) {
+      let positions = face.pts.map(([lon, lat, z]) =>
+        Cesium.Cartesian3.fromDegrees(lon, lat, z));
+      let tcs = uvTexCoords(face);
+      if (tcs) [positions, tcs] = windingAligned(positions, tcs);
+      const entity = viewer.entities.add({
+        name: `f${i}`,
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(positions),
+          perPositionHeight: true,
+          textureCoordinates: tcs && new Cesium.PolygonHierarchy(tcs),
+          material: color.withAlpha(0.75),
+          outline: true,
+          outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
+          outlineWidth: 1,
+        },
+      });
+      entity._facePid = face.id || '';
+      if (face.id) faceEntities[face.id] = entity;
+      entities.push(entity);
+      const texInfo = showTex && face.id && bldg.tex && bldg.tex[face.id];
+      if (previewsOn && previewTex[face.id]) {
+        // Preview images from the parent window (for the texture editor) take priority
+        entity.polygon.material = new Cesium.ImageMaterialProperty({
+          image: previewTex[face.id], transparent: false,
+        });
+      } else if (texInfo) {
+        loadTex(texInfo.img, img => {
+          if (!img) return;
+          entity.polygon.material = new Cesium.ImageMaterialProperty({
+            image: cropUV(img, texInfo.uv), transparent: false,
+          });
+        });
+      }
+      if (highlightPids.has(face.id)) {
+        entity.polygon.outlineColor = Cesium.Color.YELLOW;
+        entity.polygon.outlineWidth = 3;
+        if (!previewTex[face.id] && !(showTex && texInfo)) {
+          entity.polygon.material = Cesium.Color.fromCssColorString('#fbbf24').withAlpha(0.85);
+        }
+      }
+    }
+    return;
+  }
+
+  // LOD0 / LOD1: footprint extrusion
+  if (!bldg.coords || bldg.coords.length < 3) return;
+  const ring = [];
+  for (const [lat, lon] of bldg.coords) {
+    ring.push(Cesium.Cartesian3.fromDegrees(lon, lat, bldg.base));
+  }
+  let h = bldg.height;
+  if (currentLod === 'lod1' && bldg.lod1top != null) h = bldg.lod1top - bldg.base;
+  entities.push(viewer.entities.add({
+    polygon: {
+      hierarchy: new Cesium.PolygonHierarchy(ring),
+      height: bldg.base,
+      extrudedHeight: bldg.base + (currentLod === 'lod0' ? 0.3 : h),
+      material: color.withAlpha(0.7),
+      outline: true, outlineWidth: 2,
+      outlineColor: Cesium.Color.WHITE.withAlpha(0.9),
+    },
+  }));
+}
+
+// Build a fixed bounding sphere from the building data itself. An EntityCollection is not
+// used as the flight target because flyTo gets cancelled when entities are swapped out
+// during texture redraws.
+function buildingCartesianPoints() {
+  if (!bldg) return [];
+  if (bldg.lod2 && bldg.lod2.length) {
+    return bldg.lod2.flatMap(face => face.pts.map(([lon, lat, z]) =>
+      Cesium.Cartesian3.fromDegrees(lon, lat, z)));
+  }
+  if (!bldg.coords || bldg.coords.length < 3) return [];
+  const base = Number(bldg.base) || 0;
+  const top = bldg.lod1top != null
+    ? Number(bldg.lod1top) : base + (Number(bldg.height) || 0);
+  return bldg.coords.flatMap(([lat, lon]) => [
+    Cesium.Cartesian3.fromDegrees(lon, lat, base),
+    Cesium.Cartesian3.fromDegrees(lon, lat, top),
+  ]);
+}
+
+function flyToBuilding(duration = 1.0) {
+  const points = buildingCartesianPoints();
+  if (!points.length) return Promise.resolve();
+  const sphere = Cesium.BoundingSphere.fromPoints(points);
+  const range = Math.max(
+    sphere.radius * 3.2,
+    Math.max(Number(bldg.height) || 0, 8) * 1.8,
+    25,
+  );
+  return new Promise(resolve => {
+    viewer.camera.flyToBoundingSphere(sphere, {
+      offset: new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(30), Cesium.Math.toRadians(-30), range),
+      duration,
+      complete: resolve,
+      cancel: resolve,
+    });
+  });
+}
+
+// ---- Data loading ----
+async function load() {
+  const tile = pageQuery.get('tile'), bid = pageQuery.get('bid');
+  const info = document.getElementById('info');
+  if (!tile || !bid) { info.textContent = t('viewer.usage_hint', 'Specify ?tile=<mesh>&bid=<gml:id>'); return; }
+  info.textContent = t('viewer.loading_mesh', 'Loading… (mesh {tile})').replace('{tile}', tile);
+  try {
+    const r = await fetch(`/api/building/${tile}/${encodeURIComponent(bid)}`);
+    const j = await r.json();
+    if (j.ok === false) throw new Error(j.error);
+    bldg = j.building;
+  } catch (e) {
+    info.textContent = t('viewer.load_error', 'Load error: ') + e.message;
+    return;
+  }
+
+  hasLod2 = !!(bldg.lod2 && bldg.lod2.length > 0);
+  for (const id of ['btnLod2', 'btnTex']) {
+    const b = document.getElementById(id);
+    b.disabled = !hasLod2;
+    b.setAttribute('aria-disabled', String(!hasLod2));
+    b.title = hasLod2 ? '' : t('viewer.no_lod2_title', 'This building has no LOD2 (detailed shape)');
+  }
+
+  if (compareRole && hasLod2) {
+    currentLod = 'lod2';
+    showTex = true;
+    previewsOn = compareRole !== 'before';
+  }
+
+  render();
+  if (vertexModeRequested) setVertexMode(true);
+  info.textContent =
+    `${bldg.buildingID || bldg.gid}　${t('viewer.height_label', 'height')} ${bldg.height} m` +
+    (hasLod2 ? `　${t('viewer.lod2_faces_label', 'LOD2 faces')} ${bldg.lod2.length}` : `　${t('viewer.no_lod2_label', '(no LOD2)')}`);
+  // Stop notifications only during the initial flight so comparison views don't relay each other's moving camera.
+  if (compareRole) suppressCameraMessage = true;
+  try {
+    await flyToBuilding(1.0);
+  } finally {
+    if (compareRole) suppressCameraMessage = false;
+  }
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: 'viewerReady', role: compareRole }, '*');
+  }
+}
+
+load();
+</script>
+</body>
+</html>

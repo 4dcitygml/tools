@@ -1,0 +1,29 @@
+/* Copyright (c) 2026 4dcitygml; SPDX-License-Identifier: Apache-2.0 */
+:root { color-scheme: light; --bg:#f6f8fa; --card:#fff; --border:#d0d7de; --text:#1f2328; --muted:#636c76; --green:#1f883d; --red:#cf222e; }
+* { box-sizing:border-box; }
+body { margin:0; color:var(--text); background:var(--bg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+header { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; color:#fff; background:#24292f; }
+header h1 { margin:0; font-size:18px; }
+header span { color:#c9d1d9; }
+main { max-width:900px; margin:24px auto; padding:0 16px 48px; }
+section { margin:0 0 16px; padding:18px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
+h2 { margin:0 0 14px; font-size:16px; } h3 { margin:0 0 8px; font-size:14px; }
+article { margin-top:12px; padding:12px; background:#f6f8fa; border:1px solid transparent; border-radius:8px; }
+article small { color:var(--muted); font-weight:400; }
+.change-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.change-heading h3 { overflow-wrap:anywhere; }
+.select-pr { flex:0 0 auto; color:#fff; background:var(--green); border-color:var(--green); font-weight:600; }
+.selection-summary { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:12px 0; padding:12px; border:1px solid var(--green); border-radius:8px; background:#f0fff4; }
+.selection-summary span { overflow-wrap:anywhere; font-weight:600; }
+dl { display:grid; grid-template-columns:110px 1fr; gap:6px 12px; margin:0 0 16px; }
+dt { color:var(--muted); } dd { margin:0; overflow-wrap:anywhere; }
+button { padding:8px 18px; border:1px solid var(--border); border-radius:7px; background:#f6f8fa; cursor:pointer; font:inherit; }
+button.primary { color:#fff; background:var(--green); border-color:var(--green); font-weight:600; }
+button:disabled { opacity:.55; cursor:default; }
+label { display:block; margin:12px 0; font-weight:600; }
+input,textarea { display:block; width:100%; margin-top:5px; padding:9px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+input::placeholder,textarea::placeholder { color:#8c959f; opacity:1; }
+textarea { min-height:72px; resize:vertical; }
+.hint,.loading { color:var(--muted); }.ok { color:var(--green); font-weight:600; }
+#error { min-height:24px; color:var(--red); font-weight:600; }
+code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; } del { color:var(--red); } ins { color:var(--green); text-decoration:none; }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PROVISIONAL: do not publish until the namespace URI is formally fixed. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:core="http://www.opengis.net/citygml/3.0"
+           xmlns:i4dur="https://4dcitygml.github.io/schemas/i4dur/1.0"
+           targetNamespace="https://4dcitygml.github.io/schemas/i4dur/1.0"
+           elementFormDefault="qualified"
+           version="1.0.0-provisional">
+  <xs:import namespace="http://www.opengis.net/citygml/3.0"
+             schemaLocation="https://schemas.opengis.net/citygml/3.0/core.xsd"/>
+  <xs:element name="SurveyYearEncoding"
+              type="i4dur:SurveyYearEncodingType"
+              substitutionGroup="core:ADEOfCityModel"/>
+  <xs:complexType name="SurveyYearEncodingType">
+    <xs:complexContent>
+      <xs:extension base="core:ADEOfCityModelType">
+        <xs:sequence/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+</xs:schema>

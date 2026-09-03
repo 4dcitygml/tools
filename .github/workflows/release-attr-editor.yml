@@ -1,0 +1,246 @@
+# Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
+# Build the attribute editor distribution and attach it to Releases on tag push (attr-editor-v*).
+# - Windows: an "all-in-one zip" with the bundled Python embeddable package (PythonPortable)
+#   and MinGit (bundled under the compatibility name PortableGit); works through clone/push
+#   with no install. The entry point is start-windows.bat → PythonPortable\python.exe app.py.
+#   (Decision 2026-08-28: bundled-Python zip only; the former PyInstaller exe was removed
+#   so there is exactly one launch path to maintain.)
+# - macOS: a zip of app.py + assets + explanatory text (no binaries, because it runs on the
+#   CLT-bundled python3; unsigned binaries are blocked by Gatekeeper, so none are shipped)
+#
+# Supply-chain rules (A5/A7): everything fetched at build time (MinGit, Python embeddable)
+# is pinned by exact version URL and verified against a pinned SHA-256 BEFORE extraction.
+# Both zips bundle LICENSE / NOTICE / THIRD_PARTY_NOTICES.md, and the archive contents
+# are asserted per OS before upload.
+# The data itself is not needed, so only tools/attr_editor is fetched via blob:none + sparse-checkout.
+name: attr-editor release build
+
+on:
+  push:
+    tags: ['attr-editor-v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Target existing Release tag for attachment (leave blank for build verification only)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  # Pinned bundle inputs. Update THIRD_PARTY_NOTICES.md together with these values.
+  MINGIT_URL: https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-64-bit.zip
+  MINGIT_SHA256: 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e
+  PYEMBED_URL: https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip
+  PYEMBED_SHA256: d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: tools/attr_editor
+      - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
+        shell: pwsh
+        working-directory: tools/attr_editor
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Set-Location dist
+          function Fetch-Verified([string]$url, [string]$expected, [string]$out) {
+            curl.exe -fLsS $url -o $out
+            if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
+            $actual = (Get-FileHash $out -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected.ToLowerInvariant()) {
+              throw "SHA-256 mismatch: ${out} expected=$expected actual=$actual"
+            }
+          }
+          Fetch-Verified $env:MINGIT_URL $env:MINGIT_SHA256 mingit.zip
+          Fetch-Verified $env:PYEMBED_URL $env:PYEMBED_SHA256 pyembed.zip
+          # MinGit is the official minimal configuration intended for app bundling. The
+          # directory name stays PortableGit for compatibility with existing code.
+          Expand-Archive -LiteralPath .\mingit.zip -DestinationPath .\PortableGit -Force
+          Expand-Archive -LiteralPath .\pyembed.zip -DestinationPath .\PythonPortable -Force
+          if (-not (Test-Path "PortableGit\cmd\git.exe")) { throw "MinGit extraction failed" }
+          if (-not (Test-Path "PythonPortable\python.exe")) { throw "PythonPortable extraction failed" }
+          Remove-Item .\mingit.zip, .\pyembed.zip
+      - name: Test bundled Python runs the editor
+        shell: pwsh
+        working-directory: tools/attr_editor/dist
+        run: |
+          $py = (Resolve-Path ".\PythonPortable\python.exe").Path
+          & $py --version
+          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to start" }
+          & $py ..\app.py --help *> $null
+          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to run app.py" }
+      - name: Assemble full zip (launcher + .py + PythonPortable + MinGit + licenses)
+        # Build with Python's zipfile to reliably set the UTF-8 flag (EFS) on Japanese file names.
+        shell: python
+        working-directory: tools/attr_editor/dist
+        run: |
+          import pathlib
+          import zipfile
+
+          ROOT = "citygml-attr-editor"
+          artifact = pathlib.Path("citygml-attr-editor-windows-full.zip")
+          repo_root = pathlib.Path("../../..")
+
+          guide = "\n".join([
+              "CityGML Attribute Editor (All-in-one, no installation required)",
+              "",
+              "1. Extract this zip to a shallow location such as your Desktop (done)",
+              "2. Double-click start-windows.bat to launch",
+              "   *If a warning screen appears, click 'More info' → 'Run anyway' (or just 'Run')",
+              "3. Your browser will open and initial setup will begin (paste fork URL and run clone)",
+              "",
+              "License and bundled software: LICENSE / NOTICE / THIRD_PARTY_NOTICES.md",
+              "Detailed instructions: https://github.com/4dcitygml/tools/blob/main/tools/attr_editor/setup-guide.md",
+              "",
+          ])
+
+          with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
+              z.writestr(f"{ROOT}/READ-ME-FIRST.txt", guide)
+              z.write("../packaging/start-windows.bat", f"{ROOT}/start-windows.bat")
+              z.write("../app.py", f"{ROOT}/app.py")
+              z.write("../index.html", f"{ROOT}/index.html")
+              z.write("../viewer.html", f"{ROOT}/viewer.html")
+              z.write(repo_root / "LICENSE", f"{ROOT}/LICENSE")
+              z.write(repo_root / "NOTICE", f"{ROOT}/NOTICE")
+              z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{ROOT}/THIRD_PARTY_NOTICES.md")
+              for bundle in ("PortableGit", "PythonPortable"):
+                  base = pathlib.Path(bundle)
+                  for p in sorted(base.rglob("*")):
+                      if p.is_file():
+                          z.write(p, f"{ROOT}/{bundle}/{p.relative_to(base).as_posix()}")
+
+          size_mib = artifact.stat().st_size / (1024 * 1024)
+          print(f"Windows bundle: {size_mib:.2f} MiB")
+          if artifact.stat().st_size > 70 * 1024 * 1024:
+              raise RuntimeError(f"Windows bundle exceeds 70 MiB: {size_mib:.2f} MiB")
+      - name: Verify archive contents (entry point, licenses, layout)
+        shell: python
+        working-directory: tools/attr_editor/dist
+        run: |
+          import hashlib
+          import pathlib
+          import zipfile
+
+          artifact = pathlib.Path("citygml-attr-editor-windows-full.zip")
+          names = set(zipfile.ZipFile(artifact).namelist())
+          ROOT = "citygml-attr-editor"
+          required = [
+              f"{ROOT}/READ-ME-FIRST.txt",
+              f"{ROOT}/start-windows.bat",
+              f"{ROOT}/app.py",
+              f"{ROOT}/index.html",
+              f"{ROOT}/viewer.html",
+              f"{ROOT}/LICENSE",
+              f"{ROOT}/NOTICE",
+              f"{ROOT}/THIRD_PARTY_NOTICES.md",
+              f"{ROOT}/PythonPortable/python.exe",
+              f"{ROOT}/PythonPortable/LICENSE.txt",
+              f"{ROOT}/PortableGit/cmd/git.exe",
+              f"{ROOT}/PortableGit/LICENSE.txt",
+          ]
+          missing = [n for n in required if n not in names]
+          if missing:
+              raise RuntimeError(f"Distribution zip missing required files: {missing}")
+          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+          print(f"{artifact.name} sha256={digest}")
+      - name: Test extracted bundle launches with bundled Python
+        shell: pwsh
+        working-directory: tools/attr_editor/dist
+        run: |
+          $extracted = Join-Path $env:RUNNER_TEMP "attr-bundle"
+          Expand-Archive -LiteralPath .\citygml-attr-editor-windows-full.zip -DestinationPath $extracted -Force
+          $root = Join-Path $extracted "citygml-attr-editor"
+          $py = Join-Path $root "PythonPortable\python.exe"
+          & $py (Join-Path $root "app.py") --help *> $null
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Python failed to run app.py" }
+      # Do not double-store distributions as Actions artifacts; attach directly to the Release only when a tag is specified.
+      # If release_tag is empty on a manual run, only verify the build and consume no storage quota.
+      - name: Upload Windows package directly to release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        shell: bash
+        working-directory: tools/attr_editor/dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release create "$RELEASE_TAG" \
+              --title "Attribute Editor $RELEASE_TAG" \
+              --notes "CityGML Attribute Editor. For Windows: citygml-attr-editor-windows-full.zip (bundled Python and git, no installation needed), for macOS: citygml-attr-editor-macos.zip (app.py + guide, runs on CLT python3). See tools/attr_editor/setup-guide.md for usage." \
+              2>/dev/null || true
+          else
+            gh release view "$RELEASE_TAG" >/dev/null
+          fi
+          gh release upload "$RELEASE_TAG" citygml-attr-editor-windows-full.zip --clobber
+
+  macos-zip:
+    # A zip of app.py + assets + explanatory text instead of a binary (works on any Mac, no signing needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          filter: blob:none
+          sparse-checkout: tools/attr_editor
+      - name: Assemble macOS zip
+        # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
+        # names, so build with Python's zipfile (non-ASCII names always get EFS)
+        shell: python
+        run: |
+          import zipfile
+          ROOT = "citygml-attr-editor"
+          with zipfile.ZipFile("citygml-attr-editor-macos.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              z.write("tools/attr_editor/app.py", f"{ROOT}/app.py")
+              z.write("tools/attr_editor/index.html", f"{ROOT}/index.html")
+              z.write("tools/attr_editor/viewer.html", f"{ROOT}/viewer.html")
+              z.write("tools/attr_editor/packaging/READ-ME-FIRST-macos.txt",
+                      f"{ROOT}/READ-ME-FIRST.txt")
+              z.write("LICENSE", f"{ROOT}/LICENSE")
+              z.write("NOTICE", f"{ROOT}/NOTICE")
+              z.write("THIRD_PARTY_NOTICES.md", f"{ROOT}/THIRD_PARTY_NOTICES.md")
+      - name: Verify archive contents (licenses, layout)
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import zipfile
+
+          artifact = pathlib.Path("citygml-attr-editor-macos.zip")
+          names = set(zipfile.ZipFile(artifact).namelist())
+          ROOT = "citygml-attr-editor"
+          required = [
+              f"{ROOT}/app.py",
+              f"{ROOT}/index.html",
+              f"{ROOT}/viewer.html",
+              f"{ROOT}/READ-ME-FIRST.txt",
+              f"{ROOT}/LICENSE",
+              f"{ROOT}/NOTICE",
+              f"{ROOT}/THIRD_PARTY_NOTICES.md",
+          ]
+          missing = [n for n in required if n not in names]
+          if missing:
+              raise RuntimeError(f"Distribution zip missing required files: {missing}")
+          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+          print(f"{artifact.name} sha256={digest}")
+      - name: Upload macOS package directly to release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release create "$RELEASE_TAG" \
+              --title "Attribute Editor $RELEASE_TAG" \
+              --notes "CityGML Attribute Editor. See tools/attr_editor/setup-guide.md for usage." \
+              2>/dev/null || true
+          else
+            gh release view "$RELEASE_TAG" >/dev/null
+          fi
+          gh release upload "$RELEASE_TAG" citygml-attr-editor-macos.zip --clobber

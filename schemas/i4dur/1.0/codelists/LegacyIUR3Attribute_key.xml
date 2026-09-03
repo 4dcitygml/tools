@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gml:Dictionary xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xmlns:gml="http://www.opengis.net/gml"
+                xsi:schemaLocation="http://www.opengis.net/gml http://schemas.opengis.net/gml/3.1.1/profiles/SimpleDictionary/1.0.0/gmlSimpleDictionaryProfile.xsd"
+                gml:id="i4dur_legacy_iur3_attribute_key_1_0">
+  <gml:name>LegacyIUR3Attribute_key</gml:name>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_detail_detailedUsage"><gml:description>i-UR 3 BuildingDetailAttribute detailedUsage</gml:description><gml:name>iur3.uro.BuildingDetailAttribute.detailedUsage</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_detail_detailedUsage2"><gml:description>i-UR 3 BuildingDetailAttribute detailedUsage2</gml:description><gml:name>iur3.uro.BuildingDetailAttribute.detailedUsage2</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_detail_detailedUsage3"><gml:description>i-UR 3 BuildingDetailAttribute detailedUsage3</gml:description><gml:name>iur3.uro.BuildingDetailAttribute.detailedUsage3</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_srcScale"><gml:description>i-UR 3 BuildingDataQualityAttribute srcScale</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.srcScale</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_geometrySrcDesc"><gml:description>i-UR 3 BuildingDataQualityAttribute geometrySrcDesc</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.geometrySrcDesc</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_thematicSrcDesc"><gml:description>i-UR 3 BuildingDataQualityAttribute thematicSrcDesc</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.thematicSrcDesc</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_appearanceSrcDesc"><gml:description>i-UR 3 BuildingDataQualityAttribute appearanceSrcDesc</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.appearanceSrcDesc</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_lod1HeightType"><gml:description>i-UR 3 BuildingDataQualityAttribute lod1HeightType</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.lod1HeightType</gml:name></gml:Definition></gml:dictionaryEntry>
+  <gml:dictionaryEntry><gml:Definition gml:id="i4dur_key_dq_lodType"><gml:description>i-UR 3 BuildingDataQualityAttribute lodType</gml:description><gml:name>iur3.uro.BuildingDataQualityAttribute.lodType</gml:name></gml:Definition></gml:dictionaryEntry>
+</gml:Dictionary>

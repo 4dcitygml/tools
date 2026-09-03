@@ -1,0 +1,22 @@
+# Copyright (c) 2026 4dcitygml
+#
+# Preview generation, UV map generation, and viewer (scripts/extract_building_preview.py,
+# scripts/preview_local.py, scripts/generate_uvmap.py, docs/) run on Python standard library only.
+#
+# Mesh division/aggregation and diff (split_4th_mesh, merge_to_3rd_mesh, diff_citygml, etc.) use lxml.
+#
+# ★ Pin versions: ensures analysis results (W1 building-unit diff, geometry hash, etc.)
+#   match across local, CI, and contributors for reproducibility. Note: W6 minimal diff
+#   (reconstruct_minimal) is version-independent via byte concatenation.
+lxml==6.1.1
+#
+# Yearly CityGML LOD0 contour support (report/tools/analyze_yearly_citygml_mesh.py)
+# uses Shapely for spatial indexing, IoU, Hausdorff distance, and split/merge candidate detection.
+shapely==2.1.2
+#
+# XSD validation (scripts/validate_citygml.py) uses xmlschema.
+# lxml(libxml2) XSD has limitations with i-UR ADE data (false-reject boundary).
+xmlschema==4.3.2
+#
+# Texture tone normalization (scripts/retone_textures.py; for pre-publication setup) uses Pillow.
+Pillow==12.3.0

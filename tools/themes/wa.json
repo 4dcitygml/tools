@@ -1,0 +1,13 @@
+{
+  "name": "和風 (Wa)",
+  "bg": "#f6f2e7",
+  "card": "#fffdf6",
+  "border": "#d9d2c0",
+  "text": "#2b2a26",
+  "muted": "#7a7466",
+  "accent": "#165e83",
+  "header_bg": "#2a2622",
+  "header_fg": "#f6f2e7",
+  "font": "\"Hiragino Sans\", \"Noto Sans JP\", sans-serif",
+  "font_head": "\"Hiragino Mincho ProN\", \"Yu Mincho\", \"Noto Serif JP\", serif"
+}

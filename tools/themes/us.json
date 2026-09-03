@@ -1,0 +1,13 @@
+{
+  "name": "Americana (US)",
+  "bg": "#f2f3f5",
+  "card": "#ffffff",
+  "border": "#c9ced6",
+  "text": "#14171c",
+  "muted": "#5c6470",
+  "accent": "#0039a6",
+  "header_bg": "#101820",
+  "header_fg": "#ffd166",
+  "font": "\"Helvetica Neue\", Helvetica, Arial, sans-serif",
+  "font_head": "Georgia, \"Times New Roman\", serif"
+}

@@ -1,0 +1,55 @@
+# Copyright (c) 2026 4dcitygml
+# Building data issue report (misalignment, attribute/geometry errors, etc.).
+# The standard "Issue = report / PR = fix" model: you can report even if you cannot fix it (reporting != fixing).
+name: Building data issue report (misalignment etc.)
+description: Report building misalignment, attribute/geometry errors, texture problems, and so on (no fix required).
+title: "[data] "
+labels: ["data-issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Reporting and fixing are separate.** You can report a problem here even if you cannot fix it yourself.
+        Fixes start from this issue and are made by maintainers or qualified contributors via a pull request (`Fixes #<this number>`).
+        - Position fixes need correct coordinates (survey data, orthophotos, etc.), so misalignments are often curated by maintainers.
+  - type: input
+    id: building-id
+    attributes:
+      label: Target building ID
+      description: Preferably the stable uro:buildingID (e.g. 13101-bldg-3728). gml:id is fine if unavailable.
+      placeholder: "13101-bldg-3728"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Misalignment (the building is offset from its real position)
+        - Geometry error (shape, height, roof form, etc.)
+        - Attribute error (storeys, usage, area, etc.)
+        - Texture problem (wrong mapping, missing, etc.)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description of the problem
+      description: "What is wrong and how (e.g. offset about 5m to the north / lower than the actual height)."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence / correct values (if known)
+      description: Screenshots, correct coordinates or values, referenced documents, etc. (optional). Images can be attached by drag & drop.
+    validations:
+      required: false
+  - type: input
+    id: location
+    attributes:
+      label: Dataset / tile (if known)
+      description: e.g. 13101_chiyoda-ku_pref_2023_citygml_1_op / 53394611
+    validations:
+      required: false

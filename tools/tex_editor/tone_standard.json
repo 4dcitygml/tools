@@ -1,0 +1,10 @@
+{
+  "mode": "shadow_lift",
+  "shadow_lift": 130.0,
+  "y_mean": 128.0,
+  "y_std": 56.0,
+  "cb_mean": 128.0,
+  "cr_mean": 128.0,
+  "source": "(--set-lift 130.0: selected from 3D comparison)",
+  "note": "city target tone (shadow lift mode: lift dark areas in shade only, sunny areas unchanged)"
+}

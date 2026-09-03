@@ -1,0 +1,4351 @@
+{
+ "from": "iur-3.1",
+ "lists": {
+  "building.class": {
+   "added": {},
+   "codes": {
+    "3000": {
+     "confidence": "machine",
+     "label": "分類しない建物",
+     "relation": "exact",
+     "to": [
+      "3000"
+     ]
+    },
+    "3001": {
+     "confidence": "machine",
+     "label": "普通建物",
+     "relation": "exact",
+     "to": [
+      "3001"
+     ]
+    },
+    "3002": {
+     "confidence": "machine",
+     "label": "堅ろう建物",
+     "relation": "exact",
+     "to": [
+      "3002"
+     ]
+    },
+    "3003": {
+     "confidence": "machine",
+     "label": "普通無壁舎",
+     "relation": "exact",
+     "to": [
+      "3003"
+     ]
+    },
+    "3004": {
+     "confidence": "machine",
+     "label": "堅ろう無壁舎",
+     "relation": "exact",
+     "to": [
+      "3004"
+     ]
+    },
+    "9999": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "9999"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "Building_class.xml",
+   "from_sha256": "4c96ba1a7f0d5df328bf8366a547d26f0dd70449d8a11735e9c6c9de115ed010",
+   "status": "ok",
+   "to_count": 6,
+   "to_file": "Building_class.xml",
+   "to_sha256": "f69504def7b292e4c0219956a31e3f0268c837bb01c24cc2bd9bed93ee01cb18"
+  },
+  "building.usage": {
+   "added": {},
+   "codes": {
+    "401": {
+     "confidence": "machine",
+     "label": "業務施設",
+     "relation": "exact",
+     "to": [
+      "401"
+     ]
+    },
+    "402": {
+     "confidence": "machine",
+     "label": "商業施設",
+     "relation": "exact",
+     "to": [
+      "402"
+     ]
+    },
+    "403": {
+     "confidence": "machine",
+     "label": "宿泊施設",
+     "relation": "exact",
+     "to": [
+      "403"
+     ]
+    },
+    "404": {
+     "confidence": "machine",
+     "label": "商業系複合施設",
+     "relation": "exact",
+     "to": [
+      "404"
+     ]
+    },
+    "411": {
+     "confidence": "machine",
+     "label": "住宅",
+     "relation": "exact",
+     "to": [
+      "411"
+     ]
+    },
+    "412": {
+     "confidence": "machine",
+     "label": "共同住宅",
+     "relation": "exact",
+     "to": [
+      "412"
+     ]
+    },
+    "413": {
+     "confidence": "machine",
+     "label": "店舗等併用住宅",
+     "relation": "exact",
+     "to": [
+      "413"
+     ]
+    },
+    "414": {
+     "confidence": "machine",
+     "label": "店舗等併用共同住宅",
+     "relation": "exact",
+     "to": [
+      "414"
+     ]
+    },
+    "415": {
+     "confidence": "machine",
+     "label": "作業所併用住宅",
+     "relation": "exact",
+     "to": [
+      "415"
+     ]
+    },
+    "421": {
+     "confidence": "machine",
+     "label": "官公庁施設",
+     "relation": "exact",
+     "to": [
+      "421"
+     ]
+    },
+    "422": {
+     "confidence": "machine",
+     "label": "文教厚生施設",
+     "relation": "exact",
+     "to": [
+      "422"
+     ]
+    },
+    "431": {
+     "confidence": "machine",
+     "label": "運輸倉庫施設",
+     "relation": "exact",
+     "to": [
+      "431"
+     ]
+    },
+    "441": {
+     "confidence": "machine",
+     "label": "工場",
+     "relation": "exact",
+     "to": [
+      "441"
+     ]
+    },
+    "451": {
+     "confidence": "machine",
+     "label": "農林漁業用施設",
+     "relation": "exact",
+     "to": [
+      "451"
+     ]
+    },
+    "452": {
+     "confidence": "machine",
+     "label": "供給処理施設",
+     "relation": "exact",
+     "to": [
+      "452"
+     ]
+    },
+    "453": {
+     "confidence": "machine",
+     "label": "防衛施設",
+     "relation": "exact",
+     "to": [
+      "453"
+     ]
+    },
+    "454": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "454"
+     ]
+    },
+    "461": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "461"
+     ]
+    }
+   },
+   "from_count": 18,
+   "from_file": "Building_usage.xml",
+   "from_sha256": "03d58603b28287fc2fb6f3be283b000e62671c6c82b3a2eb00e7434f9ab9e0af",
+   "status": "ok",
+   "to_count": 18,
+   "to_file": "Building_usage.xml",
+   "to_sha256": "03d58603b28287fc2fb6f3be283b000e62671c6c82b3a2eb00e7434f9ab9e0af"
+  },
+  "detail.areaClassificationType": {
+   "added": {
+    "99": "不明"
+   },
+   "codes": {
+    "22": {
+     "confidence": "machine",
+     "label": "市街化区域",
+     "relation": "exact",
+     "to": [
+      "22"
+     ]
+    },
+    "23": {
+     "confidence": "machine",
+     "label": "市街化調整区域",
+     "relation": "exact",
+     "to": [
+      "23"
+     ]
+    }
+   },
+   "from_count": 2,
+   "from_file": "Common_areaClassificationType.xml",
+   "from_sha256": "9abc1bda663153e9c790b105bc21315d6331daf6e4b2db215b073d0bae0486e0",
+   "status": "ok",
+   "to_count": 3,
+   "to_file": "Common_areaClassificationType.xml",
+   "to_sha256": "2519cc60eb660989d02311bea92444899a251a186db91b67afa2258609c85218"
+  },
+  "detail.buildingStructureType": {
+   "added": {},
+   "codes": {
+    "601": {
+     "confidence": "machine",
+     "label": "木造・土蔵造",
+     "relation": "exact",
+     "to": [
+      "601"
+     ]
+    },
+    "602": {
+     "confidence": "machine",
+     "label": "鉄骨鉄筋コンクリート造",
+     "relation": "exact",
+     "to": [
+      "602"
+     ]
+    },
+    "603": {
+     "confidence": "machine",
+     "label": "鉄筋コンクリート造",
+     "relation": "exact",
+     "to": [
+      "603"
+     ]
+    },
+    "604": {
+     "confidence": "machine",
+     "label": "鉄骨造",
+     "relation": "exact",
+     "to": [
+      "604"
+     ]
+    },
+    "605": {
+     "confidence": "machine",
+     "label": "軽量鉄骨造",
+     "relation": "exact",
+     "to": [
+      "605"
+     ]
+    },
+    "606": {
+     "confidence": "machine",
+     "label": "レンガ造・コンクリートブロック造・石造",
+     "relation": "exact",
+     "to": [
+      "606"
+     ]
+    },
+    "610": {
+     "confidence": "machine",
+     "label": "非木造",
+     "relation": "exact",
+     "to": [
+      "610"
+     ]
+    },
+    "611": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "611"
+     ]
+    }
+   },
+   "from_count": 8,
+   "from_file": "BuildingDetailAttribute_buildingStructureType.xml",
+   "from_sha256": "1d890532bdba7bdad430ff13fb7c857c2b2fa3f3c3995697de90e0b4d4a80389",
+   "status": "ok",
+   "to_count": 8,
+   "to_file": "BuildingDetailAttribute_buildingStructureType.xml",
+   "to_sha256": "1d890532bdba7bdad430ff13fb7c857c2b2fa3f3c3995697de90e0b4d4a80389"
+  },
+  "detail.detailedUsage": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1110": {
+     "confidence": "machine",
+     "label": "官公庁施設",
+     "relation": "exact",
+     "to": [
+      "1110"
+     ]
+    },
+    "1121": {
+     "confidence": "machine",
+     "label": "教育施設",
+     "relation": "exact",
+     "to": [
+      "1121"
+     ]
+    },
+    "1122": {
+     "confidence": "machine",
+     "label": "文化施設",
+     "relation": "exact",
+     "to": [
+      "1122"
+     ]
+    },
+    "1123": {
+     "confidence": "machine",
+     "label": "宗教施設",
+     "relation": "exact",
+     "to": [
+      "1123"
+     ]
+    },
+    "1131": {
+     "confidence": "machine",
+     "label": "医療施設",
+     "relation": "exact",
+     "to": [
+      "1131"
+     ]
+    },
+    "1132": {
+     "confidence": "machine",
+     "label": "厚生施設",
+     "relation": "exact",
+     "to": [
+      "1132"
+     ]
+    },
+    "1141": {
+     "confidence": "machine",
+     "label": "供給施設",
+     "relation": "exact",
+     "to": [
+      "1141"
+     ]
+    },
+    "1142": {
+     "confidence": "machine",
+     "label": "処理施設",
+     "relation": "exact",
+     "to": [
+      "1142"
+     ]
+    },
+    "1210": {
+     "confidence": "machine",
+     "label": "事務所建築物",
+     "relation": "exact",
+     "to": [
+      "1210"
+     ]
+    },
+    "1221": {
+     "confidence": "machine",
+     "label": "商業施設",
+     "relation": "exact",
+     "to": [
+      "1221"
+     ]
+    },
+    "1222": {
+     "confidence": "machine",
+     "label": "公衆浴場等",
+     "relation": "exact",
+     "to": [
+      "1222"
+     ]
+    },
+    "1230": {
+     "confidence": "machine",
+     "label": "住商併用建物",
+     "relation": "exact",
+     "to": [
+      "1230"
+     ]
+    },
+    "1241": {
+     "confidence": "machine",
+     "label": "宿泊施設",
+     "relation": "exact",
+     "to": [
+      "1241"
+     ]
+    },
+    "1242": {
+     "confidence": "machine",
+     "label": "遊興施設",
+     "relation": "exact",
+     "to": [
+      "1242"
+     ]
+    },
+    "1251": {
+     "confidence": "machine",
+     "label": "スポーツ施設",
+     "relation": "exact",
+     "to": [
+      "1251"
+     ]
+    },
+    "1252": {
+     "confidence": "machine",
+     "label": "興行施設",
+     "relation": "exact",
+     "to": [
+      "1252"
+     ]
+    },
+    "1310": {
+     "confidence": "machine",
+     "label": "独立住宅",
+     "relation": "exact",
+     "to": [
+      "1310"
+     ]
+    },
+    "1320": {
+     "confidence": "machine",
+     "label": "集合住宅",
+     "relation": "exact",
+     "to": [
+      "1320"
+     ]
+    },
+    "1410": {
+     "confidence": "machine",
+     "label": "専用工場",
+     "relation": "exact",
+     "to": [
+      "1410"
+     ]
+    },
+    "1420": {
+     "confidence": "machine",
+     "label": "住居併用工場",
+     "relation": "exact",
+     "to": [
+      "1420"
+     ]
+    },
+    "1431": {
+     "confidence": "machine",
+     "label": "運輸施設等",
+     "relation": "exact",
+     "to": [
+      "1431"
+     ]
+    },
+    "1432": {
+     "confidence": "machine",
+     "label": "倉庫施設等",
+     "relation": "exact",
+     "to": [
+      "1432"
+     ]
+    },
+    "1500": {
+     "confidence": "machine",
+     "label": "農林漁業施設",
+     "relation": "exact",
+     "to": [
+      "1500"
+     ]
+    },
+    "2101": {
+     "confidence": "machine",
+     "label": "屋外利用地・仮設建物(太陽光発電)",
+     "relation": "exact",
+     "to": [
+      "2101"
+     ]
+    },
+    "2102": {
+     "confidence": "machine",
+     "label": "屋外利用地・仮設建物(屋外駐車場)",
+     "relation": "exact",
+     "to": [
+      "2102"
+     ]
+    },
+    "2103": {
+     "confidence": "machine",
+     "label": "屋外利用地・仮設建物(その他)",
+     "relation": "exact",
+     "to": [
+      "2103"
+     ]
+    },
+    "2200": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "2200"
+     ]
+    },
+    "3001": {
+     "confidence": "machine",
+     "label": "公園、運動場等(ゴルフ場)",
+     "relation": "exact",
+     "to": [
+      "3001"
+     ]
+    },
+    "3002": {
+     "confidence": "machine",
+     "label": "公園、運動場等(その他)",
+     "relation": "exact",
+     "to": [
+      "3002"
+     ]
+    },
+    "4000": {
+     "confidence": "machine",
+     "label": "未利用地等",
+     "relation": "exact",
+     "to": [
+      "4000"
+     ]
+    },
+    "5100": {
+     "confidence": "machine",
+     "label": "道路",
+     "relation": "exact",
+     "to": [
+      "5100"
+     ]
+    },
+    "5200": {
+     "confidence": "machine",
+     "label": "鉄道・港湾等",
+     "relation": "exact",
+     "to": [
+      "5200"
+     ]
+    },
+    "6110": {
+     "confidence": "machine",
+     "label": "田",
+     "relation": "exact",
+     "to": [
+      "6110"
+     ]
+    },
+    "6120": {
+     "confidence": "machine",
+     "label": "畑",
+     "relation": "exact",
+     "to": [
+      "6120"
+     ]
+    },
+    "6130": {
+     "confidence": "machine",
+     "label": "樹園地",
+     "relation": "exact",
+     "to": [
+      "6130"
+     ]
+    },
+    "6200": {
+     "confidence": "machine",
+     "label": "採草放牧地",
+     "relation": "exact",
+     "to": [
+      "6200"
+     ]
+    },
+    "7000": {
+     "confidence": "machine",
+     "label": "水面・河川・水路",
+     "relation": "exact",
+     "to": [
+      "7000"
+     ]
+    },
+    "8000": {
+     "confidence": "machine",
+     "label": "原野",
+     "relation": "exact",
+     "to": [
+      "8000"
+     ]
+    },
+    "90": {
+     "confidence": "machine",
+     "label": "不整合",
+     "relation": "exact",
+     "to": [
+      "90"
+     ]
+    },
+    "9000": {
+     "confidence": "machine",
+     "label": "森林",
+     "relation": "exact",
+     "to": [
+      "9000"
+     ]
+    }
+   },
+   "from_count": 41,
+   "from_file": "BuildingDetailAttribute_detailedUsage.xml",
+   "from_sha256": "5bf7c3afb6877843bfed40ca3a20b3f7f583894be325d0140028eb998dea4fdc",
+   "status": "ok",
+   "to_count": 41,
+   "to_file": "BuildingDetailAttribute_detailedUsage.xml",
+   "to_sha256": "0095ed319e1f27fa8011bdd39fcbed7cb01a8f90468ec3997aad08c1fd1e7acf"
+  },
+  "detail.districtsAndZonesType": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "用途地域の指定をしない区域",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "第1種低層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "10": {
+     "confidence": "machine",
+     "label": "商業地域",
+     "relation": "exact",
+     "to": [
+      "10"
+     ]
+    },
+    "11": {
+     "confidence": "machine",
+     "label": "準工業地域",
+     "relation": "exact",
+     "to": [
+      "11"
+     ]
+    },
+    "12": {
+     "confidence": "machine",
+     "label": "工業地域",
+     "relation": "exact",
+     "to": [
+      "12"
+     ]
+    },
+    "13": {
+     "confidence": "machine",
+     "label": "工業専用地域",
+     "relation": "exact",
+     "to": [
+      "13"
+     ]
+    },
+    "14": {
+     "confidence": "machine",
+     "label": "特別用途地区",
+     "relation": "exact",
+     "to": [
+      "14"
+     ]
+    },
+    "15": {
+     "confidence": "machine",
+     "label": "特定用途制限地域",
+     "relation": "exact",
+     "to": [
+      "15"
+     ]
+    },
+    "16": {
+     "confidence": "machine",
+     "label": "特例容積率適用地区",
+     "relation": "exact",
+     "to": [
+      "16"
+     ]
+    },
+    "17": {
+     "confidence": "machine",
+     "label": "高層住居誘導地区",
+     "relation": "exact",
+     "to": [
+      "17"
+     ]
+    },
+    "18": {
+     "confidence": "machine",
+     "label": "高度地区",
+     "relation": "exact",
+     "to": [
+      "18"
+     ]
+    },
+    "19": {
+     "confidence": "machine",
+     "label": "高度利用地区",
+     "relation": "exact",
+     "to": [
+      "19"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "第2種低層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "20": {
+     "confidence": "machine",
+     "label": "特定街区",
+     "relation": "exact",
+     "to": [
+      "20"
+     ]
+    },
+    "21": {
+     "confidence": "machine",
+     "label": "都市再生特別地区",
+     "relation": "exact",
+     "to": [
+      "21"
+     ]
+    },
+    "22": {
+     "confidence": "machine",
+     "label": "居住調整地域",
+     "relation": "exact",
+     "to": [
+      "22"
+     ]
+    },
+    "23": {
+     "confidence": "machine",
+     "label": "特定用途誘導地区",
+     "relation": "exact",
+     "to": [
+      "23"
+     ]
+    },
+    "24": {
+     "confidence": "machine",
+     "label": "防火地域",
+     "relation": "exact",
+     "to": [
+      "24"
+     ]
+    },
+    "25": {
+     "confidence": "machine",
+     "label": "準防火地域",
+     "relation": "exact",
+     "to": [
+      "25"
+     ]
+    },
+    "26": {
+     "confidence": "machine",
+     "label": "特定防災街区整備地区",
+     "relation": "exact",
+     "to": [
+      "26"
+     ]
+    },
+    "27": {
+     "confidence": "machine",
+     "label": "景観地区",
+     "relation": "exact",
+     "to": [
+      "27"
+     ]
+    },
+    "28": {
+     "confidence": "machine",
+     "label": "風致地区",
+     "relation": "exact",
+     "to": [
+      "28"
+     ]
+    },
+    "29": {
+     "confidence": "machine",
+     "label": "駐車場整備地区",
+     "relation": "exact",
+     "to": [
+      "29"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "第1種中高層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "30": {
+     "confidence": "machine",
+     "label": "臨港地区",
+     "relation": "exact",
+     "to": [
+      "30"
+     ]
+    },
+    "31": {
+     "confidence": "machine",
+     "label": "歴史的風土特別保存地区",
+     "relation": "exact",
+     "to": [
+      "31"
+     ]
+    },
+    "32": {
+     "confidence": "machine",
+     "label": "第1種歴史的風土保存地区",
+     "relation": "exact",
+     "to": [
+      "32"
+     ]
+    },
+    "33": {
+     "confidence": "machine",
+     "label": "第2種歴史的風土保存地区",
+     "relation": "exact",
+     "to": [
+      "33"
+     ]
+    },
+    "34": {
+     "confidence": "machine",
+     "label": "緑地保全地域",
+     "relation": "exact",
+     "to": [
+      "34"
+     ]
+    },
+    "35": {
+     "confidence": "machine",
+     "label": "特別緑地保全地区",
+     "relation": "exact",
+     "to": [
+      "35"
+     ]
+    },
+    "36": {
+     "confidence": "machine",
+     "label": "緑化地域",
+     "relation": "exact",
+     "to": [
+      "36"
+     ]
+    },
+    "37": {
+     "confidence": "machine",
+     "label": "流通業務地区",
+     "relation": "exact",
+     "to": [
+      "37"
+     ]
+    },
+    "38": {
+     "confidence": "machine",
+     "label": "生産緑地地区",
+     "relation": "exact",
+     "to": [
+      "38"
+     ]
+    },
+    "39": {
+     "confidence": "machine",
+     "label": "伝統的建造物群保存地区",
+     "relation": "exact",
+     "to": [
+      "39"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "第2種中高層住居専用地域",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "40": {
+     "confidence": "machine",
+     "label": "航空機騒音障害防止地区",
+     "relation": "exact",
+     "to": [
+      "40"
+     ]
+    },
+    "41": {
+     "confidence": "machine",
+     "label": "航空機騒音障害防止特別地区",
+     "relation": "exact",
+     "to": [
+      "41"
+     ]
+    },
+    "42": {
+     "confidence": "machine",
+     "label": "居住環境向上用途誘導地区",
+     "relation": "exact",
+     "to": [
+      "42"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "第1種住居地域",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "第2種住居地域",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "準住居地域",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "田園住居地域",
+     "relation": "exact",
+     "to": [
+      "8"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "近隣商業地域",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 43,
+   "from_file": "Common_districtsAndZonesType.xml",
+   "from_sha256": "60d968cfab4065c131ac7c4e18c0426652d08f30824b2a799fed1ab51ea7dda6",
+   "status": "ok",
+   "to_count": 43,
+   "to_file": "Common_districtsAndZonesType.xml",
+   "to_sha256": "afb1ae648cfe063e9297356e119237f81bc55db177fa7a7cf4179c958edda351"
+  },
+  "detail.fireproofStructureType": {
+   "added": {},
+   "codes": {
+    "1001": {
+     "confidence": "machine",
+     "label": "耐火",
+     "relation": "exact",
+     "to": [
+      "1001"
+     ]
+    },
+    "1002": {
+     "confidence": "machine",
+     "label": "準耐火造",
+     "relation": "exact",
+     "to": [
+      "1002"
+     ]
+    },
+    "1003": {
+     "confidence": "machine",
+     "label": "その他",
+     "relation": "exact",
+     "to": [
+      "1003"
+     ]
+    },
+    "1011": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "1011"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "BuildingDetailAttribute_fireproofStructureType.xml",
+   "from_sha256": "764e783636ee48e9da08c24386ffde2b4ce5b788fe562dde787a00a9e70bab43",
+   "status": "ok",
+   "to_count": 4,
+   "to_file": "BuildingDetailAttribute_fireproofStructureType.xml",
+   "to_sha256": "764e783636ee48e9da08c24386ffde2b4ce5b788fe562dde787a00a9e70bab43"
+  },
+  "detail.landUseType": {
+   "added": {},
+   "codes": {
+    "201": {
+     "confidence": "machine",
+     "label": "田（水田）",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "畑（畑、樹園地、採草地、養鶏（牛・豚）場）",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "203": {
+     "confidence": "machine",
+     "label": "山林（樹林地）",
+     "relation": "exact",
+     "to": [
+      "203"
+     ]
+    },
+    "204": {
+     "confidence": "machine",
+     "label": "水面（河川水面、湖沼、ため池、用水路、濠、運河水面）",
+     "relation": "exact",
+     "to": [
+      "204"
+     ]
+    },
+    "205": {
+     "confidence": "machine",
+     "label": "その他自然地（原野・牧野、荒れ地（耕作放棄地等自然的状況のもの）、低湿地、河川敷・河原、海浜、湖岸）",
+     "relation": "exact",
+     "to": [
+      "205"
+     ]
+    },
+    "211": {
+     "confidence": "machine",
+     "label": "住宅用地（住宅、共同住宅、店舗等併用住宅、店舗等併用共同住宅、作業所併用住宅）",
+     "relation": "exact",
+     "to": [
+      "211"
+     ]
+    },
+    "212": {
+     "confidence": "machine",
+     "label": "商業用地（業務施設、商業施設、宿泊施設、商業系複合施設）",
+     "relation": "exact",
+     "to": [
+      "212"
+     ]
+    },
+    "213": {
+     "confidence": "machine",
+     "label": "工業用地（工場）",
+     "relation": "exact",
+     "to": [
+      "213"
+     ]
+    },
+    "214": {
+     "confidence": "machine",
+     "label": "公益施設用地（官公庁施設、文教厚生施設、供給処理施設）",
+     "relation": "exact",
+     "to": [
+      "214"
+     ]
+    },
+    "215": {
+     "confidence": "machine",
+     "label": "道路用地（道路、駅前広場、私有地内に存在する沿道用途の「私道」または、私有地の一部分であるものの公共の通行に供されている土地の部分）",
+     "relation": "exact",
+     "to": [
+      "215"
+     ]
+    },
+    "216": {
+     "confidence": "machine",
+     "label": "交通施設用地（運輸倉庫施設）",
+     "relation": "exact",
+     "to": [
+      "216"
+     ]
+    },
+    "217": {
+     "confidence": "machine",
+     "label": "公共空地（公園・緑地、広場、運動場、墓園）",
+     "relation": "exact",
+     "to": [
+      "217"
+     ]
+    },
+    "218": {
+     "confidence": "machine",
+     "label": "その他公的施設用地（防衛施設用地）",
+     "relation": "exact",
+     "to": [
+      "218"
+     ]
+    },
+    "219": {
+     "confidence": "machine",
+     "label": "農林漁業施設用地（農林漁業用施設）",
+     "relation": "exact",
+     "to": [
+      "219"
+     ]
+    },
+    "220": {
+     "confidence": "machine",
+     "label": "その他①（ゴルフ場）",
+     "relation": "exact",
+     "to": [
+      "220"
+     ]
+    },
+    "221": {
+     "confidence": "machine",
+     "label": "その他②（太陽光発電のシステムを直接整備している土地）",
+     "relation": "exact",
+     "to": [
+      "221"
+     ]
+    },
+    "222": {
+     "confidence": "machine",
+     "label": "その他③（平面駐車場）",
+     "relation": "exact",
+     "to": [
+      "222"
+     ]
+    },
+    "223": {
+     "confidence": "machine",
+     "label": "その他④（その他①～③以外の用途に供されている都市的土地利用（建物跡地、資材置場、改変工事中の土地）、法面（道路、造成地等の主利用に含まれない法面））",
+     "relation": "exact",
+     "to": [
+      "223"
+     ]
+    },
+    "224": {
+     "confidence": "machine",
+     "label": "低未利用土地（用途に供されていない空地、空家・空き店舗・空施設の存する土地等）",
+     "relation": "exact",
+     "to": [
+      "224"
+     ]
+    },
+    "231": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "231"
+     ]
+    },
+    "251": {
+     "confidence": "machine",
+     "label": "可住地",
+     "relation": "exact",
+     "to": [
+      "251"
+     ]
+    },
+    "252": {
+     "confidence": "machine",
+     "label": "非可住地",
+     "relation": "exact",
+     "to": [
+      "252"
+     ]
+    },
+    "260": {
+     "confidence": "machine",
+     "label": "農地（田、畑の区分がない）",
+     "relation": "exact",
+     "to": [
+      "260"
+     ]
+    },
+    "261": {
+     "confidence": "machine",
+     "label": "宅地（住宅用地、商業用地等の区分が無い）",
+     "relation": "exact",
+     "to": [
+      "261"
+     ]
+    },
+    "262": {
+     "confidence": "machine",
+     "label": "道路・鉄軌道敷（道路と交通施設用地が混在）",
+     "relation": "exact",
+     "to": [
+      "262"
+     ]
+    },
+    "263": {
+     "confidence": "machine",
+     "label": "空地（その他①～④の区分が無い）",
+     "relation": "exact",
+     "to": [
+      "263"
+     ]
+    }
+   },
+   "from_count": 26,
+   "from_file": "Common_landUseType.xml",
+   "from_sha256": "e96bef2efc05c401b37e75939295c351705ebfdd8210a942d41106284b8f1f3d",
+   "status": "ok",
+   "to_count": 26,
+   "to_file": "Common_landUseType.xml",
+   "to_sha256": "4677fe0abde44c8e418284a810d1193b4740cc728172a354e7dddb511e179119"
+  },
+  "detail.urbanPlanType": {
+   "added": {},
+   "codes": {
+    "21": {
+     "confidence": "machine",
+     "label": "都市計画区域",
+     "relation": "exact",
+     "to": [
+      "21"
+     ]
+    },
+    "26": {
+     "confidence": "machine",
+     "label": "準都市計画区域",
+     "relation": "exact",
+     "to": [
+      "26"
+     ]
+    },
+    "27": {
+     "confidence": "machine",
+     "label": "都市計画区域外",
+     "relation": "exact",
+     "to": [
+      "27"
+     ]
+    }
+   },
+   "from_count": 3,
+   "from_file": "Common_urbanPlanType.xml",
+   "from_sha256": "2af693622db1b66bf7e7604491a91a99c979f271899d405baef247beb8ad7f76",
+   "status": "ok",
+   "to_count": 3,
+   "to_file": "Common_urbanPlanType.xml",
+   "to_sha256": "c7626cf12f7f83f77434036ca2cb13d58c08b3d15a3d143d94f70cac66694ffb"
+  },
+  "generic.keyValue.key": {
+   "added": {
+    "10": "構造",
+    "2": "LOD1の立ち上げに使用する建築物の高さ",
+    "3": "建物利用現況（大分類）",
+    "4": "建物利用現況（大分類2）",
+    "5": "建物利用現況（中分類）",
+    "6": "建物利用現況（小分類）",
+    "7": "建物利用現況（詳細分類）",
+    "8": "建物利用現況（詳細分類2）",
+    "9": "建物利用現況（詳細分類3）",
+    "999": "不明"
+   },
+   "codes": {
+    "100": {
+     "confidence": "machine",
+     "label": "建物構造コード",
+     "relation": "exact",
+     "to": [
+      "100"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "延べ面積換算コード",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "変化フラグ",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "過年度修正フラグ",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "調整フラグ",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "高度地区",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "防火及び準防火地域",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "建物修正フラグ",
+     "note": "relabeled: 修正フラグ",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    }
+   },
+   "from_count": 8,
+   "from_file": "KeyValuePairAttribute_key.xml",
+   "from_sha256": "90c4d3e745ce44b860ff93c7f4ebeb309b8969c1abebf169666c6d1079485819",
+   "status": "ok",
+   "to_count": 18,
+   "to_file": "KeyValuePairAttribute_key.xml",
+   "to_sha256": "b1668ea867631dc263ebf805b6887e8877d07815daa89d2547db9f2ac00bccc0"
+  },
+  "quality.appearanceSrcDesc.lod2": {
+   "added": {
+    "88": "不明"
+   },
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "空中写真",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "衛星写真",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量システムにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "手持ちカメラにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "疑似テクスチャ",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "99": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "99"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "from_sha256": "ccccd697888a9f008bb4deba8e17612d7c3d70341e224967a58a8eab9eda6988",
+   "status": "ok",
+   "to_count": 7,
+   "to_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "to_sha256": "894286318b482e8843acee2a0521e14ca9579b7ca104587a746c21a7a5e85710"
+  },
+  "quality.appearanceSrcDesc.lod3": {
+   "added": {
+    "88": "不明"
+   },
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "空中写真",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "衛星写真",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量システムにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "手持ちカメラにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "疑似テクスチャ",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "99": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "99"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "from_sha256": "ccccd697888a9f008bb4deba8e17612d7c3d70341e224967a58a8eab9eda6988",
+   "status": "ok",
+   "to_count": 7,
+   "to_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "to_sha256": "894286318b482e8843acee2a0521e14ca9579b7ca104587a746c21a7a5e85710"
+  },
+  "quality.appearanceSrcDesc.lod4": {
+   "added": {
+    "88": "不明"
+   },
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "空中写真",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "衛星写真",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量システムにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "手持ちカメラにより撮影した写真",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "疑似テクスチャ",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "99": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "99"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "from_sha256": "ccccd697888a9f008bb4deba8e17612d7c3d70341e224967a58a8eab9eda6988",
+   "status": "ok",
+   "to_count": 7,
+   "to_file": "DataQualityAttribute_appearanceSrcDesc.xml",
+   "to_sha256": "894286318b482e8843acee2a0521e14ca9579b7ca104587a746c21a7a5e85710"
+  },
+  "quality.geometrySrcDesc.lod0": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "note": "relabeled: 公共測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）現地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）空中写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）既成図数値化の測量成果",
+     "note": "relabeled: （公共測量ではない）既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）修正測量の測量成果",
+     "note": "relabeled: （公共測量ではない）修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真地図作成の測量成果",
+     "note": "relabeled: （公共測量ではない）写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地図編集の測量成果",
+     "note": "relabeled: （公共測量ではない）地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    },
+    "108": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地上レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "108"
+     ]
+    },
+    "109": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "109"
+     ]
+    },
+    "110": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAVレーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "110"
+     ]
+    },
+    "111": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）車載写真レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "111"
+     ]
+    },
+    "112": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "112"
+     ]
+    },
+    "113": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測深測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "113"
+     ]
+    },
+    "114": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）路線測量の測量成果",
+     "note": "relabeled: （公共測量ではない）路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "114"
+     ]
+    },
+    "115": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）河川測量の測量成果",
+     "note": "relabeled: （公共測量ではない）河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "115"
+     ]
+    },
+    "116": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）用地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "116"
+     ]
+    },
+    "117": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）その他の応用測量の測量成果",
+     "note": "relabeled: （公共測量ではない）その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "117"
+     ]
+    },
+    "118": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）LidarSLAM計測の測量成果",
+     "note": "relabeled: （公共測量ではない）LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "118"
+     ]
+    },
+    "119": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）高密度航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "119"
+     ]
+    },
+    "120": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "120"
+     ]
+    },
+    "121": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）三次元数値図化の測量成果",
+     "note": "relabeled: （公共測量ではない）三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "121"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "901": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "901"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 33,
+   "from_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "75e2586aa1ec5a80627b4cd52c0c6bf88464571b717ed601ceae855e78321c8d",
+   "status": "ok",
+   "to_count": 33,
+   "to_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "fd794d44f056199d4ef52fb2f56fe5216dd739b94c9f028cba11d186d05669f1"
+  },
+  "quality.geometrySrcDesc.lod1": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "note": "relabeled: 公共測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）現地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）空中写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）既成図数値化の測量成果",
+     "note": "relabeled: （公共測量ではない）既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）修正測量の測量成果",
+     "note": "relabeled: （公共測量ではない）修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真地図作成の測量成果",
+     "note": "relabeled: （公共測量ではない）写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地図編集の測量成果",
+     "note": "relabeled: （公共測量ではない）地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    },
+    "108": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地上レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "108"
+     ]
+    },
+    "109": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "109"
+     ]
+    },
+    "110": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAVレーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "110"
+     ]
+    },
+    "111": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）車載写真レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "111"
+     ]
+    },
+    "112": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "112"
+     ]
+    },
+    "113": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測深測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "113"
+     ]
+    },
+    "114": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）路線測量の測量成果",
+     "note": "relabeled: （公共測量ではない）路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "114"
+     ]
+    },
+    "115": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）河川測量の測量成果",
+     "note": "relabeled: （公共測量ではない）河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "115"
+     ]
+    },
+    "116": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）用地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "116"
+     ]
+    },
+    "117": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）その他の応用測量の測量成果",
+     "note": "relabeled: （公共測量ではない）その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "117"
+     ]
+    },
+    "118": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）LidarSLAM計測の測量成果",
+     "note": "relabeled: （公共測量ではない）LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "118"
+     ]
+    },
+    "119": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）高密度航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "119"
+     ]
+    },
+    "120": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "120"
+     ]
+    },
+    "121": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）三次元数値図化の測量成果",
+     "note": "relabeled: （公共測量ではない）三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "121"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "901": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "901"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 33,
+   "from_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "75e2586aa1ec5a80627b4cd52c0c6bf88464571b717ed601ceae855e78321c8d",
+   "status": "ok",
+   "to_count": 33,
+   "to_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "fd794d44f056199d4ef52fb2f56fe5216dd739b94c9f028cba11d186d05669f1"
+  },
+  "quality.geometrySrcDesc.lod2": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "note": "relabeled: 公共測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）現地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）空中写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）既成図数値化の測量成果",
+     "note": "relabeled: （公共測量ではない）既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）修正測量の測量成果",
+     "note": "relabeled: （公共測量ではない）修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真地図作成の測量成果",
+     "note": "relabeled: （公共測量ではない）写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地図編集の測量成果",
+     "note": "relabeled: （公共測量ではない）地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    },
+    "108": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地上レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "108"
+     ]
+    },
+    "109": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "109"
+     ]
+    },
+    "110": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAVレーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "110"
+     ]
+    },
+    "111": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）車載写真レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "111"
+     ]
+    },
+    "112": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "112"
+     ]
+    },
+    "113": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測深測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "113"
+     ]
+    },
+    "114": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）路線測量の測量成果",
+     "note": "relabeled: （公共測量ではない）路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "114"
+     ]
+    },
+    "115": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）河川測量の測量成果",
+     "note": "relabeled: （公共測量ではない）河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "115"
+     ]
+    },
+    "116": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）用地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "116"
+     ]
+    },
+    "117": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）その他の応用測量の測量成果",
+     "note": "relabeled: （公共測量ではない）その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "117"
+     ]
+    },
+    "118": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）LidarSLAM計測の測量成果",
+     "note": "relabeled: （公共測量ではない）LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "118"
+     ]
+    },
+    "119": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）高密度航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "119"
+     ]
+    },
+    "120": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "120"
+     ]
+    },
+    "121": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）三次元数値図化の測量成果",
+     "note": "relabeled: （公共測量ではない）三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "121"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "901": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "901"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 33,
+   "from_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "75e2586aa1ec5a80627b4cd52c0c6bf88464571b717ed601ceae855e78321c8d",
+   "status": "ok",
+   "to_count": 33,
+   "to_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "fd794d44f056199d4ef52fb2f56fe5216dd739b94c9f028cba11d186d05669f1"
+  },
+  "quality.geometrySrcDesc.lod3": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "note": "relabeled: 公共測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）現地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）空中写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）既成図数値化の測量成果",
+     "note": "relabeled: （公共測量ではない）既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）修正測量の測量成果",
+     "note": "relabeled: （公共測量ではない）修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真地図作成の測量成果",
+     "note": "relabeled: （公共測量ではない）写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地図編集の測量成果",
+     "note": "relabeled: （公共測量ではない）地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    },
+    "108": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地上レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "108"
+     ]
+    },
+    "109": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "109"
+     ]
+    },
+    "110": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAVレーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "110"
+     ]
+    },
+    "111": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）車載写真レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "111"
+     ]
+    },
+    "112": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "112"
+     ]
+    },
+    "113": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測深測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "113"
+     ]
+    },
+    "114": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）路線測量の測量成果",
+     "note": "relabeled: （公共測量ではない）路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "114"
+     ]
+    },
+    "115": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）河川測量の測量成果",
+     "note": "relabeled: （公共測量ではない）河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "115"
+     ]
+    },
+    "116": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）用地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "116"
+     ]
+    },
+    "117": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）その他の応用測量の測量成果",
+     "note": "relabeled: （公共測量ではない）その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "117"
+     ]
+    },
+    "118": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）LidarSLAM計測の測量成果",
+     "note": "relabeled: （公共測量ではない）LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "118"
+     ]
+    },
+    "119": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）高密度航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "119"
+     ]
+    },
+    "120": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "120"
+     ]
+    },
+    "121": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）三次元数値図化の測量成果",
+     "note": "relabeled: （公共測量ではない）三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "121"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "901": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "901"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 33,
+   "from_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "75e2586aa1ec5a80627b4cd52c0c6bf88464571b717ed601ceae855e78321c8d",
+   "status": "ok",
+   "to_count": 33,
+   "to_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "fd794d44f056199d4ef52fb2f56fe5216dd739b94c9f028cba11d186d05669f1"
+  },
+  "quality.geometrySrcDesc.lod4": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "note": "relabeled: 公共測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "101": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）現地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "101"
+     ]
+    },
+    "102": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "102"
+     ]
+    },
+    "103": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）空中写真測量の測量成果",
+     "note": "relabeled: （公共測量ではない）空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "103"
+     ]
+    },
+    "104": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）既成図数値化の測量成果",
+     "note": "relabeled: （公共測量ではない）既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "104"
+     ]
+    },
+    "105": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）修正測量の測量成果",
+     "note": "relabeled: （公共測量ではない）修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "105"
+     ]
+    },
+    "106": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真地図作成の測量成果",
+     "note": "relabeled: （公共測量ではない）写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "106"
+     ]
+    },
+    "107": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地図編集の測量成果",
+     "note": "relabeled: （公共測量ではない）地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "107"
+     ]
+    },
+    "108": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）地上レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "108"
+     ]
+    },
+    "109": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAV写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "109"
+     ]
+    },
+    "110": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）UAVレーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "110"
+     ]
+    },
+    "111": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）車載写真レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "111"
+     ]
+    },
+    "112": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "112"
+     ]
+    },
+    "113": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）航空レーザ測深測量の測量成果",
+     "note": "relabeled: （公共測量ではない）航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "113"
+     ]
+    },
+    "114": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）路線測量の測量成果",
+     "note": "relabeled: （公共測量ではない）路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "114"
+     ]
+    },
+    "115": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）河川測量の測量成果",
+     "note": "relabeled: （公共測量ではない）河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "115"
+     ]
+    },
+    "116": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）用地測量の測量成果",
+     "note": "relabeled: （公共測量ではない）用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "116"
+     ]
+    },
+    "117": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）その他の応用測量の測量成果",
+     "note": "relabeled: （公共測量ではない）その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "117"
+     ]
+    },
+    "118": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）LidarSLAM計測の測量成果",
+     "note": "relabeled: （公共測量ではない）LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "118"
+     ]
+    },
+    "119": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）高密度航空レーザ測量の測量成果",
+     "note": "relabeled: （公共測量ではない）高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "119"
+     ]
+    },
+    "120": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）写真点群測量の測量成果",
+     "note": "relabeled: （公共測量ではない）写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "120"
+     ]
+    },
+    "121": {
+     "confidence": "machine",
+     "label": "（公共測量又は基本測量ではない）三次元数値図化の測量成果",
+     "note": "relabeled: （公共測量ではない）三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "121"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "901": {
+     "confidence": "machine",
+     "label": "推定",
+     "relation": "exact",
+     "to": [
+      "901"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 33,
+   "from_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "from_sha256": "75e2586aa1ec5a80627b4cd52c0c6bf88464571b717ed601ceae855e78321c8d",
+   "status": "ok",
+   "to_count": 33,
+   "to_file": "DataQualityAttribute_geometrySrcDesc.xml",
+   "to_sha256": "fd794d44f056199d4ef52fb2f56fe5216dd739b94c9f028cba11d186d05669f1"
+  },
+  "quality.lod1HeightType": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "取得不可のため一律値（3m）",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "点群から取得_最高高さ",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "10": {
+     "confidence": "machine",
+     "label": "図面から取得した高さ",
+     "relation": "exact",
+     "to": [
+      "10"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "点群から取得_中央値",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "点群から取得_平均値",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "点群から取得_最頻値",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "点群から取得_最低値",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "航空写真図化_最高高さ",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    },
+    "7": {
+     "confidence": "machine",
+     "label": "建築確認申請書類等に記載された「建築物の高さ」",
+     "relation": "exact",
+     "to": [
+      "7"
+     ]
+    },
+    "8": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査（建物利用現況）の「高さ（m）」",
+     "relation": "exact",
+     "to": [
+      "8"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "階高3m×都市計画基礎調査（建物利用現況）の「階数・地上（階）」による推定値",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 11,
+   "from_file": "DataQualityAttribute_lod1HeightType.xml",
+   "from_sha256": "db2d91956f17af670871d2e57828c07ea087f4224e5696e3e3f2b938e38839f3",
+   "status": "ok",
+   "to_count": 11,
+   "to_file": "DataQualityAttribute_lod1HeightType.xml",
+   "to_sha256": "db2d91956f17af670871d2e57828c07ea087f4224e5696e3e3f2b938e38839f3"
+  },
+  "quality.lodType": {
+   "added": {
+    "8": "不明"
+   },
+   "codes": {
+    "2.0": {
+     "confidence": "machine",
+     "label": "LOD2.0",
+     "relation": "exact",
+     "to": [
+      "2.0"
+     ]
+    },
+    "2.1": {
+     "confidence": "machine",
+     "label": "LOD2.1",
+     "relation": "exact",
+     "to": [
+      "2.1"
+     ]
+    },
+    "2.2": {
+     "confidence": "machine",
+     "label": "LOD2.2",
+     "relation": "exact",
+     "to": [
+      "2.2"
+     ]
+    },
+    "3.0": {
+     "confidence": "machine",
+     "label": "LOD3.0",
+     "relation": "exact",
+     "to": [
+      "3.0"
+     ]
+    },
+    "3.1": {
+     "confidence": "machine",
+     "label": "LOD3.1",
+     "relation": "exact",
+     "to": [
+      "3.1"
+     ]
+    },
+    "3.2": {
+     "confidence": "machine",
+     "label": "LOD3.2",
+     "relation": "exact",
+     "to": [
+      "3.2"
+     ]
+    },
+    "3.3": {
+     "confidence": "machine",
+     "label": "LOD3.3",
+     "relation": "exact",
+     "to": [
+      "3.3"
+     ]
+    },
+    "4.0": {
+     "confidence": "machine",
+     "label": "LOD4.0",
+     "relation": "exact",
+     "to": [
+      "4.0"
+     ]
+    },
+    "4.1": {
+     "confidence": "machine",
+     "label": "LOD4.1",
+     "relation": "exact",
+     "to": [
+      "4.1"
+     ]
+    },
+    "4.2": {
+     "confidence": "machine",
+     "label": "LOD4.2",
+     "relation": "exact",
+     "to": [
+      "4.2"
+     ]
+    }
+   },
+   "from_count": 10,
+   "from_file": "Building_lodType.xml",
+   "from_sha256": "b42878c4e2debbfb462aa0184e2cce78956b35bd5613bdf573ee398f5f39d178",
+   "status": "ok",
+   "to_count": 11,
+   "to_file": "Building_lodType.xml",
+   "to_sha256": "5afb6fb412d77be112a9314bae9a491ae26976dabedb70a750f1cfb019e41c3b"
+  },
+  "quality.publicSurvey.srcDesc.lod0": {
+   "added": {},
+   "codes": {
+    "001": {
+     "confidence": "machine",
+     "label": "現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "001"
+     ]
+    },
+    "002": {
+     "confidence": "machine",
+     "label": "UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "002"
+     ]
+    },
+    "003": {
+     "confidence": "machine",
+     "label": "空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "003"
+     ]
+    },
+    "004": {
+     "confidence": "machine",
+     "label": "既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "004"
+     ]
+    },
+    "005": {
+     "confidence": "machine",
+     "label": "修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "005"
+     ]
+    },
+    "006": {
+     "confidence": "machine",
+     "label": "写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "006"
+     ]
+    },
+    "007": {
+     "confidence": "machine",
+     "label": "地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "007"
+     ]
+    },
+    "008": {
+     "confidence": "machine",
+     "label": "地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "008"
+     ]
+    },
+    "009": {
+     "confidence": "machine",
+     "label": "UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "009"
+     ]
+    },
+    "010": {
+     "confidence": "machine",
+     "label": "UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "010"
+     ]
+    },
+    "011": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "011"
+     ]
+    },
+    "012": {
+     "confidence": "machine",
+     "label": "航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "012"
+     ]
+    },
+    "013": {
+     "confidence": "machine",
+     "label": "航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "013"
+     ]
+    },
+    "014": {
+     "confidence": "machine",
+     "label": "路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "014"
+     ]
+    },
+    "015": {
+     "confidence": "machine",
+     "label": "河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "015"
+     ]
+    },
+    "016": {
+     "confidence": "machine",
+     "label": "用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "016"
+     ]
+    },
+    "017": {
+     "confidence": "machine",
+     "label": "その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "017"
+     ]
+    },
+    "018": {
+     "confidence": "machine",
+     "label": "LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "018"
+     ]
+    },
+    "019": {
+     "confidence": "machine",
+     "label": "高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "019"
+     ]
+    },
+    "020": {
+     "confidence": "machine",
+     "label": "写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "020"
+     ]
+    },
+    "021": {
+     "confidence": "machine",
+     "label": "三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "021"
+     ]
+    },
+    "022": {
+     "confidence": "machine",
+     "label": "基盤地図情報",
+     "relation": "exact",
+     "to": [
+      "022"
+     ]
+    },
+    "023": {
+     "confidence": "machine",
+     "label": "数値地形図データ",
+     "relation": "exact",
+     "to": [
+      "023"
+     ]
+    }
+   },
+   "from_count": 23,
+   "from_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "from_sha256": "2770af853f4363266ba01f200c2fb13c22b30153217ce79f9a03d1ebe32bc6b5",
+   "status": "ok",
+   "to_count": 23,
+   "to_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "to_sha256": "fe2c6f08c6b40eefdaa1cbdd67c355fd33f23bf55b259c41bd96a92c8a1a41c5"
+  },
+  "quality.publicSurvey.srcDesc.lod1": {
+   "added": {},
+   "codes": {
+    "001": {
+     "confidence": "machine",
+     "label": "現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "001"
+     ]
+    },
+    "002": {
+     "confidence": "machine",
+     "label": "UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "002"
+     ]
+    },
+    "003": {
+     "confidence": "machine",
+     "label": "空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "003"
+     ]
+    },
+    "004": {
+     "confidence": "machine",
+     "label": "既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "004"
+     ]
+    },
+    "005": {
+     "confidence": "machine",
+     "label": "修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "005"
+     ]
+    },
+    "006": {
+     "confidence": "machine",
+     "label": "写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "006"
+     ]
+    },
+    "007": {
+     "confidence": "machine",
+     "label": "地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "007"
+     ]
+    },
+    "008": {
+     "confidence": "machine",
+     "label": "地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "008"
+     ]
+    },
+    "009": {
+     "confidence": "machine",
+     "label": "UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "009"
+     ]
+    },
+    "010": {
+     "confidence": "machine",
+     "label": "UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "010"
+     ]
+    },
+    "011": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "011"
+     ]
+    },
+    "012": {
+     "confidence": "machine",
+     "label": "航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "012"
+     ]
+    },
+    "013": {
+     "confidence": "machine",
+     "label": "航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "013"
+     ]
+    },
+    "014": {
+     "confidence": "machine",
+     "label": "路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "014"
+     ]
+    },
+    "015": {
+     "confidence": "machine",
+     "label": "河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "015"
+     ]
+    },
+    "016": {
+     "confidence": "machine",
+     "label": "用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "016"
+     ]
+    },
+    "017": {
+     "confidence": "machine",
+     "label": "その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "017"
+     ]
+    },
+    "018": {
+     "confidence": "machine",
+     "label": "LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "018"
+     ]
+    },
+    "019": {
+     "confidence": "machine",
+     "label": "高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "019"
+     ]
+    },
+    "020": {
+     "confidence": "machine",
+     "label": "写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "020"
+     ]
+    },
+    "021": {
+     "confidence": "machine",
+     "label": "三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "021"
+     ]
+    },
+    "022": {
+     "confidence": "machine",
+     "label": "基盤地図情報",
+     "relation": "exact",
+     "to": [
+      "022"
+     ]
+    },
+    "023": {
+     "confidence": "machine",
+     "label": "数値地形図データ",
+     "relation": "exact",
+     "to": [
+      "023"
+     ]
+    }
+   },
+   "from_count": 23,
+   "from_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "from_sha256": "2770af853f4363266ba01f200c2fb13c22b30153217ce79f9a03d1ebe32bc6b5",
+   "status": "ok",
+   "to_count": 23,
+   "to_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "to_sha256": "fe2c6f08c6b40eefdaa1cbdd67c355fd33f23bf55b259c41bd96a92c8a1a41c5"
+  },
+  "quality.publicSurvey.srcDesc.lod2": {
+   "added": {},
+   "codes": {
+    "001": {
+     "confidence": "machine",
+     "label": "現地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "001"
+     ]
+    },
+    "002": {
+     "confidence": "machine",
+     "label": "UAV写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "002"
+     ]
+    },
+    "003": {
+     "confidence": "machine",
+     "label": "空中写真測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "003"
+     ]
+    },
+    "004": {
+     "confidence": "machine",
+     "label": "既成図数値化の測量成果",
+     "relation": "exact",
+     "to": [
+      "004"
+     ]
+    },
+    "005": {
+     "confidence": "machine",
+     "label": "修正測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "005"
+     ]
+    },
+    "006": {
+     "confidence": "machine",
+     "label": "写真地図作成の測量成果",
+     "relation": "exact",
+     "to": [
+      "006"
+     ]
+    },
+    "007": {
+     "confidence": "machine",
+     "label": "地図編集の測量成果",
+     "relation": "exact",
+     "to": [
+      "007"
+     ]
+    },
+    "008": {
+     "confidence": "machine",
+     "label": "地上レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "008"
+     ]
+    },
+    "009": {
+     "confidence": "machine",
+     "label": "UAV写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "009"
+     ]
+    },
+    "010": {
+     "confidence": "machine",
+     "label": "UAVレーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "010"
+     ]
+    },
+    "011": {
+     "confidence": "machine",
+     "label": "車載写真レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "011"
+     ]
+    },
+    "012": {
+     "confidence": "machine",
+     "label": "航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "012"
+     ]
+    },
+    "013": {
+     "confidence": "machine",
+     "label": "航空レーザ測深測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "013"
+     ]
+    },
+    "014": {
+     "confidence": "machine",
+     "label": "路線測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "014"
+     ]
+    },
+    "015": {
+     "confidence": "machine",
+     "label": "河川測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "015"
+     ]
+    },
+    "016": {
+     "confidence": "machine",
+     "label": "用地測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "016"
+     ]
+    },
+    "017": {
+     "confidence": "machine",
+     "label": "その他の応用測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "017"
+     ]
+    },
+    "018": {
+     "confidence": "machine",
+     "label": "LidarSLAM計測の測量成果",
+     "relation": "exact",
+     "to": [
+      "018"
+     ]
+    },
+    "019": {
+     "confidence": "machine",
+     "label": "高密度航空レーザ測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "019"
+     ]
+    },
+    "020": {
+     "confidence": "machine",
+     "label": "写真点群測量の測量成果",
+     "relation": "exact",
+     "to": [
+      "020"
+     ]
+    },
+    "021": {
+     "confidence": "machine",
+     "label": "三次元数値図化の測量成果",
+     "relation": "exact",
+     "to": [
+      "021"
+     ]
+    },
+    "022": {
+     "confidence": "machine",
+     "label": "基盤地図情報",
+     "relation": "exact",
+     "to": [
+      "022"
+     ]
+    },
+    "023": {
+     "confidence": "machine",
+     "label": "数値地形図データ",
+     "relation": "exact",
+     "to": [
+      "023"
+     ]
+    }
+   },
+   "from_count": 23,
+   "from_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "from_sha256": "2770af853f4363266ba01f200c2fb13c22b30153217ce79f9a03d1ebe32bc6b5",
+   "status": "ok",
+   "to_count": 23,
+   "to_file": "PublicSurveyDataQualityAttribute_publicSurveySrcDesc.xml",
+   "to_sha256": "fe2c6f08c6b40eefdaa1cbdd67c355fd33f23bf55b259c41bd96a92c8a1a41c5"
+  },
+  "quality.publicSurvey.srcScale.lod0": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "地図情報レベル5000",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "地図情報レベル2500",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "地図情報レベル1000",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "地図情報レベル500",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "定義なし",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 5,
+   "from_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "from_sha256": "3b001bbd850ceb93069b869fc36c140e2066c0cafe0c8fa9e2f3ba07605982f1",
+   "status": "ok",
+   "to_count": 5,
+   "to_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "to_sha256": "584b15300caa425f93e95caf055cd186f74fb03d3f2f540ca014de85fc7728f6"
+  },
+  "quality.publicSurvey.srcScale.lod1": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "地図情報レベル5000",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "地図情報レベル2500",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "地図情報レベル1000",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "地図情報レベル500",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "定義なし",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 5,
+   "from_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "from_sha256": "3b001bbd850ceb93069b869fc36c140e2066c0cafe0c8fa9e2f3ba07605982f1",
+   "status": "ok",
+   "to_count": 5,
+   "to_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "to_sha256": "584b15300caa425f93e95caf055cd186f74fb03d3f2f540ca014de85fc7728f6"
+  },
+  "quality.publicSurvey.srcScale.lod2": {
+   "added": {},
+   "codes": {
+    "0": {
+     "confidence": "machine",
+     "label": "地図情報レベル5000",
+     "relation": "exact",
+     "to": [
+      "0"
+     ]
+    },
+    "1": {
+     "confidence": "machine",
+     "label": "地図情報レベル2500",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "地図情報レベル1000",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "地図情報レベル500",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "9": {
+     "confidence": "machine",
+     "label": "定義なし",
+     "relation": "exact",
+     "to": [
+      "9"
+     ]
+    }
+   },
+   "from_count": 5,
+   "from_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "from_sha256": "3b001bbd850ceb93069b869fc36c140e2066c0cafe0c8fa9e2f3ba07605982f1",
+   "status": "ok",
+   "to_count": 5,
+   "to_file": "PublicSurveyDataQualityAttribute_srcScale.xml",
+   "to_sha256": "584b15300caa425f93e95caf055cd186f74fb03d3f2f540ca014de85fc7728f6"
+  },
+  "quality.thematicSrcDesc": {
+   "added": {},
+   "codes": {
+    "000": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果",
+     "relation": "exact",
+     "to": [
+      "000"
+     ]
+    },
+    "022": {
+     "confidence": "machine",
+     "label": "基盤地図情報",
+     "relation": "exact",
+     "to": [
+      "022"
+     ]
+    },
+    "023": {
+     "confidence": "machine",
+     "label": "数値地形図データ",
+     "relation": "exact",
+     "to": [
+      "023"
+     ]
+    },
+    "100": {
+     "confidence": "machine",
+     "label": "公共測量成果又は基本測量成果ではない測量成果",
+     "relation": "exact",
+     "to": [
+      "100"
+     ]
+    },
+    "201": {
+     "confidence": "machine",
+     "label": "都市計画基礎調査",
+     "relation": "exact",
+     "to": [
+      "201"
+     ]
+    },
+    "202": {
+     "confidence": "machine",
+     "label": "都市計画図書",
+     "relation": "exact",
+     "to": [
+      "202"
+     ]
+    },
+    "300": {
+     "confidence": "machine",
+     "label": "台帳",
+     "relation": "exact",
+     "to": [
+      "300"
+     ]
+    },
+    "301": {
+     "confidence": "machine",
+     "label": "道路台帳",
+     "relation": "exact",
+     "to": [
+      "301"
+     ]
+    },
+    "400": {
+     "confidence": "machine",
+     "label": "その他のGISデータ",
+     "relation": "exact",
+     "to": [
+      "400"
+     ]
+    },
+    "500": {
+     "confidence": "machine",
+     "label": "BIMモデル、CADデータ、設計図、完成図、一般図（平面図、配置図、断面図等）",
+     "relation": "exact",
+     "to": [
+      "500"
+     ]
+    },
+    "600": {
+     "confidence": "machine",
+     "label": "統計データ",
+     "relation": "exact",
+     "to": [
+      "600"
+     ]
+    },
+    "700": {
+     "confidence": "machine",
+     "label": "その他の資料",
+     "relation": "exact",
+     "to": [
+      "700"
+     ]
+    },
+    "701": {
+     "confidence": "machine",
+     "label": "建築計画概要書",
+     "relation": "exact",
+     "to": [
+      "701"
+     ]
+    },
+    "801": {
+     "confidence": "machine",
+     "label": "現地調査",
+     "relation": "exact",
+     "to": [
+      "801"
+     ]
+    },
+    "802": {
+     "confidence": "machine",
+     "label": "写真判読",
+     "relation": "exact",
+     "to": [
+      "802"
+     ]
+    },
+    "803": {
+     "confidence": "machine",
+     "label": "GISデータ演算",
+     "relation": "exact",
+     "to": [
+      "803"
+     ]
+    },
+    "898": {
+     "confidence": "machine",
+     "label": "不明",
+     "relation": "exact",
+     "to": [
+      "898"
+     ]
+    },
+    "999": {
+     "confidence": "machine",
+     "label": "未作成",
+     "relation": "exact",
+     "to": [
+      "999"
+     ]
+    }
+   },
+   "from_count": 18,
+   "from_file": "DataQualityAttribute_thematicSrcDesc.xml",
+   "from_sha256": "e1eb10b9fd6787f42f2cfdf62dab8c79bee0d4b161743474a0d2bb8b68b29c11",
+   "status": "ok",
+   "to_count": 18,
+   "to_file": "DataQualityAttribute_thematicSrcDesc.xml",
+   "to_sha256": "1b91b3b83b23b876dc08a6f613bb667218a8e3cc3c4a46fd2b44ccad7aa6dda0"
+  },
+  "risk.landslide.areaType": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "土砂災害警戒区域（指定済）",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "土砂災害特別警戒区域（指定済）",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "土砂災害警戒区域（指定前）",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "土砂災害特別警戒区域（指定前）",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    }
+   },
+   "from_count": 4,
+   "from_file": "LandSlideRiskAttribute_areaType.xml",
+   "from_sha256": "b7722b3013e1e3ca442ec3aadd4571256a0c3520fb482d25013205e314bc2e64",
+   "status": "ok",
+   "to_count": 4,
+   "to_file": "LandSlideRiskAttribute_areaType.xml",
+   "to_sha256": "298368da7fa83e258f2e554cd0bac3b8b2565763c08e5ddbdbd56ff37ecc1529"
+  },
+  "risk.river.adminType": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "国",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "都道府県",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    }
+   },
+   "from_count": 2,
+   "from_file": "RiverFloodingRiskAttribute_adminType.xml",
+   "from_sha256": "7162e7bc9601b5c357e31198a8df78d68c6865a4d862e1c1216575945def8e24",
+   "status": "ok",
+   "to_count": 2,
+   "to_file": "RiverFloodingRiskAttribute_adminType.xml",
+   "to_sha256": "3855e5362dcbd90ab82752e4500d89df309dbb58d6464362fb4f20da3be84b82"
+  },
+  "risk.river.rank": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "0.5m未満",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "0.5m以上3m未満",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    },
+    "3": {
+     "confidence": "machine",
+     "label": "3m以上5m未満",
+     "relation": "exact",
+     "to": [
+      "3"
+     ]
+    },
+    "4": {
+     "confidence": "machine",
+     "label": "5m以上10m未満",
+     "relation": "exact",
+     "to": [
+      "4"
+     ]
+    },
+    "5": {
+     "confidence": "machine",
+     "label": "10m以上20m未満",
+     "relation": "exact",
+     "to": [
+      "5"
+     ]
+    },
+    "6": {
+     "confidence": "machine",
+     "label": "20m以上",
+     "relation": "exact",
+     "to": [
+      "6"
+     ]
+    }
+   },
+   "from_count": 6,
+   "from_file": "RiverFloodingRiskAttribute_rank.xml",
+   "from_sha256": "a1ebbe1837be7175ad72ea5a8a2ab3d2fcb7e795e16ba02892228477016148fc",
+   "status": "ok",
+   "to_count": 6,
+   "to_file": "RiverFloodingRiskAttribute_rank.xml",
+   "to_sha256": "e8cb507e737cbd6b41eb496fafc632d7ad9fb1266f92ba984c8de4ecaf2831cc"
+  },
+  "risk.river.scale": {
+   "added": {},
+   "codes": {
+    "1": {
+     "confidence": "machine",
+     "label": "L1（計画規模）",
+     "relation": "exact",
+     "to": [
+      "1"
+     ]
+    },
+    "2": {
+     "confidence": "machine",
+     "label": "L2（想定最大規模）",
+     "relation": "exact",
+     "to": [
+      "2"
+     ]
+    }
+   },
+   "from_count": 2,
+   "from_file": "RiverFloodingRiskAttribute_scale.xml",
+   "from_sha256": "cad7ee5a0b16608830991ab2d01b61db597ab89bb1c8a9058df269b9b7e043cf",
+   "status": "ok",
+   "to_count": 2,
+   "to_file": "RiverFloodingRiskAttribute_scale.xml",
+   "to_sha256": "c540ed1bd43a57aa4e4efc68b97359685c833b9c05ea3e77198776931647ec07"
+  }
+ },
+ "schemaVersion": 1,
+ "summary": {
+  "dropped": 0,
+  "exact": 479,
+  "lists": 31,
+  "missing": 0,
+  "refined": 0,
+  "reviewed": 0
+ },
+ "to": "iur-3.2"
+}

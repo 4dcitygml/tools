@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 4dcitygml
+  "Entrance" page of the distribution zip. Inside the zip it is stored under the
+  name READ-ME-FIRST.html (so the file name shows the order to open
+  things; release-hub.yml renames it when packing).
+
+  Design principles (#86 dropout avoidance, rebuilt from scratch):
+  - One screen, one action. No scrolling. Advance with "Next" and show the end
+    via progress (1/3).
+  - Each screen shows only "what to do now". Safety explanations and
+    troubleshooting are folded into [If something goes wrong]
+    (information is hidden, not discarded).
+  - No jargon (fork/clone/signature/Gatekeeper/Command Line Tools are paraphrased).
+  - Show with pictures. Currently SVG schematics. Each figure is closed inside a
+    single figure() call so it can be swapped for a real screenshot via a
+    data: URI <img> later.
+  No buttons, probes, or diagnostics (gh/git cannot run under file://).
+  Account creation, forking, etc. are handled by the hub (Getting started) after launch. -->
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="intro.title">Getting started — Building Data Editing Tools</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #eef1f5; --card: #fff; --border: #dde1e6; --text: #1c2733; --muted: #6b7785;
+    --ok: #1f883d; --okbg: #eaf6ec; --okborder: #a9dfbb; --link: #0969da; --figbg: #f6f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --muted: #9aa5b1;
+      --ok: #3fb950; --okbg: #12261a; --okborder: #2ea04326; --link: #58a6ff; --figbg: #0d1117;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { height: 100%; }
+  body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-size: 16px;
+    font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    display: flex; align-items: flex-start; justify-content: center; padding: 12px 16px; }
+  main { background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    width: 100%; max-width: 600px; padding: 24px 30px 20px; margin: auto 0; }
+  /* Progress */
+  .prog { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; min-height: 8px; }
+  .prog i { flex: 1; height: 6px; border-radius: 3px; background: var(--border); }
+  .prog i.on { background: var(--ok); }
+  .prog span { font-size: 13px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+  /* Headings */
+  h1 { font-size: 23px; line-height: 1.45; margin: 0 0 8px; letter-spacing: .01em; }
+  h1.title { font-size: 28px; }
+  p.lead { font-size: 15.5px; line-height: 1.75; color: var(--muted); margin: 0 0 4px; }
+  /* Figures */
+  figure { margin: 14px 0 12px; background: var(--figbg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px; text-align: center; }
+  figure svg, figure img { max-width: 100%; height: auto; }
+  /* Reassurance box */
+  .safe { background: var(--okbg); border: 1px solid var(--okborder); border-radius: 10px;
+    padding: 11px 14px; font-size: 14.5px; line-height: 1.7; }
+  .safe b { color: var(--ok); }
+  /* Collapsible */
+  details { margin-top: 14px; font-size: 14px; line-height: 1.8; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--link); font-size: 14px; }
+  details .in { padding: 10px 2px 0; }
+  details code { background: var(--figbg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  /* Controls */
+  .nav { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+  button { font: inherit; font-weight: 700; cursor: pointer; border-radius: 10px;
+    border: none; background: var(--ok); color: #fff; padding: 11px 24px; font-size: 16px; }
+  button:hover { filter: brightness(1.06); }
+  button.back { background: transparent; color: var(--muted); font-weight: 500;
+    border: 1px solid var(--border); padding: 12px 18px; font-size: 15px; }
+  .os { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .os a { color: var(--link); cursor: pointer; }
+  a { color: var(--link); }
+  .foot { margin: 0; font-size: 13px; color: var(--muted); }
+</style></head><body><main>
+  <div class="prog" id="prog"></div>
+  <div id="screen"></div>
+  <div class="nav">
+    <button class="back" id="back" style="display:none" data-i18n="intro.back">Back</button>
+    <button id="next" data-i18n="intro.start">Start</button>
+    <span class="os" id="osnote"></span>
+  </div>
+  <p class="foot" id="foot"></p>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+// i18n: when opened via file:// there is no catalog injection (window.t), so fall back to the source text
+const t = window.t || ((k, d) => d);
+
+// Which OS this zip targets. The release WF substitutes mac / win at zip build time (#94).
+// In a dev checkout it is unsubstituted ('%%…%%' as-is), so null = skip mismatch detection.
+const RAW_BUNDLE = '%%BUNDLE_OS%%';
+const BUNDLE_OS = (RAW_BUNDLE === 'mac' || RAW_BUNDLE === 'win') ? RAW_BUNDLE : null;
+const OS_NAME = { mac: 'Mac', win: 'Windows' };
+const OS_ZIP = {
+  mac: 'citygml-hub-vX.Y.Z-macos.zip',
+  win: 'citygml-hub-vX.Y.Z-windows-full.zip',
+};
+
+// ---- Figures (schematics). Once real screenshots are available,
+//      swap in e.g. fig.icon = '<img src="data:image/png;base64,...">'. ----
+const fig = {
+  // Figure of double-clicking / right-clicking the launcher file's icon
+  icon: (label, gesture) => `
+    <svg viewBox="0 0 300 132" width="220" role="img" aria-label="${label} icon">
+      <rect x="104" y="8" width="62" height="76" rx="7" fill="#fff" stroke="#c3cbd4" stroke-width="2"/>
+      <path d="M148 8 L166 26 L148 26 Z" fill="#dde3ea"/>
+      <text x="135" y="56" font-size="26" text-anchor="middle">▶︎</text>
+      <text x="135" y="102" font-size="14" text-anchor="middle" fill="currentColor"
+        font-family="inherit" font-weight="700">${label}</text>
+      <text x="135" y="124" font-size="13" text-anchor="middle" fill="#7a8794"
+        font-family="inherit">${gesture}</text>
+    </svg>`,
+  // Figure reproducing the OS security dialog, marking the button to press with a red circle
+  // Passing title2 makes the heading two lines (for long dialogs like TCC)
+  dialog: (title, body, press, other, title2) => `
+    <svg viewBox="0 0 340 190" width="270" role="img" aria-label="${title}${title2 || ''}">
+      <rect x="10" y="10" width="320" height="170" rx="10" fill="#fff" stroke="#c3cbd4" stroke-width="2"/>
+      <text x="170" y="${title2 ? 44 : 52}" font-size="${title2 ? 13.5 : 15}" text-anchor="middle" font-weight="700"
+        font-family="inherit" fill="#1c2733">${title}</text>
+      ${title2 ? `<text x="170" y="63" font-size="13.5" text-anchor="middle" font-weight="700"
+        font-family="inherit" fill="#1c2733">${title2}</text>` : ''}
+      <text x="170" y="${title2 ? 86 : 80}" font-size="12.5" text-anchor="middle" font-family="inherit" fill="#6b7785">${body}</text>
+      <rect x="46" y="112" width="112" height="36" rx="7" fill="#f2f4f7" stroke="#c3cbd4"/>
+      <text x="102" y="135" font-size="13" text-anchor="middle" font-family="inherit" fill="#6b7785">${other}</text>
+      <rect x="182" y="112" width="112" height="36" rx="7" fill="#1f883d"/>
+      <text x="238" y="135" font-size="13.5" text-anchor="middle" font-family="inherit"
+        fill="#fff" font-weight="700">${press}</text>
+      <circle cx="238" cy="130" r="30" fill="none" stroke="#e5484d" stroke-width="3"/>
+      <path d="M238 168 L238 152" stroke="#e5484d" stroke-width="3"/>
+      <path d="M232 158 L238 152 L244 158" fill="none" stroke="#e5484d" stroke-width="3"/>
+    </svg>`,
+  // Windows SmartScreen differs before/after pressing "More info", so split into 2 figures matching the real screens.
+  winDetails: () => `
+    <svg viewBox="0 0 420 270" width="350" role="img" aria-label="Windows protected your PC. Click More info.">
+      <rect width="420" height="270" rx="6" fill="#0876c9"/>
+      <text x="20" y="42" font-size="22" font-family="inherit" fill="#fff">Windows protected your PC</text>
+      <text x="20" y="82" font-size="13" font-family="inherit" fill="#fff">Microsoft Defender SmartScreen prevented an</text>
+      <text x="20" y="103" font-size="13" font-family="inherit" fill="#fff">unrecognized app from starting.</text>
+      <text x="20" y="139" font-size="15" font-family="inherit" fill="#fff" text-decoration="underline">More info</text>
+      <circle cx="55" cy="134" r="30" fill="none" stroke="#ffef5a" stroke-width="4"/>
+      <path d="M55 181 L55 164 M47 172 L55 164 L63 172" fill="none" stroke="#ffef5a" stroke-width="4"/>
+      <rect x="294" y="218" width="104" height="34" fill="#fff"/>
+      <text x="346" y="240" font-size="13" text-anchor="middle" font-family="inherit" fill="#111">Don't run</text>
+    </svg>`,
+  winRun: () => `
+    <svg viewBox="0 0 420 270" width="350" role="img" aria-label="Windows details. Click Run.">
+      <rect width="420" height="270" rx="6" fill="#0876c9"/>
+      <text x="20" y="42" font-size="22" font-family="inherit" fill="#fff">Windows protected your PC</text>
+      <text x="20" y="84" font-size="14" font-family="inherit" fill="#fff">App: start-windows.bat</text>
+      <text x="20" y="111" font-size="14" font-family="inherit" fill="#fff">Publisher: Unknown publisher</text>
+      <rect x="232" y="218" width="84" height="34" fill="#fff"/>
+      <text x="274" y="240" font-size="14" text-anchor="middle" font-family="inherit" fill="#111" font-weight="700">Run</text>
+      <circle cx="274" cy="235" r="30" fill="none" stroke="#ffef5a" stroke-width="4"/>
+      <path d="M274 190 L274 207 M266 199 L274 207 L282 199" fill="none" stroke="#ffef5a" stroke-width="4"/>
+      <rect x="326" y="218" width="72" height="34" fill="#fff"/>
+      <text x="362" y="240" font-size="13" text-anchor="middle" font-family="inherit" fill="#111">Don't run</text>
+    </svg>`,
+  // Block screen that looks like a dead end (only one button). The biggest dropout point.
+  blocked: (title, body, press) => `
+    <svg viewBox="0 0 340 180" width="270" role="img" aria-label="${title}">
+      <rect x="10" y="10" width="320" height="160" rx="10" fill="#fff" stroke="#c3cbd4" stroke-width="2"/>
+      <text x="170" y="52" font-size="15" text-anchor="middle" font-weight="700"
+        font-family="inherit" fill="#1c2733">${title}</text>
+      <text x="170" y="78" font-size="12.5" text-anchor="middle" font-family="inherit" fill="#6b7785">${body}</text>
+      <rect x="114" y="104" width="112" height="36" rx="7" fill="#1f883d"/>
+      <text x="170" y="127" font-size="13.5" text-anchor="middle" font-family="inherit"
+        fill="#fff" font-weight="700">${press}</text>
+      <circle cx="170" cy="122" r="30" fill="none" stroke="#e5484d" stroke-width="3"/>
+      <path d="M170 160 L170 144" stroke="#e5484d" stroke-width="3"/>
+      <path d="M164 150 L170 144 L176 150" fill="none" stroke="#e5484d" stroke-width="3"/>
+    </svg>`,
+  // Figure showing "Open Anyway" in System Settings -> Privacy & Security
+  settings: () => `
+    <svg viewBox="0 0 340 176" width="280" role="img" aria-label="System Settings Privacy and Security">
+      <rect x="10" y="10" width="320" height="156" rx="10" fill="#fff" stroke="#c3cbd4" stroke-width="2"/>
+      <rect x="10" y="10" width="320" height="26" rx="10" fill="#eef1f5"/>
+      <text x="170" y="28" font-size="12" text-anchor="middle" font-weight="700"
+        font-family="inherit" fill="#57606a">Privacy &amp; Security</text>
+      <rect x="26" y="48" width="288" height="12" rx="6" fill="#eef1f5"/>
+      <rect x="26" y="68" width="230" height="12" rx="6" fill="#eef1f5"/>
+      <text x="26" y="106" font-size="11.5" font-family="inherit" fill="#6b7785">↓ Scroll down</text>
+      <text x="26" y="132" font-size="11.5" font-family="inherit" fill="#1c2733">"start-windows.bat" was blocked</text>
+      <rect x="212" y="116" width="102" height="30" rx="7" fill="#1f883d"/>
+      <text x="263" y="136" font-size="12.5" text-anchor="middle" font-family="inherit"
+        fill="#fff" font-weight="700">Open Anyway</text>
+      <circle cx="263" cy="131" r="26" fill="none" stroke="#e5484d" stroke-width="3"/>
+    </svg>`,
+  // Completion figure (browser opened)
+  done: () => `
+    <svg viewBox="0 0 300 140" width="210" role="img" aria-label="Browser window open">
+      <rect x="18" y="14" width="264" height="112" rx="9" fill="#fff" stroke="#c3cbd4" stroke-width="2"/>
+      <rect x="18" y="14" width="264" height="26" rx="9" fill="#eef1f5"/>
+      <circle cx="36" cy="27" r="4" fill="#c3cbd4"/><circle cx="50" cy="27" r="4" fill="#c3cbd4"/>
+      <circle cx="64" cy="27" r="4" fill="#c3cbd4"/>
+      <text x="150" y="86" font-size="34" text-anchor="middle">🎉</text>
+      <text x="150" y="112" font-size="13" text-anchor="middle" font-family="inherit"
+        fill="#6b7785">Building Data Editing Tools</text>
+    </svg>`,
+};
+
+// ---- Screen definitions. 1 screen = 1 action. ----
+// html: heading + figure + notes.  help: contents of [If something goes wrong] (folded).
+const SCREENS = {
+  // On Mac the flow is "always blocked the first time; allow in System Settings, then open" (macOS 15+).
+  // Most people give up at the 2nd screen's dead-end with only a "Done" button, so a whole
+  // screen is spent there stating "this is not the end yet".
+  mac: [
+    { html: `<h1>Double-click "start-windows.bat"</h1>
+        <p class="lead">Double-click "start-windows.bat" in the same folder.<br>
+          <b>It will be blocked the first time.</b> I'll guide you through the permission steps on this screen.</p>
+        ${fig.icon('start-windows.bat', 'double-click')}`,
+      help: `If you can't find the file, look inside the "citygml-hub" folder that was extracted. It contains 1. this guide, 2. start-windows.bat, and 3. the program folder.` },
+    { html: `<h1>Click "Done"</h1>
+        ${fig.blocked('"start-windows.bat" cannot be opened', 'Apple could not verify the app', 'Done')}
+        <div class="safe"><b>This is not the end.</b>
+          The only button is "Done", so it looks like a dead end, but that's normal.
+          <b>You can open it after granting permission on the next screen.</b></div>`,
+      help: `Do <b>not click "Move to Bin"</b>. If you did, restore it from the Bin or extract the zip again.<br>
+        On older versions of macOS, you may be able to open it with just a right-click → "Open".` },
+    { html: `<h1>Click "Open Anyway"</h1>
+        <p class="lead">Click the menu icon in the top-left corner → <b>System Settings</b> → <b>Privacy &amp; Security</b> on the left, then <b>scroll down</b> to find a line about "start-windows.bat".</p>
+        ${fig.settings()}`,
+      help: `If you can't find it, first try double-clicking again and then opening it again (this line only appears right after it's blocked).<br>
+        You can also open System Settings from the gear icon in the Dock.` },
+    { html: `<h1>Click "Open" again</h1>
+        ${fig.dialog('Are you sure you want to open this?', 'We could not verify the creator of this file', 'Open', 'Cancel')}
+        <div class="safe"><b>This is the last step.</b>
+          If Mac asks for your password or Touch ID, enter it.
+          This confirmation appears <b>only the first time</b>; after that, just double-clicking will open it.
+        </div>`,
+      help: `If this screen does not appear and you proceed, just continue.<br>
+        If nothing happens when you click "Open", try double-clicking "start-windows.bat" again.` },
+    // Folder access confirmation (TCC). Reported in beginner testing (2026-08-06) as
+    // "a popup not in the instructions". Wording changes with the extraction location (Downloads etc.).
+    { html: `<h1>Click "Allow"</h1>
+        <p class="lead">If a folder access prompt appears, click <b>"Allow"</b>.</p>
+        ${fig.dialog('"Terminal" wants to access files', 'This is for the tool to read and write data', 'Allow', 'Don't Allow', 'in the Downloads folder')}
+        <div class="safe">The folder name may differ depending on where you placed the zip (Desktop, Documents, etc.), but clicking <b>"Allow"</b> works for any location.</div>`,
+      help: `If this screen does not appear, just continue.<br>
+        If you accidentally clicked "Don't Allow", double-click "start-windows.bat" again, or go to System Settings → Privacy &amp; Security → <b>Files and Folders</b> and enable Terminal there.` },
+    { html: `<h1>Click "Install"</h1>
+        <p class="lead">The first time only, Mac will prepare some missing components.
+          They are <b>official Apple components</b> and install automatically in a few minutes.</p>
+        ${fig.dialog('Install components?', 'Required for the tool to work', 'Install', 'Not Now')}`,
+      help: `If this screen does not appear, the components are already ready. Just continue.<br>
+        After installation finishes, double-click "start-windows.bat" again.` },
+  ],
+  win: [
+    { html: `<h1>Double-click "start-windows.bat"</h1>
+        <p class="lead">Double-click "start-windows.bat" in the same folder.</p>
+        ${fig.icon('start-windows.bat', 'double-click')}`,
+      help: `If nothing happens when you double-click, try clicking the icon once and then pressing Enter.` },
+    { html: `<h1>Click "More info" on the blue screen</h1>
+        <p class="lead">At first, there is <b>no "Run" button</b>. Click <b>"More info"</b> on the left side.
+          (This screen or warning <b>may not appear</b>; if so, just continue to the next step.)</p>
+        ${fig.winDetails()}
+        <div class="safe"><b>This is normal and safe.</b>
+          Windows shows this confirmation for any new app the first time, and only the first time.</div>`,
+      help: `Do not click "Don't run" in the bottom-right corner. Clicking the underlined <b>"More info"</b> on the left will show the next screen.` },
+    { html: `<h1>Click the "Run" button that appears</h1>
+        <p class="lead">When you see "App: start-windows.bat" and "Publisher: Unknown publisher", click <b>"Run"</b> below.</p>
+        ${fig.winRun()}
+        <div class="safe">Click <b>"Run"</b>, not "Don't run".</div>`,
+      help: `If "Run" is not showing, go back one step and click <b>"More info"</b> on the blue screen again.` },
+  ],
+};
+
+// Final screen (shared)
+const LAST = { html: `<h1>If the browser opens, you're all set</h1>
+    <p class="lead">You may see a screen with scrolling text (Terminal), but don't close it—leave it open.
+      The browser will open after a moment. After that, just follow the on-screen instructions.</p>
+    ${fig.done()}
+    <div class="safe"><b>You can close this page now.</b></div>`,
+  help: `<b>If the browser doesn't open:</b><br>
+    Open your browser manually, and enter <code>http://localhost:8760</code> in the address bar.<br>
+    If that doesn't work, contact the distributor.` };
+
+// ---- Flow ----
+let os = 'mac', i = -1;   // i = -1 is the cover screen
+function steps() { return SCREENS[os]; }
+
+// Guidance when opened on a computer that differs from this zip's target OS (#94).
+// In beginner testing (2026-08-06) a Windows tester double-clicked the .command in the
+// Mac zip and gave up at "nothing happens". Stop here before showing the steps.
+function renderMismatch() {
+  $('prog').innerHTML = '';
+  $('screen').innerHTML =
+    `<h1 class="title">This zip is for ${OS_NAME[BUNDLE_OS]}</h1>
+     <p class="lead">Your computer appears to be <b>${OS_NAME[os]}</b>.<br>
+       The launcher file in this zip only works on ${OS_NAME[BUNDLE_OS]}, so it <b>won't work on ${OS_NAME[os]}</b> (double-clicking will do nothing).</p>
+     <div class="safe">Get the <b>${OS_NAME[os]}-compatible zip</b> (${OS_ZIP[os]}) from the distributor, and start with the "READ-ME-FIRST.html" inside it.</div>
+     <details><summary>I think this computer is ${OS_NAME[BUNDLE_OS]}</summary>
+       <div class="in">Rarely, the detection can be wrong.
+         <a onclick="setOs('${BUNDLE_OS}')">Show ${OS_NAME[BUNDLE_OS]} instructions</a></div>
+     </details>`;
+  $('next').style.display = 'none';
+  $('back').style.display = 'none';
+  $('osnote').innerHTML = '';
+  $('foot').textContent = '';
+}
+
+function render() {
+  if (BUNDLE_OS && os !== BUNDLE_OS) { renderMismatch(); return; }
+  const n = steps().length;
+  // Progress bar (hidden on the cover screen)
+  $('prog').innerHTML = i < 0 ? '' :
+    steps().map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('') +
+    `<span>${Math.min(i + 1, n)} / ${n}</span>`;
+
+  if (i < 0) {
+    $('screen').innerHTML =
+      `<h1 class="title">${t('intro.app_name', 'Building Data Editing Tools')}</h1>
+       <p class="lead">A toolkit to view, edit, and propose city building data.<br>
+         I'll guide you through <b>${n} steps</b> to get started. It takes just a few minutes.</p>`;
+    $('next').textContent = t('intro.start', 'Start');
+    $('next').style.display = '';
+    $('back').style.display = 'none';
+    $('osnote').innerHTML = (BUNDLE_OS ? `This zip is for ${OS_NAME[BUNDLE_OS]}.` : '') +
+      (os === 'mac'
+        ? 'Instructions for Mac (<a onclick="setOs(\'win\')">Windows instructions</a>)'
+        : 'Instructions for Windows (<a onclick="setOs(\'mac\')">Mac instructions</a>)');
+    $('foot').textContent = '';
+    return;
+  }
+  const s = i < n ? steps()[i] : LAST;
+  $('screen').innerHTML = s.html +
+    `<details><summary>${t('intro.help_summary', 'If something goes wrong')}</summary><div class="in">${s.help}</div></details>`;
+  $('next').textContent = i < n ? t('intro.next', 'Next') : t('intro.close', 'Close');
+  $('next').style.display = '';
+  $('back').style.display = '';
+  $('osnote').innerHTML = '';
+  $('foot').textContent = '';
+}
+
+function setOs(v) { os = v; i = -1; render(); }
+$('next').onclick = () => {
+  if (i >= steps().length) { window.close(); $('foot').textContent = t('intro.close_page', 'Please close this page.'); return; }
+  i++; render(); window.scrollTo(0, 0);
+};
+$('back').onclick = () => { i--; render(); };
+
+// Guess the OS and show the matching steps (branching only; no launching or probing).
+const ua = (navigator.userAgent || '') + ' ' + (navigator.platform || '');
+os = /Mac|iPhone|iPad/i.test(ua) && !/Windows/i.test(ua) ? 'mac' : 'win';
+render();
+</script></main></body></html>

@@ -1,0 +1,14 @@
+{
+  "name": "4dcitygml 3DCityDB Sync",
+  "version": "0.1.0",
+  "url": "https://github.com/4dcitygml/tools",
+  "description": {
+    "en": "Review 3DCityDB changes and propose minimal-diff GitHub pull requests.",
+    "ja": "Review 3DCityDB changes and propose minimal-diff GitHub pull requests."
+  },
+  "vendor": {
+    "name": "4dcitygml",
+    "url": "https://github.com/4dcitygml"
+  },
+  "startEnabled": true
+}

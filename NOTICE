@@ -1,0 +1,59 @@
+4dcitygml tools
+Copyright (c) 2026 4dcitygml
+
+This product includes software developed for collaborative management of
+CityGML building data (Project PLATEAU derived datasets).
+
+Third-party software bundled into release archives (Python embeddable
+package, MinGit) is listed with pinned versions, SHA-256 checksums, and
+license terms in THIRD_PARTY_NOTICES.md.
+
+Vendored third-party schemas (schemas/)
+---------------------------------------
+The XSD files under schemas/ are third-party works vendored for offline
+validation (scripts/validate_citygml.py). This repository's Apache-2.0
+license does NOT apply to them; each set keeps its distributor's terms.
+They are unmodified mirrors obtained by recursively following
+xsd:import/include from each distributor (see schemas/README.md). The
+directory-set hash below is the SHA-256 of the sorted concatenation of
+"path NUL sha256(file) NUL" over the set, recorded 2026-08-29.
+
+1. OGC — CityGML 2.0 modules and GML 3.1.1
+   - Path: schemas/schemas.opengis.net/ (47 files)
+   - Source: https://schemas.opengis.net/
+   - Terms: OGC Document/Software Notice (redistribution of unmodified
+     schemas permitted; copyright Open Geospatial Consortium)
+   - Set hash: b4cc892026944f3949ff85f6587cbd31e96d15ef584a187f47484facb98a1bc7
+
+2. W3C — xlink and SMIL 2.0 schemas
+   - Path: schemas/www.w3.org/ (3 files)
+   - Source: https://www.w3.org/
+   - Terms: W3C Software and Document License
+   - Set hash: c189c88e6b5a8b021142dcb9ae66af65cba6ae04fb9271fa7c0728ef57f3fbf8
+
+3. OASIS — xAL 2.0 schema
+   - Path: schemas/docs.oasis-open.org/ (1 file)
+   - Source: https://docs.oasis-open.org/
+   - Terms: OASIS schema notice (copyright OASIS Open)
+   - Set hash: 2cb51e65aefdc6e80dab452cdb80759a13dd21e84f8ee09eb6ca6b4c07b25dcd
+
+4. i-UR (Urban Revitalization ADE) 2.0 / 3.0 / 3.1 / 3.2 — uro and urf schemas
+   - Path: schemas/www.geospatial.jp/iur/ (8 files)
+   - Source: 3.0–3.2 from the schemas/iur/ set bundled in the official Project
+     PLATEAU distribution ZIP; 2.0 fetched 2026-09-02 from the official schema
+     directory https://www.geospatial.jp/iur/schemas/ (MLIT, Japan; canonical
+     namespace host https://www.geospatial.jp/iur/). uro/2.0/urbanObject.xsd
+     is byte-identical to the copy in the Tokyo 23 wards 2020 (v4) ZIP.
+   - Terms: distributed as part of the PLATEAU open data program
+     (CC BY 4.0 attribution: 国土交通省 Project PLATEAU)
+   - Set hash: 623d2139989b8463521d869cf002a0ba3247ff22beafc3cfa3add4a0be007d0f
+
+schemas/i4dur/ (2 files, set hash
+10156133c27310dc3beda3a112194d5f0f4f3fc7e8d1165121635f2d301d7c97) and
+schemas/master.xsd (sha256
+746d1f942892b93d25891cf9e9c6ec26aeace3dd23a559396f84fbb3694e101c) are this
+project's own work (Apache-2.0), not third-party.
+
+When updating any vendored set, re-fetch with the procedure in
+schemas/README.md and update the corresponding set hash here in the same
+commit.
