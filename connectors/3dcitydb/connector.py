@@ -199,6 +199,7 @@ def run(
     cwd: Optional[Path] = None,
     env: Optional[dict[str, str]] = None,
     check: bool = True,
+    timeout: Optional[float] = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [str(arg) for arg in args]
     try:
@@ -210,9 +211,16 @@ def run(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=timeout,
         )
     except OSError as exc:
         raise SyncError(f"Cannot run command {command[0]}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        # A helper that waits for input (a keychain prompt, a stalled network call) must not
+        # freeze the review screen: report it as a failed command instead.
+        if check:
+            raise SyncError(f"Command timed out after {timeout:g}s: {' '.join(command)}") from exc
+        return subprocess.CompletedProcess(command, returncode=124, stdout="", stderr=f"timed out after {timeout:g}s")
     if check and completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise SyncError(f"Command failed: {' '.join(command)}\n{detail}")
@@ -236,7 +244,7 @@ def inspect_environment(config: SyncConfig) -> EnvironmentStatus:
     status.clean = not run(["git", "status", "--porcelain"], cwd=config.repository).stdout.strip()
     remote = run(["git", "remote", "get-url", "origin"], cwd=config.repository, check=False)
     status.remote = remote.stdout.strip() if remote.returncode == 0 else ""
-    auth = run(["gh", "auth", "status"], cwd=config.repository, check=False)
+    auth = run(["gh", "auth", "status"], cwd=config.repository, check=False, timeout=15)
     status.github_authenticated = auth.returncode == 0
     if not status.clean:
         status.messages.append("The working tree has uncommitted changes.")

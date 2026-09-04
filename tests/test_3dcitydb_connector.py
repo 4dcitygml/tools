@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import io
 import subprocess
 import sys
@@ -26,6 +27,12 @@ class ConnectorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp.name)
+        # Keep the test independent of the developer's gh login: an empty gh config directory
+        # makes `gh auth status` answer "not logged in" at once, with no keychain or network.
+        self._gh_env = {k: os.environ.get(k) for k in ("GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN")}
+        os.environ["GH_CONFIG_DIR"] = str(self.repo / ".gh-config")
+        os.environ.pop("GH_TOKEN", None)
+        os.environ.pop("GITHUB_TOKEN", None)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=self.repo, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=self.repo, check=True)
@@ -36,6 +43,11 @@ class ConnectorTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=self.repo, check=True)
 
     def tearDown(self) -> None:
+        for key, value in self._gh_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.temp.cleanup()
 
     def config(self, export: Path) -> object:

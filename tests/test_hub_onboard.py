@@ -737,15 +737,17 @@ class TestWindowsBundle(unittest.TestCase):
     def test_release_bundles_editors_and_language_pack_in_both_zips(self):
         # A7: the city clone carries no tools/, so the hub zip must ship the editors and
         # the language pack under program/ where hub.py's fallback lookup finds them.
-        loops = self.workflow.count('for sub in ("attr_editor", "tex_editor", "i18n"):')
+        loops = self.workflow.count('for sub in ("attr_editor", "tex_editor", "i18n", "themes"):')
         self.assertEqual(loops, 2, "both the Windows and the macOS assembly must bundle them")
         for entry in ('f"{LIB}/attr_editor/app.py"', 'f"{LIB}/tex_editor/app.py"',
-                      'f"{LIB}/i18n/i18n_loader.py"', 'f"{LIB}/i18n/catalogs/hub/ja.json"'):
+                      'f"{LIB}/i18n/i18n_loader.py"', 'f"{LIB}/i18n/catalogs/hub/ja.json"',
+                      'f"{LIB}/themes/theme_loader.py"'):
             self.assertEqual(self.workflow.count(entry), 2, entry)
         # the sparse checkout of both build jobs must materialise the bundled directories
-        self.assertEqual(self.workflow.count("            tools/tex_editor\n            tools/i18n\n"), 2)
+        self.assertEqual(self.workflow.count("            tools/tex_editor\n            tools/i18n\n            tools/themes\n"), 2)
         hub = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
         self.assertIn('APP_DIR / "i18n" / "i18n_loader.py"', hub)
+        self.assertIn('APP_DIR / "themes" / "theme_loader.py"', hub)
         self.assertIn("for cand in (APP_DIR / rel, APP_DIR.parent / rel)", hub)
 
     def test_release_uses_pinned_mingit_and_python_and_size_gate(self):

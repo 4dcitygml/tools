@@ -880,7 +880,8 @@ def theme_module():
     if _theme_mod is not None:
         return _theme_mod or None
     import importlib.util
-    for cand in (RES_DIR.parent / "themes" / "theme_loader.py",
+    for cand in (APP_DIR / "themes" / "theme_loader.py",  # distribution: program/themes/
+                 RES_DIR.parent / "themes" / "theme_loader.py",
                  APP_DIR.parent / "themes" / "theme_loader.py"):
         if cand.is_file():
             spec = importlib.util.spec_from_file_location("theme_loader", cand)

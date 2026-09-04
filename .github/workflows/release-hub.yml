@@ -68,6 +68,7 @@ jobs:
             tools/attr_editor
             tools/tex_editor
             tools/i18n
+            tools/themes
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
         working-directory: tools/hub
@@ -171,10 +172,11 @@ jobs:
               z.write(repo_root / "LICENSE", f"{LIB}/LICENSE")
               z.write(repo_root / "NOTICE", f"{LIB}/NOTICE")
               z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
-              # Editors and the language pack travel with the hub (the city clone has no tools/;
-              # hub.py resolves program/<editor>/app.py and program/i18n/ as its fallback).
+              # Editors, the language pack and the theme pack travel with the hub (the city clone
+              # has no tools/; hub.py resolves program/<editor>/app.py, program/i18n/ and
+              # program/themes/ as its fallback).
               tools_root = repo_root / "tools"
-              for sub in ("attr_editor", "tex_editor", "i18n"):
+              for sub in ("attr_editor", "tex_editor", "i18n", "themes"):
                   for p in sorted((tools_root / sub).rglob("*")):
                       if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
                           z.write(p, f"{LIB}/{sub}/{p.relative_to(tools_root / sub).as_posix()}")
@@ -219,6 +221,7 @@ jobs:
               f"{LIB}/tex_editor/index.html",
               f"{LIB}/i18n/i18n_loader.py",
               f"{LIB}/i18n/catalogs/hub/ja.json",
+              f"{LIB}/themes/theme_loader.py",
               f"{LIB}/PythonPortable/python.exe",
               f"{LIB}/PythonPortable/LICENSE.txt",
               f"{LIB}/PortableGit/cmd/git.exe",
@@ -233,6 +236,33 @@ jobs:
               raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - allowed_top}")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
           print(f"{artifacts[0].name} sha256={digest}")
+      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
+        shell: python
+        working-directory: tools/hub/dist
+        run: |
+          import importlib.util, inspect, pathlib, tempfile, types, zipfile
+
+          archive = next(pathlib.Path().glob("citygml-hub-*-windows-full.zip"))
+          with tempfile.TemporaryDirectory() as tmp:
+              zipfile.ZipFile(archive).extractall(tmp)
+              program = pathlib.Path(tmp, "citygml-hub", "program").resolve()  # compare resolved paths (macOS /var -> /private/var)
+              spec = importlib.util.spec_from_file_location("hub_smoke", program / "hub.py")
+              hub = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(hub)
+              owner = next(c for _, c in inspect.getmembers(hub, inspect.isclass) if hasattr(c, "_tool_app"))
+              fake = types.SimpleNamespace(root=pathlib.Path(tmp, "no-clone"))
+              for key in ("attr_editor", "tex_editor"):
+                  found = owner._tool_app(fake, hub.TOOLS[key])
+                  if not found or program not in found.parents:
+                      raise RuntimeError(f"{key} does not resolve inside program/: {found}")
+              if hub.i18n_module() is None:
+                  raise RuntimeError("language pack not found next to the hub")
+              if hub.theme_module() is None:
+                  raise RuntimeError("theme pack not found next to the hub")
+              catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
+              if catalogs != ["de.json", "en.json", "ja.json"]:
+                  raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
+          print(f"smoke test passed for {archive.name}")
       - name: Test extracted bundle launches with bundled Python and finds bundled Git
         shell: pwsh
         working-directory: tools/hub/dist
@@ -309,6 +339,7 @@ jobs:
             tools/attr_editor
             tools/tex_editor
             tools/i18n
+            tools/themes
       - name: Assemble macOS zip
         # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
         # names, so build with Python's zipfile (non-ASCII names always get EFS).
@@ -351,7 +382,7 @@ jobs:
               add(z, "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
               # Editors and the language pack travel with the hub (see the Windows step)
               import pathlib
-              for sub in ("attr_editor", "tex_editor", "i18n"):
+              for sub in ("attr_editor", "tex_editor", "i18n", "themes"):
                   for p in sorted(pathlib.Path("tools", sub).rglob("*")):
                       if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
                           add(z, str(p), f"{LIB}/{sub}/{p.relative_to(pathlib.Path('tools', sub)).as_posix()}")
@@ -385,6 +416,7 @@ jobs:
               f"{LIB}/tex_editor/index.html",
               f"{LIB}/i18n/i18n_loader.py",
               f"{LIB}/i18n/catalogs/hub/ja.json",
+              f"{LIB}/themes/theme_loader.py",
           ]
           missing = [n for n in required if n not in names]
           if missing:
@@ -394,6 +426,32 @@ jobs:
               raise RuntimeError("start-mac.command does not have execute bit")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
           print(f"{artifacts[0].name} sha256={digest}")
+      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
+        shell: python
+        run: |
+          import importlib.util, inspect, pathlib, tempfile, types, zipfile
+
+          archive = next(pathlib.Path().glob("citygml-hub-*-macos.zip"))
+          with tempfile.TemporaryDirectory() as tmp:
+              zipfile.ZipFile(archive).extractall(tmp)
+              program = pathlib.Path(tmp, "citygml-hub", "program").resolve()  # compare resolved paths (macOS /var -> /private/var)
+              spec = importlib.util.spec_from_file_location("hub_smoke", program / "hub.py")
+              hub = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(hub)
+              owner = next(c for _, c in inspect.getmembers(hub, inspect.isclass) if hasattr(c, "_tool_app"))
+              fake = types.SimpleNamespace(root=pathlib.Path(tmp, "no-clone"))
+              for key in ("attr_editor", "tex_editor"):
+                  found = owner._tool_app(fake, hub.TOOLS[key])
+                  if not found or program not in found.parents:
+                      raise RuntimeError(f"{key} does not resolve inside program/: {found}")
+              if hub.i18n_module() is None:
+                  raise RuntimeError("language pack not found next to the hub")
+              if hub.theme_module() is None:
+                  raise RuntimeError("theme pack not found next to the hub")
+              catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
+              if catalogs != ["de.json", "en.json", "ja.json"]:
+                  raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
+          print(f"smoke test passed for {archive.name}")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request' && inputs.release_tag == ''
