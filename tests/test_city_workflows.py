@@ -15,7 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATE = ROOT / "city-template"
 SAMPLES = sorted(ROOT.glob("sample-*-station"))
-MIRRORED = ("pr-analysis.yml", "pr-comment.yml", "pr-recheck.yml", "pr-base-freshness.yml", "history-index.yml")
+MIRRORED = ("pr-analysis.yml", "pr-comment.yml", "pr-recheck.yml", "pr-base-freshness.yml", "history-index.yml",
+            "starter-kit.yml")
 
 
 @unittest.skipUnless(TEMPLATE.is_dir() and SAMPLES, "sibling city repositories not checked out")

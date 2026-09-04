@@ -30,10 +30,12 @@ request.
 
 ## Quick start
 
-1. Download the latest release and unzip it.
+1. Download your city's **starter kit** (linked from the city repository's
+   README) and unzip it. It contains the starters and the city's configuration;
+   the pinned hub release is downloaded and checksum-verified on first start.
 2. Double-click `start-mac.command` (macOS) or `start-windows.bat` (Windows).
-3. The hub opens in your browser. Pick your city — it is already selected if
-   you installed from your municipality's repository.
+3. The hub opens in your browser, connected to that city. (A hub release
+   downloaded directly from this repository connects to the Tokyo Station demo.)
 4. Sign in with GitHub when prompted (the screen states exactly what you
    authorize), create your copy of the city, and import it. Viewing the data
    itself needs no account: open the city repository or the portal.
