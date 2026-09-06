@@ -337,12 +337,14 @@ jobs:
           $rel = @(@{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
                       assets = @(@{ name = $zip.Name; browser_download_url = "u"; digest = "sha256:$sha" }) })
           $json = Join-Path $env:RUNNER_TEMP "releases.json"
-          $rel | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $json
+          ConvertTo-Json -InputObject $rel -Depth 5 | Set-Content -Encoding UTF8 $json
           $env:CITYGML_TOOLS_DIR = Join-Path $env:RUNNER_TEMP "citygml-tools"
           $env:CITYGML_RELEASES_JSON = $json
           $env:CITYGML_ASSET_FILE = $zip.FullName
           $env:CITYGML_NO_EXEC = "1"
           $script = Resolve-Path "..\..\..\install\citygml.ps1"
+          # The child's stderr must not become a terminating error here; judge by exit code and output.
+          $ErrorActionPreference = "Continue"
           $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script "4dcitygml/sample-newyork-station" 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0 -or $out -notmatch "EXEC hub-$ver 4dcitygml/sample-newyork-station") { throw "installer first run failed" }
