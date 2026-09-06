@@ -42,12 +42,22 @@ request.
 
 ## Quick start
 
-1. Download your city's **starter kit** (linked from the city repository's
-   README) and unzip it. It contains the starters and the city's configuration;
-   the pinned tools release is downloaded and checksum-verified on first start.
-2. Double-click `start-mac.command` (macOS) or `start-windows.bat` (Windows).
-3. The hub opens in your browser, connected to that city. (A hub release
-   downloaded directly from this repository connects to the Tokyo Station demo.)
+1. Paste the one-line command from your city's README into Terminal (macOS)
+   or PowerShell (Windows). Without a city argument it connects to a practice
+   city chosen by your language:
+
+   ```
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh)" -- <owner>/<repo>
+   ```
+   The script installs the newest `hub-v` release into
+   `~/Documents/citygml-tools/citygml-hub/<version>/` after verifying it against
+   the SHA-256 digest GitHub publishes for the asset, keeps a copy of itself in
+   `~/Documents/citygml-tools/`, and starts the hub.
+2. The hub opens in your browser, connected to that city. After setup it offers
+   a desktop icon; from then on the icon starts the tools (no terminal needed).
+3. Newer versions are announced inside the hub; *Get it now* downloads and
+   verifies them, and they are used from the next start. Nothing is downloaded
+   or restarted without your click.
 4. Sign in with GitHub when prompted (the screen states exactly what you
    authorize), create your copy of the city, and import it. Viewing the data
    itself needs no account: open the city repository or the portal.
@@ -72,7 +82,7 @@ Consult [implementation status](docs/implementation-status.md) before enabling a
 
 | Series | Downloads | Who updates it |
 |---|---|---|
-| `hub-v` | Mac and Windows Hub clients | The user, through their city's starter kit |
+| `hub-v` | Mac and Windows Hub clients | The user, from the hub's update banner (cities do not pin the client) |
 | `tools-v` | Common processing, CI, schemas, semantic definitions, guidance and supporting sources | City operators, after checking the impact on their procedures |
 
 Hub keeps its existing two client assets and version series. City tooling has its own
@@ -84,9 +94,10 @@ City CI pins an immutable tools commit; each case records the version used.
 Installing a new Hub does not update a city's CI pin. The common source ZIP
 requires Python dependencies and is not an automatic city installer.
 
-City starter kits currently remain in city releases. A shared starter route,
-automatic version selection and automatic Issue-to-PR processing are still
-planned work.
+Cities distribute no code: no starter kit, no launcher, no client pin
+(Exchange Contract A11). The one-line installer above and the desktop icon
+are the only entry points. Automatic CI version selection and automatic
+Issue-to-PR processing are still planned work.
 
 ## For municipalities
 

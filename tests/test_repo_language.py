@@ -106,11 +106,10 @@ class TestTitlesKeepClassifying(_EnglishEnv):
 
     def test_tex_titles_match_ci_shell_literals(self):
         """The ja/de tex title prefixes and the CI matcher literals stay in sync."""
-        analysis = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
-        summary = (REPO_ROOT / "ci" / "inspection_summary.sh").read_text(encoding="utf-8")
-        for sh in (analysis, summary):
-            self.assertIn("テクスチャ", sh)
-            self.assertIn("Textur", sh)
+        # v3.0.0: the literals live in scripts/pr_classification.py (one table for CI and clients).
+        table = (REPO_ROOT / "scripts" / "pr_classification.py").read_text(encoding="utf-8")
+        self.assertIn("テクスチャ", table)
+        self.assertIn("Textur", table)
         self.assertTrue(tex_title_for("ja").startswith("テクスチャ"))
         self.assertTrue(tex_title_for("de").startswith("Textur"))
 
@@ -226,7 +225,8 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
     """The two orchestration comments (inspection summary / resubmission)
     localize to the repo language while every machine marker stays fixed."""
 
-    def _run(self, city_json: "str | None", strict: bool = False, incomplete: bool = False):
+    def _run(self, city_json: "str | None", strict: bool = False, incomplete: bool = False,
+             classification: str = "success"):
         import subprocess
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -239,7 +239,8 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
             env = dict(os.environ,
                        GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT),
                        RUNNER_TEMP=str(tmpdir), GML_COUNT="1",
-                       REASON_OUTCOME="failure", FRESHNESS_OUTCOME="success")
+                       REASON_OUTCOME="failure", FRESHNESS_OUTCOME="success",
+                       CLASSIFICATION_OUTCOME=classification)
             for key in ('COMMIT_SCOPE', 'QUALITY', 'FORMAT', 'REVIEWABILITY', 'STRUCTURE', 'PLATEAU', 'PREVIEW'):
                 env[key + '_OUTCOME'] = 'success'
             if incomplete:
@@ -260,8 +261,52 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         self.assertEqual(proc.returncode, 1)
         self.assertIn('<!-- status:pending -->', resubmission)
         self.assertNotIn('<!-- status:active -->', resubmission)
-        self.assertEqual(len(self.structured['checks']), 13)
+        self.assertEqual(len(self.structured['checks']), 14)   # v3.0.0: + classification
         self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key']=='schema'), 'pending')
+
+    def test_unclassified_pr_gets_the_guidance_table_in_repo_language(self):
+        # A5: strict rule, helpful reply — the ❌ row plus the how-to-fix table.
+        proc, inspection, resubmission = self._run('{"lang": "ja"}', strict=True, classification="failure")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("<!--cp:classification-->", inspection)
+        self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key'] == 'classification'), 'fail')
+        self.assertIn("この提案の分類のしかた", resubmission)
+        self.assertIn("`edit/`", resubmission)
+        self.assertIn("`Update attributes`", resubmission)
+        self.assertNotIn("予告", resubmission)
+
+    def test_repo_scope_rejection_folds_into_file_scope_with_guidance(self):
+        # A11: code in a city PR fails `file-scope`; the reply names the files and where they belong.
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            (tmpdir / "4dcitygml.json").write_text('{"lang": "ja"}', encoding="utf-8")
+            event = tmpdir / "event.json"
+            event.write_text(json.dumps({"pull_request": {"title": "x", "head": {"ref": "edit/x"}}}), encoding="utf-8")
+            (tmpdir / "citygml_repo_scope.json").write_text(json.dumps(
+                {"ok": False, "rejected": [{"path": "install/start-mac.command", "note": "executable code", "category": "rejected"}]}),
+                encoding="utf-8")
+            env = dict(os.environ, GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT), RUNNER_TEMP=str(tmpdir),
+                       GML_COUNT="0", REASON_OUTCOME="success", FRESHNESS_OUTCOME="success",
+                       CLASSIFICATION_OUTCOME="success", REPO_SCOPE_OUTCOME="failure", STRICT_GATE="1",
+                       COMMIT_SCOPE_OUTCOME="success", TEXTURE_OUTCOME="success")
+            proc = subprocess.run(["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")], cwd=tmpdir, env=env,
+                                  capture_output=True, text=True)
+            structured = json.loads((tmpdir / "out" / "inspection.json").read_text())
+            resubmission = (tmpdir / "out" / "resubmission.md").read_text(encoding="utf-8")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(next(r["status"] for r in structured["checks"] if r["key"] == "file-scope"), "fail")
+        self.assertIn("この都市リポジトリが受け付けないファイル", resubmission)
+        self.assertIn("`install/start-mac.command`", resubmission)
+        self.assertIn("4dcitygml/tools", resubmission)
+
+    def test_warn_only_transition_passes_with_advisory(self):
+        # CITYGML_CLASSIFICATION_WARN_ONLY: the row passes, the guidance is posted as an advisory.
+        env_reason_ok = '{"lang": "de"}'
+        proc, inspection, resubmission = self._run(env_reason_ok, strict=True, classification="warning")
+        self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key'] == 'classification'), 'pass')
+        self.assertIn("### Hinweis", resubmission)
+        self.assertIn("`geom/`", resubmission)
 
     def test_ja_repo_gets_japanese_comments_with_fixed_markers(self):
         proc, inspection, resubmission = self._run('{"lang": "ja"}')

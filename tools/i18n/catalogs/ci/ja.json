@@ -27,5 +27,22 @@
   "ci.resolved_heading": "自動検査完了",
   "ci.resolved_body": "再提出が必要な項目はありません。レビュアーの確認を待っています。",
   "ci.incomplete_heading": "自動検査が完了していません",
-  "ci.incomplete_body": "完了していない検査があります。失敗した処理を再実行してから、投稿者によるデータ修正が必要かを判断します。運用者が検査結果を書き直す必要はありません。"
+  "ci.incomplete_body": "完了していない検査があります。失敗した処理を再実行してから、投稿者によるデータ修正が必要かを判断します。運用者が検査結果を書き直す必要はありません。",
+  "ci.check_classification": "変更の分類",
+  "ci.classify_heading": "この提案の分類のしかた",
+  "ci.classify_advisory_heading": "予告：この提案には分類が必要になります",
+  "ci.classify_intro": "自動検査は、この提案がどの種類の変更か判定できませんでした。データファイルを変更する提案は、枝名か題名でその種類を示す必要があります。該当する行を選び、どちらかの直し方を適用してください。",
+  "ci.classify_col_class": "変更の種類",
+  "ci.classify_col_branch": "枝名の先頭",
+  "ci.classify_col_title": "または題名の先頭／題名に含む語",
+  "ci.classify_attribute": "属性値（階数・用途・高さなど）",
+  "ci.classify_texture": "テクスチャ・写真",
+  "ci.classify_geometry": "形状・位置・建て替え",
+  "ci.classify_fix_branch": "枝名を接頭辞つきに変更して再度 push する（例：`git branch -m edit/<建物ID>-<日付>`）。または",
+  "ci.classify_fix_title": "Pull Request の題名を、題名の形式のいずれかで始まるよう編集する。題名の編集だけで自動検査が再実行され、新しいコミットは不要です。",
+  "ci.classify_other": "データファイルを変更しない提案（文書・コード・ツールの固定版）に分類は不要です。一括変換はコミットのトレーラーで自ら宣言します。",
+  "ci.classify_contract": "規則の全文：Exchange Contract A5。",
+  "ci.repo_scope_heading": "この都市リポジトリが受け付けないファイル",
+  "ci.repo_scope_intro": "都市リポジトリが持つのはデータ・文書・設定です。ツール、スクリプトなどのコードは 4dcitygml/tools に提案してください。ワークフローの変更は CITYGML_TOOLS_REF の固定値だけに限られます。",
+  "ci.repo_scope_label_note": "CI の保守のための変更は、管理者が `tooling` ラベルを付けることで受け付けられます（報告に記録されます）。"
 }

@@ -26,7 +26,7 @@ with patch.dict(sys.modules, {'operator_explanation':gate,'check_review_report':
 
 SHA='a'*40
 REPO='munakata-city/citygml'
-KEYS=['reason','commit-scope','scope-reproducibility','reproduction','freshness','file-scope','schema','minimal-diff','texture','structure','plausibility','topology','model']
+KEYS=['reason','classification','commit-scope','scope-reproducibility','reproduction','freshness','file-scope','schema','minimal-diff','texture','structure','plausibility','topology','model']
 
 def fixture(number=7):
     pr={'number':number,'head':{'sha':SHA,'repo':{'full_name':'proposer/citygml'},'ref':'edit/b-1'},

@@ -1,14 +1,15 @@
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
 """Contract between tools/ci and the thin wrapper workflows shipped in city-template
-(and mirrored verbatim into the sample city repositories).
+(mirrored into sample cities when they adopt that tools version).
 
 Runs only when the sibling repositories are checked out next to tools/ (the
 public layout: <root>/tools, <root>/city-template, <root>/sample-*-station).
 """
 from __future__ import annotations
 
-import hashlib
+from collections import defaultdict
+from scripts.audit_tools_pins import audit
 import unittest
 from pathlib import Path
 
@@ -24,11 +25,18 @@ class CityWorkflowContractTest(unittest.TestCase):
     def _wf(self, repo: Path, name: str) -> str:
         return (repo / ".github" / "workflows" / name).read_text(encoding="utf-8")
 
-    def test_wrapper_workflows_are_identical_across_city_repositories(self) -> None:
-        for name in MIRRORED:
-            digests = {hashlib.sha256(self._wf(r, name).encode()).hexdigest(): r.name
-                       for r in [TEMPLATE, *SAMPLES]}
-            self.assertEqual(len(digests), 1, f"{name} differs between: {sorted(digests.values())}")
+    def test_city_pins_are_consistent_and_same_version_wrappers_match(self) -> None:
+        cohorts = defaultdict(list)
+        for repo in [TEMPLATE, *SAMPLES]:
+            result = audit(repo)
+            self.assertTrue(result['ok'], result['errors'])
+            cohorts[(result['tools_repository_declaration'], result['tools_commit'])].append(repo)
+        for version, repos in cohorts.items():
+            for name in MIRRORED:
+                # Older cohorts may not yet include a newer optional workflow.
+                contents = {(r / '.github/workflows' / name).read_bytes()
+                            if (r / '.github/workflows' / name).exists() else None for r in repos}
+                self.assertEqual(len(contents), 1, f'{name} differs within adopted version {version}: {repos}')
 
     def test_tools_repository_defaults_to_4dcitygml_for_federated_city_repos(self) -> None:
         """A city repository hosted outside the 4dcitygml organization (a
