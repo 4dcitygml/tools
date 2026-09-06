@@ -284,9 +284,11 @@ The `file-scope` gate therefore accepts a PR only when every changed file is:
   `*/udx/` folder of the PLATEAU layout), or under `provenance/`;
 - **documents**: under `docs/`, or README / LICENSE / NOTICE / CONTRIBUTING /
   SUPPORT / CHANGELOG / SECURITY and other `*.md` files at the root;
-- **configuration**: `4dcitygml.json`, `theme.json`, the logo image,
-  `.gitignore`, `.gitattributes`, `.github/CODEOWNERS`,
-  `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/**`;
+- **configuration**: `4dcitygml.json`, `theme.json` (and their `.example`
+  templates), the logo image, `.gitignore`, `.gitattributes`,
+  `.github/CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/**`;
+- **a removed file**, whatever it was: a deleted file cannot run, so retiring
+  scripts or workflows needs no label;
 - **the CI tools pin**: a `.github/workflows/*.yml` file whose only changed
   lines are `CITYGML_TOOLS_REF:` values, where the new value is a commit that a
   `tools-v*` tag of `4dcitygml/tools` points to (CI checks the tags API);

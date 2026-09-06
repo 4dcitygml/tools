@@ -75,7 +75,8 @@ class TestRepoScope(unittest.TestCase):
     def _rows(self, head, labels=()):
         files = rs.changed_files(self.repo, self.base, head)
         cfg = rs.city_config(self.repo)
-        return {r["path"]: r for r in rs.classify(self.repo, self.base, head, files, cfg, set(labels))}
+        removed = rs.deleted_files(self.repo, self.base, head)
+        return {r["path"]: r for r in rs.classify(self.repo, self.base, head, files, cfg, set(labels), removed=removed)}
 
     def test_data_docs_config_accepted(self):
         head = self._commit({"lod2_citygml/a.gml": "<y/>", "docs/guide.md": "hello", "theme.json": "{}",
@@ -122,9 +123,21 @@ class TestRepoScope(unittest.TestCase):
         self.assertTrue(rows[".github/workflows/pr-analysis.yml"]["ok"])
         self.assertEqual(rows[".github/scripts/publish.py"]["category"], "tooling")
 
-    def test_deleting_a_workflow_is_a_change_too(self):
-        head = self._commit({".github/workflows/pr-analysis.yml": None})
-        self.assertFalse(self._rows(head)[".github/workflows/pr-analysis.yml"]["ok"])
+    def test_removing_files_is_always_accepted(self):
+        # A11: a deleted file cannot run — retiring install/ scripts or a workflow needs no label.
+        (self.repo / "install").mkdir(); (self.repo / "install" / "start-mac.command").write_text("#!/bin/bash")
+        git("add", "-A", cwd=self.repo); git("commit", "-qm", "add install", cwd=self.repo)
+        self.base = git("rev-parse", "HEAD", cwd=self.repo)
+        head = self._commit({".github/workflows/pr-analysis.yml": None, "install/start-mac.command": None})
+        rows = self._rows(head)
+        self.assertTrue(rows[".github/workflows/pr-analysis.yml"]["ok"])
+        self.assertEqual(rows["install/start-mac.command"]["category"], "removed")
+
+    def test_config_templates_are_configuration(self):
+        head = self._commit({"4dcitygml.json.example": "{}", "theme.json.example": "{}"})
+        rows = self._rows(head)
+        self.assertEqual(rows["4dcitygml.json.example"]["category"], "config")
+        self.assertEqual(rows["theme.json.example"]["category"], "config")
 
     def test_cli_exit_codes_and_json(self):
         head = self._commit({"docs/x.md": "ok"})

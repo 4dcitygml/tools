@@ -13,8 +13,10 @@ Accepted (A11):
   data      files under the data directories of 4dcitygml.json (or */udx/ in the
             PLATEAU layout), provenance/**
   docs      docs/**, README/LICENSE/NOTICE/CONTRIBUTING/SUPPORT/CHANGELOG*, *.md at the root
-  config    4dcitygml.json, theme.json, the logo image, .gitignore, .gitattributes,
-            .github/CODEOWNERS, .github/PULL_REQUEST_TEMPLATE.md, .github/ISSUE_TEMPLATE/**
+  config    4dcitygml.json, theme.json (and their .example templates), the logo image,
+            .gitignore, .gitattributes, .github/CODEOWNERS, .github/PULL_REQUEST_TEMPLATE.md,
+            .github/ISSUE_TEMPLATE/**
+  removed   any deleted file — removing code from a city repository is always accepted
   pin       .github/workflows/*.yml when the only changed lines are `CITYGML_TOOLS_REF:`
             values and the new value is a commit that a `tools-v*` tag of 4dcitygml/tools points to
   tooling   any other change under .github/** — only when a maintainer applied the
@@ -57,6 +59,12 @@ def changed_files(repo, base, head) -> list:
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
+def deleted_files(repo, base, head) -> set:
+    """Paths removed by the change. A removed file cannot run: removal is always accepted (A11)."""
+    out = _git(repo, "diff", "--name-only", "--diff-filter=D", base, head)
+    return {ln.strip() for ln in out.splitlines() if ln.strip()}
+
+
 def city_config(repo) -> dict:
     try:
         return json.loads((Path(repo) / "4dcitygml.json").read_text(encoding="utf-8"))
@@ -89,6 +97,8 @@ def is_docs(path: str) -> bool:
 def is_config(path: str, cfg: dict) -> bool:
     if path in CONFIG_PATHS or path.startswith(".github/ISSUE_TEMPLATE/"):
         return True
+    if "/" not in path and path.endswith(".example") and path[:-len(".example")] in CONFIG_PATHS:
+        return True   # the template's 4dcitygml.json.example / theme.json.example
     logo = str(cfg.get("logo") or "logo.png")
     if path == logo or ("/" not in path and Path(path).suffix.lower() in IMAGE_SUFFIXES):
         return True
@@ -139,14 +149,17 @@ def pr_labels(event_path: "str | None") -> set:
         return set()
 
 
-def classify(repo, base, head, files, cfg, labels, tools_repo="4dcitygml/tools", tag_commits=None) -> list:
+def classify(repo, base, head, files, cfg, labels, tools_repo="4dcitygml/tools", tag_commits=None, removed=None) -> list:
     dirs = data_dirs(cfg)
     rows = []
     tag_cache = {"value": tag_commits, "loaded": tag_commits is not None}
+    removed = set(removed or ())
     for path in files:
         row = {"path": path, "category": None, "ok": False, "note": ""}
         suffix = Path(path).suffix.lower()
-        if is_data(path, dirs) and suffix not in CODE_SUFFIXES:
+        if path in removed:
+            row.update(category="removed", ok=True, note="removed (a deleted file cannot run)")
+        elif is_data(path, dirs) and suffix not in CODE_SUFFIXES:
             row.update(category="data", ok=True)
         elif is_docs(path) and suffix not in CODE_SUFFIXES:
             row.update(category="docs", ok=True)
@@ -189,7 +202,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     files = changed_files(args.repo, args.base_sha, args.head_sha)
     cfg = city_config(args.repo)
-    rows = classify(args.repo, args.base_sha, args.head_sha, files, cfg, pr_labels(args.event), args.tools_repo)
+    rows = classify(args.repo, args.base_sha, args.head_sha, files, cfg, pr_labels(args.event), args.tools_repo,
+                    removed=deleted_files(args.repo, args.base_sha, args.head_sha))
     result = {"ok": all(r["ok"] for r in rows), "files": rows,
               "rejected": [r for r in rows if not r["ok"]], "label": TOOLING_LABEL in pr_labels(args.event)}
     if args.json_output:
