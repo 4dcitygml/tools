@@ -93,6 +93,9 @@ def build_message(
         lines.append("<gml:id-only change (content unchanged, rename). Fill in the intent>")
         lines.append("")
     # git trailers (one building per line -> easy to grep). Keyed by the stable ID.
+    if classification == 'lifecycle' and len(all_ids) > 1:
+        lines.append('Change-Type: lifecycle')
+        lines.append('Lifecycle-Manifest: <paste the reference printed by lifecycle_manifest.py>')
     for bid in sorted(modified):
         lines.append(f"Building: {disp(bid)}")
     for bid in sorted(added):
@@ -117,7 +120,8 @@ def render_comment(message: str, classification: str, n: int, resolved: bool) ->
         f"```\n{message}```\n\n"
         f"<sub>The building ID goes into the `Building:` trailer (not into labels, to avoid flooding)."
         f" Being a stable ID (buildingID), it can be tracked across rebuilds and renames."
-        f" Only fill in the summary (and the reason for lifecycle changes).</sub>\n"
+        f" Fill in the summary. For a lifecycle event, record its evidence and old/new relation"
+        f" in a Lifecycle-Manifest and paste its SHA-256 reference; CI does not infer the real-world relation.</sub>\n"
     )
 
 

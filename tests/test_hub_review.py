@@ -67,9 +67,13 @@ def example_pr(number=123):
 
 
 def fake_github_api(path, token, method="GET", payload=None, timeout=30):
+    if '/rules/branches/' in path:
+        return 200, [{'type':'pull_request','parameters':{'required_approving_review_count':2}}]
+    if path == '/graphql':
+        return 200, {'data':{'repository':{'ref':{'branchProtectionRule':None}}}}
     if "/collaborators/" in path:
         return 200, {"permission": "push"}
-    if path.endswith("/pulls?state=open&sort=updated&direction=desc&per_page=50"):
+    if "/pulls?state=open&sort=updated&direction=desc" in path:
         return 200, [example_pr()]
     if path.endswith("/pulls/123"):
         return 200, example_pr()
@@ -81,7 +85,7 @@ def fake_github_api(path, token, method="GET", payload=None, timeout=30):
         }]
     if path.endswith("/issues/123/comments?per_page=100"):
         return 200, []
-    if path.endswith("/pulls/123/reviews?per_page=100"):
+    if "/pulls/123/reviews?" in path:
         return 200, []
     if path.endswith("/commits/abc123/check-runs?per_page=100"):
         return 200, {"check_runs": [{
@@ -96,6 +100,19 @@ def fake_github_api(path, token, method="GET", payload=None, timeout=30):
 
 
 class TestReviewParsers(_EnglishEnv):
+    def test_retry_targets_failed_phase_and_never_republishes_stale_evidence(self):
+        checks = [{'technicalName': 'analyze', 'name': 'Data inspection', 'status': 'completed', 'conclusion': 'success'}]
+        for reason, available, workflow in [('current', False, None), ('fix', False, None),
+                                            ('report-stale', False, None), ('report-pending', True, 'pr-comment.yml')]:
+            with self.subTest(reason=reason):
+                result = hub.report_retry(checks, [], {'required': True, 'reason': reason, 'valid': reason == 'current', 'reportReady': reason == 'current'})
+                self.assertEqual(result['available'], available)
+                self.assertEqual(result.get('workflow'), workflow)
+        checks.append({'technicalName': 'operator-explanation', 'name': 'Operator confirmation', 'conclusion': 'failure'})
+        result = hub.report_retry(checks, [], {'required': True, 'reportReady': True, 'valid': False})
+        self.assertTrue(result['available'])
+        self.assertEqual(result['workflow'], 'review-report.yml')
+
     def test_editor_pr_kind(self):
         self.assertEqual(hub.review_kind(example_pr()), "attribute")
         tex = example_pr()
@@ -288,12 +305,61 @@ class TestReviewApiModel(_EnglishEnv):
         self.assertEqual(detail["center"], [35.05, 139.05])
         self.assertIn("google.com/maps", detail["googleMapsUrl"])
 
+    def test_production_approval_uses_shared_report_without_operator_confirmation(self):
+        from tests.test_operator_explanation import fixture, publisher, gate, REPO
+        for case in ("current", "missing", "stale", "forged", "no-check", "foreign-check", "pending", "other-pr"):
+            pr, run, inspection, report, comment, confirmation = fixture(123)
+            pr.update(title=example_pr()["title"], body=example_pr()["body"], draft=False)
+            pr["head"]["ref"]=example_pr()["head"]["ref"]
+            run["head_branch"]=pr["head"]["ref"]
+            inspection["context"]=gate.context(pr)
+            report=publisher.build_report(REPO,pr,run,inspection,{"summary.md":"Storeys: 2 → 3"},[])
+            comment["body"]=gate.report_comment(report)
+            confirmation["body"]=gate.MARKER+"\nReport-ID: "+report["reportId"]
+            if case=="stale":pr["body"]="updated evidence"
+            sha=pr["head"]["sha"]
+            gate_check={"id":77,"name":"ci-report","head_sha":sha,
+                        "external_id":report["reportId"],
+                        "app":{"slug":"github-actions"},"status":"completed","conclusion":"success"}
+            calls=[]
+            def production_api(path,token,method="GET",payload=None,timeout=30):
+                if method=="POST":
+                    calls.append(payload)
+                    return 200,{"state":payload.get("event")}
+                if path.endswith("/pulls/123"):return 200,pr
+                if "/issues/123/comments?" in path:
+                    if case=="missing":return 200,[]
+                    c=dict(comment)
+                    if case=="forged":c["user"]={"login":"proposer","type":"User"}
+                    return 200,[c]
+                if "/actions/" in path:return 200,{"workflow_runs":[run]}
+                if "/pulls/123/reviews?" in path:
+                    if case=="unconfirmed":return 200,[]
+                    return 200,[{**confirmation,"commit_id":"c"*40 if case=="stale" else sha}]
+                if "/check-runs?" in path:
+                    _,data=fake_github_api(path.replace(sha,"abc123"),token)
+                    check=dict(gate_check)
+                    if case=="foreign-check":check["app"]={"slug":"untrusted"}
+                    if case=="pending":check["status"]="in_progress"
+                    if case=="other-pr":check["external_id"]="pr:999"
+                    if case=="unconfirmed":check["conclusion"]="failure"
+                    if case!="no-check":data["check_runs"].append(check)
+                    return 200,data
+                return fake_github_api(path,token,method,payload,timeout)
+            with self.subTest(case=case), patch.object(hub,"AUTH",FakeAuth()), patch.object(
+                self.repo,"_review_identity",return_value=("test-token","reviewer",REPO)
+            ), patch.object(hub,"gh_api",side_effect=production_api):
+                detail=self.repo.review_detail(123)
+                self.assertEqual(detail["canApprove"],case=="current", detail["blockers"])
+                if case=="current":
+                    self.repo.submit_review(123);self.assertEqual(calls[-1]["event"],"APPROVE")
+
     def test_approval_posts_approve_review(self):
         calls = []
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
             result = fake_github_api(path, token, method, payload, timeout)
-            if method == "POST":
+            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
                 calls.append(payload)
             return result
 
@@ -310,7 +376,7 @@ class TestReviewApiModel(_EnglishEnv):
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
             result = fake_github_api(path, token, method, payload, timeout)
-            if method == "POST":
+            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
                 calls.append(payload)
             return result
 
@@ -327,8 +393,8 @@ class TestReviewApiModel(_EnglishEnv):
 
     def test_current_reviewer_feedback_waits_for_proposer_with_source(self):
         def reviewer_api(path, token, method="GET", payload=None, timeout=30):
-            if path.endswith("/pulls/123/reviews?per_page=100"):
-                return 200, [{"state": "CHANGES_REQUESTED", "commit_id": "abc123"}]
+            if "/pulls/123/reviews?" in path:
+                return 200, [{"id":1,"user":{"login":"reviewer"},"state": "CHANGES_REQUESTED", "commit_id": "abc123"}]
             return fake_github_api(path, token, method, payload, timeout)
 
         with patch.object(hub, "AUTH", FakeAuth()), patch.object(
@@ -344,7 +410,7 @@ class TestReviewApiModel(_EnglishEnv):
     def test_latest_base_request_waits_for_proposer_with_source(self):
         def freshness_api(path, token, method="GET", payload=None, timeout=30):
             if path.endswith("/issues/123/comments?per_page=100"):
-                return 200, [{"body": (
+                return 200, [{"user": {"login": "github-actions[bot]", "type": "Bot"}, "body": (
                     "<!-- citygml-base-freshness -->\n<!-- status:active -->\n"
                     "Please incorporate the latest version."
                 )}]
@@ -363,7 +429,7 @@ class TestReviewApiModel(_EnglishEnv):
         calls = []
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
-            if method == "POST":
+            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
                 calls.append(payload)
             return fake_github_api(path, token, method, payload, timeout)
 
@@ -401,7 +467,7 @@ class TestReviewApiModel(_EnglishEnv):
                     "name": "analyze", "status": "completed", "conclusion": "failure",
                 }]}
             if path.endswith("/issues/123/comments?per_page=100"):
-                return 200, [{"body": (
+                return 200, [{"user": {"login": "github-actions[bot]", "type": "Bot"}, "body": (
                     "<!-- citygml-auto-resubmission -->\n<!-- status:active -->\n"
                     "Please verify the reason for change."
                 )}]
@@ -473,7 +539,7 @@ class TestReviewHtml(unittest.TestCase):
         self.assertIn('data-building="${esc(g.buildingId)}"', html)
         self.assertNotIn("Open GitHub", html)
 
-        queue = html[html.index("async function loadQueue()") : html.index("async function selectPr(number)")]
+        queue = html[html.index("async function loadQueue(") : html.index("async function selectPr(number)")]
         self.assertLess(queue.index("requestedButton"), queue.index("reviewerItems.length) selectPr"))
 
         detail = html[html.index("function renderDetail()") :]

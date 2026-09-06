@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "eventId": "rebuild-2026-001",
+  "kind": "rebuild",
+  "oldIds": ["40220-bldg-old-a", "40220-bldg-old-b"],
+  "newIds": ["40220-bldg-new-c"],
+  "reason": "The two former buildings were replaced by one building in the same documented project.",
+  "confirmedOn": "2026-09-06",
+  "evidence": [
+    {"title": "Replace with the actual survey or official record", "url": "https://example.org/replace-with-actual-evidence"}
+  ]
+}

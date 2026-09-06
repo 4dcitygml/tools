@@ -501,10 +501,94 @@ def evidence_links(markdown: str) -> list[dict]:
     return links
 
 
+def _review_contract():
+    # Included in portable releases; no imports from the city checkout.
+    spec = importlib.util.spec_from_file_location("_hub_review_contract", APP_DIR / "operator_explanation.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def operator_explanation(token: str, nwo: str, pr: dict, check_runs: list) -> dict:
+    """Historical function name; validates the shared CI report, no human gate."""
+    try:
+        result = _review_contract().evaluate(lambda endpoint: gh_api(endpoint, token), nwo, pr)
+        if result.get('required') and result.get('valid'):
+            runs = [c for c in check_runs if c.get('name') == 'ci-report'
+                    and (c.get('app') or {}).get('slug') == 'github-actions']
+            latest = max(runs, key=lambda c: int(c.get('id') or 0)) if runs else {}
+            if (latest.get('head_sha') != pr['head']['sha'] or latest.get('external_id') != result['reportId']
+                    or latest.get('status') != 'completed' or latest.get('conclusion') != 'success'):
+                result = {**result, 'valid':False, 'reason':'checking'}
+        return result
+    except (OSError, ImportError, AttributeError, TypeError, ValueError, KeyError):
+        return {'required':True, 'valid':False, 'reason':'unavailable'}
+
+
+def approval_policy(token, nwo, branch):
+    return _review_contract().approval_policy(
+        lambda path, method='GET', payload=None: gh_api(path, token, method, payload), nwo, branch)
+
+
+def approval_progress(token, nwo, pr, login, policy):
+    return _review_contract().approval_progress(lambda path: gh_api(path, token), nwo, pr, login, policy)
+
+
+def machine_checks(checks: list) -> list:
+    """Approval/confirmation workflows are not data failures or retry targets."""
+    return [c for c in checks if c.get("technicalName", c.get("name")) in ("analyze", "ci-report")]
+
+
+def report_retry(checks: list, comments: list, explanation: dict) -> dict:
+    """Retry the failed phase, never a human acknowledgement by rerunning data CI."""
+    data = [c for c in checks if c.get("technicalName", c.get("name")) == "analyze"]
+    retry = ci_retry_info(_overall_check_status(data), comments)
+    if not explanation.get("required"):
+        return retry
+    reason = explanation.get("reason")
+    if reason == "report-stale":
+        return {"available": False, "kind": "update", "label": tr("hub.retry_stale_label", "Wait for a report of the updated proposal"),
+                "reason": tr("hub.retry_stale_reason", "The proposal or base changed. Complete the update and wait for fresh checks; republishing the old run cannot update its evidence.")}
+    if reason == "fix":
+        return {**retry, "available": False, "kind": "fix"}
+    if explanation.get("reportReady") and explanation.get("valid"):
+        return {"available": False, "kind": "none", "label": "", "reason": tr("hub.retry_none_reason", "No re-run is needed")}
+    if explanation.get("reportReady") and not explanation.get("valid"):
+        return {**ci_retry_info("fail", []), "workflow": "review-report.yml"}
+    if _overall_check_status(data) == "pass" and not explanation.get("reportReady"):
+        return {**retry, "available": True, "kind": "system", "workflow": "pr-comment.yml",
+                "label": tr("hub.retry_report_label", "Retry report generation and delivery"),
+                "reason": tr("hub.retry_report_reason", "Data checks completed; retry the report process.")}
+    return {**retry, "workflow": "pr-analysis.yml"}
+
+
+def trusted_ci_comments(comments: list, explanation: dict) -> list:
+    if not explanation.get("required"):
+        # Practice reports predate versioned reports. Still require the bot identity.
+        return [c for c in comments if (c.get("user") or {}).get("login") == "github-actions[bot]"]
+    report = explanation.get("report")
+    if not report or explanation.get("reason") in ("report-stale", "report-pending", "report-unavailable"):
+        return []
+    raw = json.dumps(report["context"], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    import hashlib
+    stamp = f"<!-- citygml-ci-context:{hashlib.sha256(raw.encode()).hexdigest()}:{report['runId']}:{report['runAttempt']} -->"
+    selected = [c for c in comments if (c.get("user") or {}).get("login") == "github-actions[bot]"
+                and (c.get("user") or {}).get("type") == "Bot" and stamp in str(c.get("body") or "")]
+    # Checkpoint statuses come from the verified structured report, never arbitrary Markdown.
+    statuses = {"pass": "✅", "fail": "❌", "na": "−", "pending": "…"}
+    selected = [c for c in selected if "<!-- citygml-automatic-inspection -->" not in str(c.get("body") or "")]
+    selected.append({"user": {"login": "github-actions[bot]", "type": "Bot"}, "body":
+                     "<!-- citygml-automatic-inspection -->\n" + "\n".join(
+                     f"| {r['key']} <!--cp:{r['key']}--> | {statuses[r['status']]} |" for r in report["checks"])})
+    return selected
+
+
 def check_display_name(name: str) -> str:
     """Convert internal CI/check-run names to display names (selected language) that convey what is judged."""
     key = str(name or "").strip().lower()
     rules = (
+        (("operator-explanation",),
+         tr("hub.check_operator_explanation", "Operator explanation for the current changes")),
         (("preview", "cesium", "3d"),
          tr("hub.check_preview", "3D view necessity and generation check")),
         (("texture", "appearance"),
@@ -1185,6 +1269,16 @@ class Hub:
                 )
                 comments = c_data if c_code == 200 and isinstance(c_data, list) else []
                 retry = ci_retry_info(check_status, comments)
+            if nwo.lower() not in {f"4dcitygml/sample-{city}-station" for city in ("tokyo", "munich", "newyork")} and p.get("state") == "OPEN":
+                pr_code, live_pr = gh_api(f"/repos/{nwo}/pulls/{p['number']}", token)
+                if pr_code == 200:
+                    r_code, r_data = gh_api(f"/repos/{nwo}/commits/{live_pr['head']['sha']}/check-runs?per_page=100", token)
+                    runs = r_data.get("check_runs", []) if r_code == 200 else []
+                    explanation = operator_explanation(token, nwo, live_pr, runs)
+                    check_status = _overall_check_status(machine_checks(runs))
+                    c_code, c_data = gh_api(f"/repos/{nwo}/issues/{p['number']}/comments?per_page=100", token)
+                    comments = trusted_ci_comments(c_data if c_code == 200 else [], explanation)
+                    retry = report_retry(runs, comments, explanation)
             prs.append({
                 "number": p["number"], "title": p["title"], "state": p["state"],
                 "url": p["url"], "draft": p.get("isDraft", False),
@@ -1379,8 +1473,13 @@ class Hub:
             files, comments
         )
 
-    def _review_queue_item(self, token: str, nwo: str, pr: dict) -> "dict | None":
-        """Build one list item, with two states based on who works on it next."""
+    def _review_queue_item(self, token: str, nwo: str, pr: dict, policy=None, login=None) -> "dict | None":
+        """Build one list item with its review stage and native approval progress."""
+        if login is None:
+            login = self._review_identity()[1]
+        if policy is None:
+            policy = approval_policy(token, nwo, (pr.get('base') or {}).get('ref', 'main'))
+        approvals = approval_progress(token, nwo, pr, login, policy)
         kind = review_kind(pr)
         if kind == "other" or str((pr.get("base") or {}).get("ref") or "") != "main":
             return None
@@ -1395,12 +1494,13 @@ class Hub:
             )
             if status == 200 and isinstance(data, dict):
                 check_runs = data.get("check_runs") or []
-        check_status = _overall_check_status(check_runs)
+        check_status = _overall_check_status(machine_checks(check_runs))
+        explanation = operator_explanation(token, nwo, pr, check_runs)
 
         c_status, comment_data = gh_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
-        comments = comment_data if c_status == 200 and isinstance(comment_data, list) else []
+        comments = trusted_ci_comments(comment_data if c_status == 200 and isinstance(comment_data, list) else [], explanation)
         r_status, review_data = gh_api(
             f"/repos/{nwo}/pulls/{number}/reviews?per_page=100", token
         )
@@ -1408,7 +1508,7 @@ class Hub:
         reviewer_feedback = any(
             r.get("state") == "CHANGES_REQUESTED"
             and str(r.get("commit_id") or "") == head_sha
-            for r in reviews
+            for r in _review_contract().latest_reviews(reviews).values()
         )
         freshness_feedback = any(
             "<!-- citygml-base-freshness -->" in str(c.get("body") or "")
@@ -1438,14 +1538,25 @@ class Hub:
         if reviewer_feedback:
             adjustment_reasons.append(
                 tr("hub.adjust_reviewer_comment", "The reviewer has posted a comment to confirm"))
+        if not explanation["valid"]:
+            adjustment_reasons.append(tr("hub.blocker_explanation", "Waiting for the operator’s explanation of the current changes"))
         if pr.get("draft"):
             adjustment_reasons.append(tr("hub.adjust_draft", "The proposer is still drafting"))
         ready = (
             reason_ok and check_status == "pass" and not pr.get("draft")
-            and not reviewer_feedback and not auto_resubmit
+            and not reviewer_feedback and not auto_resubmit and explanation["valid"]
             and (str(pr.get("state") or "").lower() == "open" or pr.get("example"))
         )
         queue_status = "reviewer_waiting" if ready else "proposer_waiting"
+        if not ready and explanation.get("required"):
+            if explanation.get("reason") in ("system", "report-unavailable"):
+                queue_status = "system_waiting"
+            elif explanation.get("reason") in ("report-pending", "report-stale") or check_status == "pending":
+                queue_status = "checking"
+
+        if ready and approvals.get('known') and approvals['remaining'] == 0:
+            queue_status = 'approval_complete'
+
         if ready:
             waiting_source = ""
         elif reviewer_feedback:
@@ -1453,6 +1564,8 @@ class Hub:
         elif freshness_feedback:
             waiting_source = "latest"
         elif check_status == "pending":
+            waiting_source = "checking"
+        elif not explanation["valid"]:
             waiting_source = "checking"
         elif pr.get("draft"):
             waiting_source = "draft"
@@ -1476,6 +1589,7 @@ class Hub:
             "updated": pr.get("updated_at") or "",
             "url": pr.get("html_url") or "",
             "example": bool(pr.get("example")),
+            "approvals": approvals,
             "queueStatus": queue_status,
             "waitingSource": waiting_source,
             "adjustmentReasons": adjustment_reasons,
@@ -1485,12 +1599,9 @@ class Hub:
 
     def review_queue(self, include_examples: bool = False) -> dict:
         token, login, nwo = self._review_identity()
-        code, pulls = gh_api(
-            f"/repos/{nwo}/pulls?state=open&sort=updated&direction=desc&per_page=50",
-            token,
-        )
-        if code != 200 or not isinstance(pulls, list):
-            raise RuntimeError(str(getattr(pulls, "get", lambda *_: "")("message") or f"HTTP {code}"))
+        pulls = _review_contract().pages(
+            lambda path: gh_api(path, token),
+            f"/repos/{nwo}/pulls?state=open&sort=updated&direction=desc")
 
         if include_examples and not any(int(p.get("number") or 0) == 6 for p in pulls):
             ex_code, example = gh_api(f"/repos/{nwo}/pulls/6", token)
@@ -1503,15 +1614,16 @@ class Hub:
             if review_kind(pr) != "other"
             and str((pr.get("base") or {}).get("ref") or "") == "main"
         ]
+        policy = approval_policy(token, nwo, "main")
         workers = min(8, max(1, len(candidates)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             items = [
                 item for item in pool.map(
-                    lambda pr: self._review_queue_item(token, nwo, pr), candidates
+                    lambda pr: self._review_queue_item(token, nwo, pr, policy, login), candidates
                 ) if item is not None
             ]
         perm = self.reviewer_permission()
-        return {"ok": True, "nwo": nwo, "login": login, **perm, "items": items}
+        return {"ok": True, "nwo": nwo, "login": login, **perm, "approvalPolicy": policy, "items": items}
 
     def _change_rows(self, body: str, comments: list, kind: str) -> list[dict]:
         sources = [body]
@@ -1634,6 +1746,8 @@ class Hub:
         comments = fetched["comments"] if isinstance(fetched["comments"], list) else []
         reviews = fetched["reviews"] if isinstance(fetched["reviews"], list) else []
         check_runs = (fetched["checks"].get("check_runs") or []) if isinstance(fetched["checks"], dict) else []
+        explanation = operator_explanation(token, nwo, pr, check_runs)
+        comments = trusted_ci_comments(comments, explanation)
         kind = review_kind(pr)
         body = str(pr.get("body") or "")
 
@@ -1663,12 +1777,12 @@ class Hub:
             "status": c.get("status") or "",
             "conclusion": c.get("conclusion") or "",
             "url": c.get("details_url") or "",
-        } for c in check_runs]
+        } for c in machine_checks(check_runs)]
         checks_ok = bool(checks) and all(
             c["status"] == "completed" and c["conclusion"] in ("success", "neutral")
             for c in checks
         )
-        retry = ci_retry_info(_overall_check_status(checks), comments)
+        retry = report_retry(checks, comments, explanation)
         preview_url = ""
         lint_ok = None
         for comment in comments:
@@ -1736,7 +1850,7 @@ class Hub:
         manual_changes_requested = any(
             r.get("state") == "CHANGES_REQUESTED"
             and str(r.get("commit_id") or "") == str((pr.get("head") or {}).get("sha") or "")
-            for r in reviews
+            for r in _review_contract().latest_reviews(reviews).values()
         )
         changes_requested = (
             manual_changes_requested or auto_resubmit
@@ -1752,8 +1866,12 @@ class Hub:
             adjustment_owner="reviewer" if manual_changes_requested else "ci",
         )
         inspection_ready = all(c["status"] in ("pass", "na") for c in checkpoints)
+        if explanation.get("required") and not explanation.get("reportReady"):
+            inspection_ready = False
         failed_inspections = [c["label"] for c in checkpoints if c["status"] == "fail"]
         blockers = []
+        if not explanation["valid"]:
+            blockers.append(tr("hub.blocker_explanation", "Waiting for the operator’s explanation of the current changes"))
         if str(pr.get("state") or "").lower() != "open":
             blockers.append(tr("hub.blocker_not_open", "This proposal is not open"))
         if pr.get("draft"):
@@ -1834,10 +1952,12 @@ class Hub:
             "center": center,
             "googleMapsUrl": google_maps_url,
             "googleMapsEmbedUrl": google_maps_embed_url,
+            "approvals": approval_progress(token, nwo, pr, login, approval_policy(token, nwo, pr['base']['ref'])),
             "alreadyApproved": any(r.get("state") == "APPROVED" for r in reviews),
             "permission": permission["permission"],
             "selfAuthored": self_authored,
             "blockers": blockers,
+            "operatorExplanation": explanation,
             "canApprove": not blockers,
             # The walkthrough does not modify the real PR; the operation is experienced in the same screen.
             "canDemoApprove": inspection_ready,
@@ -1985,7 +2105,9 @@ class Hub:
             r_data.get("check_runs") or []
             if r_code == 200 and isinstance(r_data, dict) else []
         )
-        retry = ci_retry_info(_overall_check_status(check_runs), comments)
+        explanation = operator_explanation(token, nwo, pr, check_runs)
+        comments = trusted_ci_comments(comments, explanation)
+        retry = report_retry(check_runs, comments, explanation)
         if not retry["available"]:
             raise RuntimeError(retry["reason"])
         if demo:
@@ -1994,6 +2116,7 @@ class Hub:
         marker = "<!-- citygml-ci-retry-request -->"
         comment = (
             f"{marker}\n"
+            f"<!-- citygml-retry-workflow:{retry.get('workflow', 'pr-analysis.yml')} -->\n"
             "## 🔄 Re-run automated inspection\n\n"
             f"Received a re-inspection request from @{login} for the current"
             f" version (`{head_sha[:12]}`).\n"

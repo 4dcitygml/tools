@@ -25,5 +25,7 @@
   "ci.resubmit_freshness": "Eine andere Änderung wurde zuerst übernommen. Bitte die neueste Version einpflegen und erneut einreichen.",
   "ci.resubmit_outro": "Nach einer Korrektur laufen die automatischen Prüfungen beim Aktualisieren des PR erneut. Es ist keine Aktion der Prüfer nötig.",
   "ci.resolved_heading": "Automatische Prüfungen abgeschlossen",
-  "ci.resolved_body": "Keine Punkte erfordern eine erneute Einreichung. Warten auf Bestätigung durch die Prüfer."
+  "ci.resolved_body": "Keine Punkte erfordern eine erneute Einreichung. Warten auf Bestätigung durch die Prüfer.",
+  "ci.incomplete_heading": "Automatische Prüfung unvollständig",
+  "ci.incomplete_body": "Einige Prüfungen wurden nicht abgeschlossen. Den fehlgeschlagenen Prozess erneut ausführen, bevor Datenkorrekturen angefordert werden. Der Betreiber muss keine Prüfergebnisse abschreiben."
 }

@@ -9,7 +9,7 @@ implemented in this repository (`scripts/commit_building_scope.py`,
 `scripts/identity_manifest.py`, `scripts/source_update_manifest.py`,
 `scripts/fetch_materials.py`, CI gate `reproduction`); they still have to be exercised on a real repository during the
 private pilot before the identity PR types are unlocked
-([PR operations guide §7.2](https://github.com/4dcitygml/city-template/blob/main/docs/pr-operations.md)).
+([Implementation status](implementation-status.md)).
 For `source-update`, value replacements within one attribute family are
 implemented (§4.2); edition changes are handled by `carry-forward` (§4.3),
 not by converting old files. Documentation never substitutes for an unimplemented gate.
@@ -30,6 +30,7 @@ program** from a declared source, rather than edited building by building:
 | `schema-update` | adds an edition's artifacts (code lists, schema profile); no GML change | `schema-update` (gated: artifact paths only) |
 | `schema-migration` | when the repository is the master and no official new-edition file exists: generates the new edition's serialization from the repository's content (registry-driven re-serialization of the i-UR subtree; CityGML 3.0 core via 3DCityDB) | `schema-migration` (designed; gate = semantic equality per registry key + reproduction, not yet implemented) |
 | `layout` | semantics-preserving mesh subdivision | `layout` |
+| `semantic-correction` | pilot LOD0 FootPrint → RoofEdge, one mesh, unchanged coordinates and other bytes; [scope and workflow](lod0-semantic-correction.md) | per-building `Building:` trailers + provenance manifest |
 
 Everyday single-building corrections are **not** bulk submissions and keep
 the normal flow (one PR, human review of the building).

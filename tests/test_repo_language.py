@@ -226,7 +226,7 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
     """The two orchestration comments (inspection summary / resubmission)
     localize to the repo language while every machine marker stays fixed."""
 
-    def _run(self, city_json: "str | None", strict: bool = False):
+    def _run(self, city_json: "str | None", strict: bool = False, incomplete: bool = False):
         import subprocess
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir = Path(tmp)
@@ -240,6 +240,11 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                        GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT),
                        RUNNER_TEMP=str(tmpdir), GML_COUNT="1",
                        REASON_OUTCOME="failure", FRESHNESS_OUTCOME="success")
+            for key in ('COMMIT_SCOPE', 'QUALITY', 'FORMAT', 'REVIEWABILITY', 'STRUCTURE', 'PLATEAU', 'PREVIEW'):
+                env[key + '_OUTCOME'] = 'success'
+            if incomplete:
+                env['REASON_OUTCOME'] = 'success'
+                env['FORMAT_OUTCOME'] = 'cancelled'
             if strict:
                 env["STRICT_GATE"] = "1"
             proc = subprocess.run(
@@ -247,7 +252,16 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                 cwd=tmpdir, env=env, capture_output=True, text=True)
             inspection = (tmpdir / "out" / "inspection.md").read_text(encoding="utf-8")
             resubmission = (tmpdir / "out" / "resubmission.md").read_text(encoding="utf-8")
+            self.structured = json.loads((tmpdir / 'out/inspection.json').read_text())
             return proc, inspection, resubmission
+
+    def test_incomplete_process_blocks_without_asking_proposer_to_fix_data(self):
+        proc, inspection, resubmission = self._run('{"lang":"ja"}', strict=True, incomplete=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('<!-- status:pending -->', resubmission)
+        self.assertNotIn('<!-- status:active -->', resubmission)
+        self.assertEqual(len(self.structured['checks']), 13)
+        self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key']=='schema'), 'pending')
 
     def test_ja_repo_gets_japanese_comments_with_fixed_markers(self):
         proc, inspection, resubmission = self._run('{"lang": "ja"}')

@@ -1,0 +1,30 @@
+name: Shared tools — problem or consultation
+description: Ask about processing, validation, schema interpretation, or the shared workflow.
+title: "[tooling] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe what you need or what happened; you do not need to identify the cause or supply a fix.
+        Link the city's existing Issue or PR when available. This form opens a consultation; it does not execute processing or automatically create a data PR.
+  - type: textarea
+    id: request
+    attributes:
+      label: What happened or what would you like to do?
+      description: Include the expected result and the observed result, if known.
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Existing city Issue or PR
+      description: Links are enough; do not repeat an existing report just for common-tool improvement.
+  - type: input
+    id: version
+    attributes:
+      label: Tools release or commit, if known
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or steps to reproduce, if available
+      description: Relevant messages, input conditions, schema edition, and a small example help investigation. Partial information is welcome.

@@ -24,5 +24,7 @@
   "ci.resubmit_freshness": "Another change was applied first. Please merge in the latest version and resubmit.",
   "ci.resubmit_outro": "Updating the PR after fixing re-runs the automated checks. No reviewer action is needed.",
   "ci.resolved_heading": "Automated checks complete",
-  "ci.resolved_body": "No items need resubmission. Waiting for reviewer confirmation."
+  "ci.resolved_body": "No items need resubmission. Waiting for reviewer confirmation.",
+  "ci.incomplete_heading": "Automated inspection is incomplete",
+  "ci.incomplete_body": "Some checks did not finish. Retry the failed process before deciding whether the proposer must fix the data. No operator transcription is required."
 }

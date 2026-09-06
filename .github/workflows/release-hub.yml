@@ -39,6 +39,12 @@ on:
       - 'tools/hub/**'
       - 'tools/attr_editor/app.py'
       - 'THIRD_PARTY_NOTICES.md'
+      - 'scripts/**'
+      - 'schemas/**'
+      - 'semantics/**'
+      - 'ci/**'
+      - 'docs/**'
+      - 'requirements.txt'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -62,6 +68,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
           filter: blob:none
           sparse-checkout: |
             tools/hub
@@ -165,6 +173,7 @@ jobs:
               z.write("../packaging/start-windows.bat", f"{ROOT}/start-windows.bat")
               # Everything below is hidden in program/
               z.write("../app.py", f"{LIB}/hub.py")
+              z.write("../operator_explanation.py", f"{LIB}/operator_explanation.py")
               z.write("../index.html", f"{LIB}/index.html")
               z.write("../review.html", f"{LIB}/review.html")
               z.write("../packaging/start-windows.bat", f"{LIB}/start-windows.bat")
@@ -215,6 +224,7 @@ jobs:
               f"{LIB}/LICENSE",
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
+              f"{LIB}/operator_explanation.py",
               f"{LIB}/attr_editor/app.py",
               f"{LIB}/attr_editor/index.html",
               f"{LIB}/tex_editor/app.py",
@@ -333,6 +343,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
           filter: blob:none
           sparse-checkout: |
             tools/hub
@@ -374,6 +386,7 @@ jobs:
               add(z, f"{base}/packaging/start-mac.command", f"{ROOT}/start-mac.command", 0o755)
               # The full body is hidden in program/ (the .command looks in the adjacent program/)
               add(z, f"{base}/app.py", f"{LIB}/hub.py")
+              add(z, f"{base}/operator_explanation.py", f"{LIB}/operator_explanation.py")
               add(z, f"{base}/index.html", f"{LIB}/index.html")
               add(z, f"{base}/review.html", f"{LIB}/review.html")
               add(z, f"{base}/preset.json", f"{LIB}/preset.json")
@@ -410,6 +423,7 @@ jobs:
               f"{LIB}/LICENSE",
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
+              f"{LIB}/operator_explanation.py",
               f"{LIB}/attr_editor/app.py",
               f"{LIB}/attr_editor/index.html",
               f"{LIB}/tex_editor/app.py",
@@ -469,9 +483,62 @@ jobs:
           version="${RELEASE_TAG#hub-}"
           gh release upload "$RELEASE_TAG" "citygml-hub-${version}-macos.zip" --clobber
 
+  common-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Build common-tools source archive
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG:-$GITHUB_REF_NAME}"
+          mkdir -p "$RUNNER_TEMP/common-tools-dist"
+          if [[ "$tag" == hub-v* ]]; then
+            version="${tag#hub-}"
+            python scripts/build_common_tools.py build --root . --release-tag "$tag" \
+              --output "$RUNNER_TEMP/common-tools-dist/citygml-tools-${version}-source.zip"
+          else
+            python scripts/build_common_tools.py build --root . --local \
+              --output "$RUNNER_TEMP/common-tools-dist/citygml-tools-local-source.zip"
+          fi
+      - name: Smoke-test the common-tools archive
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet "lxml==6.1.1"
+          archive=("$RUNNER_TEMP"/common-tools-dist/*.zip)
+          python scripts/build_common_tools.py verify "${archive[0]}"
+          python -m zipfile -e "${archive[0]}" "$RUNNER_TEMP/common-tools-smoke"
+          cd "$RUNNER_TEMP/common-tools-smoke/citygml-tools"
+          python -I scripts/lod0_semantic_manifest.py --help
+          python -I scripts/commit_building_scope.py --help
+          python -I scripts/validate_citygml.py --help
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        with:
+          name: hub-common-tools
+          path: ${{ runner.temp }}/common-tools-dist/*.zip
+      - name: Upload common-tools source to requested Release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#hub-}"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/common-tools-dist/citygml-tools-${version}-source.zip"
+
   release:
     if: startsWith(github.ref, 'refs/tags/hub-v')
-    needs: [windows, macos-zip]
+    needs: [windows, macos-zip, common-tools]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -488,18 +555,24 @@ jobs:
           version="${GITHUB_REF_NAME#hub-}"
           windows="dist/citygml-hub-${version}-windows-full.zip"
           macos="dist/citygml-hub-${version}-macos.zip"
+          common="dist/citygml-tools-${version}-source.zip"
           test -f "$windows"
           test -f "$macos"
+          test -f "$common"
           {
-            echo "citygml-hub (launcher). For Windows: citygml-hub-${version}-windows-full.zip (Python and git bundled, no installation needed), for macOS: citygml-hub-${version}-macos.zip (no binaries, runs on CLT python3/git). After extraction, open 'READ-ME-FIRST.html'."
+            echo "4dcitygml tools ${version}: shared processing, CI, definitions, documentation and Hub. The historical hub-v tag prefix is retained for download compatibility."
+            echo
+            echo "Hub launcher: for Windows, citygml-hub-${version}-windows-full.zip (Python and git bundled, no installation needed); for macOS, citygml-hub-${version}-macos.zip (no binaries, runs on CLT python3/git). After extraction, open 'READ-ME-FIRST.html'."
+            echo
+            echo "Common processing source: citygml-tools-${version}-source.zip (Python dependencies required; includes processing, CI, schemas, definitions and documentation)."
             echo
             echo '```'
-            (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")
+            (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip" "citygml-tools-${version}-source.zip")
             echo '```'
           } > notes.md
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
-              --title "citygml-hub $GITHUB_REF_NAME" \
+              --title "4dcitygml tools ${version}" \
               --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" "$windows" "$macos" --clobber
+          gh release upload "$GITHUB_REF_NAME" "$windows" "$macos" "$common" --clobber

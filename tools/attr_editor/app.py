@@ -2024,6 +2024,11 @@ class Repo:
             f"https://github.com/{upstream_nwo(getattr(self, 'root', None))}/compare/main...{owner}:{branch}?expand=1"
         )
 
+    def _draft_proposal(self) -> bool:
+        # Standard GitHub proposal flow. Authors can opt into Draft on GitHub;
+        # CI failures block merging without a separate human confirmation stage.
+        return False
+
     def _create_pr_api(self, branch: str, title: str,
                        body: str) -> "tuple[str | None, str | None]":
         """Reuse the hub's OAuth connection to create the proposal without a GitHub screen."""
@@ -2041,6 +2046,7 @@ class Repo:
                 "head": f"{owner}:{branch}",
                 "base": "main",
                 "body": body,
+                "draft": self._draft_proposal(),
             },
         )
         if code == 201 and data.get("html_url"):
@@ -2358,6 +2364,7 @@ class Repo:
                 gh = subprocess.run(
                     [
                         "gh", "pr", "create",
+                        *(["--draft"] if self._draft_proposal() else []),
                         "--head", branch,
                         "--title", pr_title,
                         "--body", pr_body,

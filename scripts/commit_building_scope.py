@@ -46,6 +46,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.provenance_manifest import parse_manifest_ref, sha256_hex, validate as validate_manifest  # noqa: E402
 from scripts.reconstruct_minimal import building_spans  # noqa: E402
 from scripts.texture_check import _building_appearance_sig  # noqa: E402
+from scripts.lifecycle_manifest import validate as validate_lifecycle  # noqa: E402
 
 _BUILDING_ID_VALUE_RE = re.compile(
     rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>"
@@ -55,7 +56,7 @@ _CITY_VALUE_RE = re.compile(
 )
 _TRAILER_RE = re.compile(
     r"^(Building|Building-Added|Building-Deleted|Change-Type|Scope-Municipality"
-    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Corrects):"
+    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Lifecycle-Manifest|Corrects):"
     r"[ \t]*(.+?)[ \t]*$",
     re.MULTILINE,
 )
@@ -88,6 +89,7 @@ class CommitResult:
     identity_from: str = ""
     identity_to: str = ""
     manifest_ref: str = ""
+    lifecycle: dict | None = None
     member_before: bytes | None = None   # manifest-backed normal commits: the building's bytes at the parent
     member_after: bytes | None = None    # ... and at the commit (kept so the PR-level check need not re-read blobs)
 
@@ -222,11 +224,15 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
     change_type = change_types[-1].lower() if change_types else ""
     result.change_type = change_type
     identities = _all_identity_trailers(trailers)
+    if trailers.get('Lifecycle-Manifest') and change_type != 'lifecycle':
+        result.errors.append('Lifecycle-Manifest requires Change-Type: lifecycle.')
 
     if len(change_types) > 1:
         result.errors.append("Specify exactly one Change-Type trailer.")
 
     if not paths:
+        if change_type == 'lifecycle':
+            result.errors.append('A lifecycle commit must change CityGML buildings.')
         if identities:
             result.errors.append("A commit without CityGML changes has a building-ID trailer.")
         if change_type in IDENTITY_KINDS:
@@ -376,10 +382,56 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
     if change_type == "lifecycle":
         if not (result.added_ids or result.deleted_ids):
             result.errors.append("Commit is lifecycle, but no buildings were added or deleted.")
-        if set(identities) != result.changed_ids or len(identities) != len(set(identities)):
-            result.errors.append(
-                "The lifecycle Building-Added/Deleted trailers do not match the actually changed buildingID set."
-            )
+        for key, expected in [('Building-Added', result.added_ids), ('Building-Deleted', result.deleted_ids),
+                              ('Building', result.changed_ids - result.added_ids - result.deleted_ids)]:
+            values = trailers.get(key, [])
+            if set(values) != expected or len(values) != len(set(values)):
+                result.errors.append(f'{key} trailers do not match the actual lifecycle change in that category.')
+        refs = trailers.get('Lifecycle-Manifest', [])
+        ref = parse_manifest_ref(refs[0]) if len(refs) == 1 else None
+        if ref is None or not re.fullmatch(r'provenance/lifecycle/[A-Za-z0-9][A-Za-z0-9._-]*\.json', ref[0]):
+            result.errors.append('Exactly one Lifecycle-Manifest: provenance/lifecycle/<event>.json@sha256:<hex> is required.')
+            return result
+        raw = _blob(repo, sha, ref[0])
+        changed_records = str(_git(repo, 'diff', '--name-only', parent, sha, '--', 'provenance/lifecycle/')).splitlines()
+        if changed_records != [ref[0]]:
+            result.errors.append('A lifecycle commit records exactly its referenced event; do not change other lifecycle records.')
+        if raw is None or sha256_hex(raw) != ref[1]:
+            result.errors.append('Lifecycle manifest is missing or does not match its SHA-256 digest.')
+            return result
+        try:
+            manifest = json.loads(raw)
+        except ValueError:
+            result.errors.append('Lifecycle manifest is not JSON.')
+            return result
+        problems = validate_lifecycle(manifest)
+        if problems:
+            result.errors.extend(problems)
+            return result
+        result.lifecycle = manifest
+        before, after = set(manifest['oldIds']), set(manifest['newIds'])
+        if not before <= old_ids or not after <= new_ids:
+            result.errors.append('Lifecycle old/new IDs must exist on their respective side of the changed GML.')
+        if before - after != result.deleted_ids or after - before != result.added_ids:
+            result.errors.append('Lifecycle old/new relation does not match the actual added/deleted IDs.')
+        if not result.changed_ids <= before | after:
+            result.errors.append('A building outside this lifecycle event was modified.')
+        if trailers.get('Provenance-Manifest') or trailers.get('Building-ID-From') or trailers.get('Building-ID-To'):
+            result.errors.append('Do not mix lifecycle with bulk conversion or identity correction trailers.')
+        prior_paths = str(_git(repo, 'ls-tree', '-r', '--name-only', parent)).splitlines()
+        for path in prior_paths:
+            if re.fullmatch(r'provenance/lifecycle/[A-Za-z0-9][A-Za-z0-9._-]*\.json', path):
+                try:
+                    previous = json.loads(_blob(repo, parent, path) or b'null')
+                except ValueError:
+                    continue
+                if isinstance(previous, dict) and previous.get('eventId') == manifest['eventId']:
+                    result.errors.append('This lifecycle eventId is already recorded; use a separate correction proposal.')
+                    break
+        for side, ids, commit in [('old', before, parent), ('new', after, sha)]:
+            all_ids = _repository_building_ids(repo, commit)
+            if any(len(all_ids.get(stable, [])) != 1 for stable in ids):
+                result.errors.append(f'Lifecycle {side} IDs must be unique across the repository.')
         return result
 
     if len(result.changed_ids) != 1:
@@ -426,6 +478,15 @@ def inspect_range(repo: Path, base_sha: str, head_sha: str) -> list[CommitResult
         _git(repo, "rev-list", "--reverse", "--topo-order", f"{base_sha}..{head_sha}")
     ).splitlines()
     results = [inspect_commit(repo, sha) for sha in commits if sha]
+    lifecycle = [item for item in results if item.change_type == 'lifecycle']
+    if lifecycle and len(results) != 1:
+        for item in lifecycle:
+            item.errors.append('One lifecycle event requires one dedicated commit and PR; do not mix other commits.')
+    if not lifecycle:
+        ordinary = [r for r in results if not r.manifest_ref and r.change_type not in
+                    ({'source-baseline', 'layout', 'scope-extract'} | IDENTITY_KINDS)]
+        if any(r.added_ids or r.deleted_ids for r in ordinary) and len(set().union(*(r.changed_ids for r in ordinary))) > 1:
+            ordinary[0].errors.append('Multiple buildings with additions/deletions require a declared lifecycle event or a supported bulk submission.')
     scope_extracts = [item for item in results if item.change_type == "scope-extract"]
     if scope_extracts and len(results) != 1:
         for item in scope_extracts:
@@ -573,6 +634,9 @@ def _inspect_source_update_range(repo: Path, base_sha: str, head_sha: str, resul
         for r in bulk:
             r.errors.append("Provenance manifest violates the schema: " + "; ".join(problems[:3]))
         return
+    if manifest.get("kind") == "semantic-correction":
+        _inspect_semantic_range(repo, base_sha, head_sha, results, manifest, ref_path)
+        return
     if manifest.get("kind") not in ("source-update", "carry-forward"):
         for r in bulk:
             r.errors.append(f"Manifest kind {manifest.get('kind')!r} does not match Building: commits (expected source-update or carry-forward).")
@@ -608,6 +672,50 @@ def _inspect_source_update_range(repo: Path, base_sha: str, head_sha: str, resul
         bulk[0].errors.append(f"The PR applies {len(seen)} of the manifest's {len(targets)} targets (missing e.g. {missing[0]}).")
 
 
+def _inspect_semantic_range(repo, base_sha, head_sha, results, manifest, ref_path):
+    """Exact file-level and per-commit verification of the narrow LOD0 recipe."""
+    from scripts import lod0_semantic_manifest as L
+    try:
+        L.contract(manifest)
+        L.safe_path(ref_path)
+        if not ref_path.startswith('provenance/semantic-correction/'):
+            raise ValueError('Semantic manifest must be under provenance/semantic-correction/')
+        product = manifest['products'][0]['path']
+        if manifest['materials'][0]['uri'] != f'git:{base_sha}:{product}':
+            raise ValueError('Current material must identify the PR base and exact product path')
+        if os.environ.get('GITHUB_REPOSITORY') and manifest['repository'] != os.environ['GITHUB_REPOSITORY']:
+            raise ValueError('Manifest repository differs from the city repository')
+        before = _blob(repo, base_sha, product)
+        if before is None:
+            raise ValueError('Current product missing at PR base')
+        expected = L.reproduce(manifest, before)
+        if _blob(repo, head_sha, product) != expected:
+            raise ValueError('Full PR product differs from the exact semantic transformation')
+        seen = set()
+        for r in results:
+            parents = str(_git(repo, 'show', '-s', '--format=%P', r.sha)).split()
+            if len(parents) != 1:
+                raise ValueError('Linear building commits required')
+            parent = parents[0]
+            changed = set(str(_git(repo, 'diff', '--name-only', '--no-renames', parent, r.sha)).splitlines())
+            if not changed <= {product, ref_path}:
+                raise ValueError('Semantic PR changes a file outside its product and manifest')
+            if r.change_type or len(r.changed_ids) != 1 or not r.manifest_ref:
+                raise ValueError('Each semantic commit must be a manifest-backed single Building change')
+            stable = next(iter(r.changed_ids))
+            if stable in seen or stable not in manifest['evidence']['targets']:
+                raise ValueError('Repeated or unlisted semantic target')
+            seen.add(stable)
+            raw = _blob(repo, parent, product)
+            out, _ = L.transform(raw, manifest['scope']['municipality'], [stable])
+            if _blob(repo, r.sha, product) != out:
+                raise ValueError('Commit changes bytes beyond the declared building property names')
+        if seen != set(manifest['evidence']['targets']):
+            raise ValueError('Semantic PR must apply every declared target exactly once')
+    except (ValueError, KeyError, TypeError, RuntimeError, L.etree.XMLSyntaxError, L.expat.ExpatError) as exc:
+        results[0].errors.append('Semantic correction: ' + str(exc))
+
+
 def render(results: list[CommitResult]) -> str:
     lines = ["1 commit = 1 buildingID gate"]
     bulk_ok = [r for r in results if (r.change_type in IDENTITY_KINDS or r.manifest_ref) and r.ok]
@@ -623,6 +731,9 @@ def render(results: list[CommitResult]) -> str:
                 ids = f"{result.change_type}: {result.identity_from} -> {result.identity_to}"
             elif result.change_type == "scope-extract":
                 ids = f"scope-extract: deleted={len(result.deleted_ids)}"
+            elif result.lifecycle:
+                event = result.lifecycle
+                ids = f"lifecycle {event['kind']} ({event['eventId']}): {', '.join(event['oldIds'])} -> {', '.join(event['newIds'])}"
             else:
                 sorted_ids = sorted(result.changed_ids)
                 ids = ", ".join(sorted_ids[:10]) or "no semantic building change"
@@ -642,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=REPO_ROOT)
     parser.add_argument("--base-sha", required=True)
     parser.add_argument("--head-sha", required=True)
+    parser.add_argument('--json-output', type=Path)
     args = parser.parse_args(argv)
 
     try:
@@ -650,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
     sys.stdout.write(render(results))
+    if args.json_output:
+        args.json_output.write_text(json.dumps({'lifecycle': [r.lifecycle for r in results if r.lifecycle]}, ensure_ascii=False), encoding='utf-8')
     return 1 if any(not result.ok for result in results) else 0
 
 

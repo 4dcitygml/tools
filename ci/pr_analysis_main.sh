@@ -105,11 +105,12 @@ set +e
     --repo "$WORKSPACE" \
     --base-sha "$BASE_SHA" \
     --head-sha "$HEAD_SHA" \
+    --json-output "${RUNNER_TEMP:-/tmp}/citygml_commit_scope.json" \
     > /tmp/commit-scope.txt 2>&1
   rc=$?
   {
     echo "<!-- citygml-commit-scope -->"
-    echo "## 🧱 1 commit = 1 buildingID check"
+    echo "## 🧱 Building / lifecycle event scope check"
     echo ""
     if [ "$rc" = "0" ]; then
       echo "✅ All commits in this PR passed."
@@ -228,6 +229,13 @@ if [ "$BULK_ENABLED" = "true" ]; then
       identity-baseline|identity-correction) tool="identity_manifest.py" ;;
       source-update) tool="source_update_manifest.py" ;;
       carry-forward) tool="carry_forward_manifest.py" ;;
+      semantic-correction)
+        tool="lod0_semantic_manifest.py"
+        # Validate paths, material names and recipe before fetching any input.
+        # The recipe must run at the trusted tooling commit that generated it.
+        actual="$(git -C "$TOOLS_DIR" rev-parse HEAD)"
+        "$PY" "$TOOLS_DIR/scripts/$tool" check --manifest "$manifest" --ci --tools-commit "$actual"
+        ;;
       *) echo "::error::No reproduction tool for manifest kind '$kind'"; exit 1 ;;
     esac
     materials="${RUNNER_TEMP:-/tmp}/citygml-materials"
@@ -405,13 +413,14 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
     if [ -n "$churn" ]; then
       echo "::notice::Formatting-only diff (churn) detected. Current CI only notifies; it neither auto-applies nor blocks. Apply the minimal-diff version manually with reconstruct_minimal.py. Files:${churn}"
     fi
-    # Even if the PR as a whole touches multiple buildings, it is allowed when each commit is single-building (already verified by the commit scope gate).
-    if [ "$CLASS" = "multi-modified" ]; then
-      echo "::notice::The PR as a whole changes multiple buildings (${M}). The one-buildingID-per-commit constraint is verified by the commit scope gate."
+    if [ "$CLASS" = "multi-modified" ] && [ "${BULK_ENABLED:-false}" != "true" ]; then
+      echo "::error::An ordinary PR changes ${M} buildings. Submit one PR per building, or a supported reproducible bulk submission with a provenance manifest."
+      exit 1
     fi
     # C: lifecycle changes require a stated reason and human review (the reason-field mechanism will be settled in the pilot).
     if [ "$CLASS" = "lifecycle" ]; then
-      echo "::notice::Lifecycle change (merge/split/rebuild etc.). Stating the reason and human review are required (the reason-field mechanism will be settled in the pilot)."
+      # Commit-scope already requires an explicit event for multiple additions/deletions.
+      echo "::notice::CI checks the declared old/new IDs and event record. The city must judge the real-world relationship and supporting evidence."
     fi
   )
   [ $? -eq 0 ] && record QUALITY_OUTCOME success || record QUALITY_OUTCOME failure

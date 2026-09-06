@@ -230,6 +230,10 @@
   <aside>
     <div class="sideHead"><h2 data-i18n="review.building_list">Buildings</h2><button id="reload" data-i18n="review.reload">Refresh</button></div>
     <p class="queueNote" data-i18n="review.queue_note">Only proposals awaiting the reviewer are shown at the top. Everything else is grouped, with reasons, under "Waiting for the proposer".</p>
+    <label for="approvalFilter" data-i18n="review.filter_label">Remaining approvals</label>
+    <select id="approvalFilter" style="width:100%;margin:6px 0" aria-describedby="approvalFilterNote"><option value="all">All</option></select>
+    <p class="queueNote" id="approvalFilterNote" data-i18n="review.filter_note">Saved for this account and repository in this browser. This changes the view, not approval permissions.</p>
+    <p class="queueNote" id="approvalUnknown" role="status"></p>
     <div class="queue" id="queue"><div class="empty"><span class="spinner"></span> <span data-i18n="review.loading">Loading…</span></div></div>
   </aside>
   <main id="main"><div class="empty" data-i18n="review.select_building">Select a building on the left.</div></main>
@@ -280,14 +284,55 @@ async function api(path, opts) {
   if (!r.ok || j.ok===false) throw new Error(j.error || `HTTP ${r.status}`); return j;
 }
 
-async function loadQueue() {
+function approvalFilterKey(repo, login) {
+  return 'citygml-review-filter:v1:' + repo.toLowerCase() + ':' + login.toLowerCase();
+}
+function validApprovalFilter(value) {
+  return value==='all'||value==='unknown'||/^(0|[1-9][0-9]?)$/.test(value) ? value : 'all';
+}
+function filterApprovalItems(items, value) {
+  if(value==='all') return items;
+  if(value==='unknown') return items.filter(x=>!x.approvals?.known);
+  return items.filter(x=>x.approvals?.known && x.approvals.remaining===Number(value)
+    && ['reviewer_waiting','approval_complete'].includes(x.queueStatus));
+}
+function approvalCountLabel(progress) {
+  return progress?.known ? t('review.approval_count','Approved {approved} / required {required} · {remaining} remaining',progress)
+    : t('review.approval_unknown','Approval count unavailable');
+}
+function setupApprovalFilter() {
+  const key=approvalFilterKey(queueData.nwo,queueData.login);
+  let value='all';
+  try {value=validApprovalFilter(localStorage.getItem(key)||'all');} catch(e) {}
+  const max=Math.min(99, Math.max(4, queueData.approvalPolicy?.required||0, /^\d+$/.test(value)?Number(value):0));
+  $('approvalFilter').innerHTML=`<option value="all">${esc(t('review.filter_all','All PRs'))}</option>`+
+    Array.from({length:max+1},(_,n)=>`<option value="${n}">${esc(t('review.filter_remaining','{n} remaining',{n}))}</option>`).join('')+
+    `<option value="unknown">${esc(t('review.approval_unknown','Approval count unavailable'))}</option>`;
+  $('approvalFilter').value=value;
+  $('approvalFilter').onchange=()=>{
+    try {localStorage.setItem(key,validApprovalFilter($('approvalFilter').value));} catch(e) {}
+    loadQueue(true, validApprovalFilter($('approvalFilter').value));
+  };
+  const unknown=queueData.items.filter(x=>!x.approvals?.known).length;
+  $('approvalUnknown').textContent=unknown?t('review.filter_unknown_notice','Counts are unavailable for {n} PRs. Use All or Approval count unavailable to see them.',{n:unknown}):'';
+  return value;
+}
+async function loadQueue(useCached=false, chosenFilter=null) {
   $('queue').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading','Loading…')+'</div>';
   try {
-    queueData=await api('/api/reviews'+(demo?'?demo=1':''));
+    if(!useCached) queueData=await api('/api/reviews'+(demo?'?demo=1':''));
     $('account').innerHTML=`${t('review.reviewer_label','Reviewer')} <b>@${esc(queueData.login)}</b><br>${queueData.canReview?t('review.can_review','Can approve'):t('review.view_only','View only')}`;
-    let items=[...queueData.items];
+    const saved=setupApprovalFilter();
+    const filter=chosenFilter===null?saved:chosenFilter;
+    $('approvalFilter').value=filter;
+    let items=filterApprovalItems([...queueData.items],filter);
+    if(selected!==null && !items.some(x=>x.number===selected)) {
+      selected=null; current=null; approved=false;
+      $('main').innerHTML='<div class="empty">'+t('review.filter_select','Select a PR matching this filter.')+'</div>';
+      $('actionBar').hidden=true;
+    }
     if (demo) items.sort((a,b)=>(b.example?1:0)-(a.example?1:0));
-    if (!items.length) { $('queue').innerHTML='<div class="empty">'+t('review.queue_empty','Nothing is waiting for approval.')+'</div>'; return; }
+    if (!items.length) { $('queue').innerHTML='<div class="empty">'+t('review.filter_empty','No PRs match this filter. Change the filter or refresh.')+'</div>'; return; }
     const groupBuildings=list=>{
       const grouped=new Map();
       list.forEach(it=>{const id=it.buildingId || t('review.building_id_checking','Confirming the building ID (proposal {n})',{n:it.number});
@@ -304,8 +349,9 @@ async function loadQueue() {
       ${g.proposals.some(x=>x.example)?`<span class="example">${t('review.demo_item','Demo item')}</span>`:''}
       <span class="qstate ${state==='reviewer_waiting'?'ready':'adjusting'}">${state==='reviewer_waiting'?t('review.ci_passed','Automated checks passed'):t('review.awaiting_response','Awaiting response')}</span></div>
       <div class="qtitle">${esc(g.buildingId)}</div><div class="qsummary">${esc(g.latest.title)}</div>
-      ${state==='proposer_waiting'?`<span class="qsource ${esc(g.latest.waitingSource)}">${esc(sourceLabel[g.latest.waitingSource] || t('review.source_attention','Needs attention'))}</span>`:''}
-      ${state==='proposer_waiting'&&g.latest.adjustmentReasons?.length?`<div class="qsummary">${esc(g.latest.adjustmentReasons.join(t('review.reason_sep',', ')))}</div>`:''}
+      ${state!=='reviewer_waiting'?`<span class="qsource ${esc(g.latest.waitingSource)}">${esc(sourceLabel[g.latest.waitingSource] || t('review.source_attention','Needs attention'))}</span>`:''}
+      ${state!=='reviewer_waiting'&&g.latest.adjustmentReasons?.length?`<div class="qsummary">${esc(g.latest.adjustmentReasons.join(t('review.reason_sep',', ')))}</div>`:''}
+      <div class="qsummary">${esc(approvalCountLabel(g.latest.approvals))}</div>
       <div class="qmeta">${t('review.author_label','Proposed by')} @${esc(g.latest.author)}${t('review.meta_sep',' · ')}${ago(g.latest.updated)}</div></button>`).join('');
     const reviewerItems=items.filter(x=>x.queueStatus==='reviewer_waiting');
     const proposerItems=items.filter(x=>x.queueStatus==='proposer_waiting');
@@ -314,6 +360,11 @@ async function loadQueue() {
       ${reviewerBuildings.length?renderBuildings(reviewerBuildings):'<div class="queueEmpty">'+t('review.queue_none','No proposals currently need review.')+'</div>'}
       ${proposerBuildings.length?`<details class="adjustingGroup"><summary>${t('review.proposer_waiting_count','Waiting for the proposer ({n} buildings)',{n:proposerBuildings.length})}</summary>
         <div class="adjustingQueue">${renderBuildings(proposerBuildings,'proposer_waiting')}</div></details>`:''}`;
+    const groups=[['approval_complete',t('review.approval_complete','Required approval count reached')],['checking',t('review.checking_group','Automatic processing')],['system_waiting',t('review.system_waiting','Processing failure — retry needed')]];
+    for (const [state,label] of groups) {
+      const buildings=groupBuildings(items.filter(x=>x.queueStatus===state));
+      if(buildings.length) $('queue').insertAdjacentHTML('beforeend',`<div class="queueSectionTitle">${esc(label)} <span>${buildings.length}</span></div>${renderBuildings(buildings,state)}`);
+    }
     const queueButtons=[...document.querySelectorAll('.queueItem')];
     queueButtons.forEach(b=>b.onclick=()=>selectPr(Number(b.dataset.n)));
     const requestedButton=requestedBuilding
@@ -336,7 +387,7 @@ async function selectPr(number) {
   rememberBuilding(queueData?.items?.find(x=>x.number===number)?.buildingId);
   document.querySelectorAll('.queueItem').forEach(b=>b.classList.toggle('active',Number(b.dataset.n)===number));
   $('main').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading_detail','Loading the proposed changes…')+'</div>';
-  try { current=await api(`/api/reviews/${number}`); rememberBuilding(current.buildingId); renderDetail(); }
+  try { const detail=await api(`/api/reviews/${number}`); if(selected!==number) return; current=detail; rememberBuilding(current.buildingId); renderDetail(); }
   catch(e) { $('main').innerHTML=`<div class="empty">${t('review.load_error','Could not load it.')}<br>${esc(e.message)}</div>`; }
 }
 
@@ -489,6 +540,7 @@ function renderDetail() {
       <h2>${esc(d.buildingId || t('review.building_id_pending','Confirming the building ID'))}</h2></div>
       <a class="techLink" href="${esc(d.url)}" target="_blank" rel="noopener">${t('review.tech_link','Full change record ↗')}</a></div>
     ${renderCheckpoints(d)}
+    ${renderMachineReport(d)}
     <section class="card changeCard"><h3>${t('review.change_scope_title','◎ What changes in this proposal')}</h3>
       <div class="changeMeta"><b>${t('review.proposal_label','This proposal: ')}${esc(d.title)}</b>
         <span>${t('review.author_label','Proposed by')} @${esc(d.author)}${t('review.meta_sep',' · ')}${ago(d.updated)}</span></div>
@@ -504,9 +556,19 @@ function renderDetail() {
     <section class="card"><h3>${t('review.history_heading','🕘 Change history of this building')}</h3>${renderHistory(d)}</section>`;
   if (d.reviewerFeedback) $('main').insertAdjacentHTML('afterbegin',
     '<div class="coordinationNotice reviewer" id="coordinationNotice"><b>'+t('review.awaiting_proposer','Waiting for the proposer')+'</b><br>'+t('review.awaiting_proposer_feedback','Waiting for a reply to the reviewer\'s comment, or for a fix.')+'</div>');
-  else if (!d.inspectionReady) $('main').insertAdjacentHTML('afterbegin',
+  else if (!d.inspectionReady && (!d.operatorExplanation?.required || d.operatorExplanation.reason==='fix')) $('main').insertAdjacentHTML('afterbegin',
     '<div class="coordinationNotice" id="coordinationNotice"><b>'+t('review.awaiting_proposer','Waiting for the proposer')+'</b><br>'+t('review.awaiting_proposer_ci','CI found issues to address. No action is needed from the reviewer.')+'</div>');
   bindCheckpoints(d); bindFeedback(); $('actionBar').hidden=d.reviewerFeedback||!d.inspectionReady; updateApprove();
+}
+function renderMachineReport(d) {
+  const r=d.operatorExplanation;
+  if (!r?.required) return '';
+  const labels={change:t('review.explanation_change','Change'),evidence:t('review.explanation_evidence','Evidence'),checks:t('review.explanation_checks','Checks'),impact:t('review.explanation_impact','Impact'),recommendation:t('review.explanation_recommendation','Recommendation')};
+  return `<section class="card"><h3>${t('review.operator_explanation','CI-generated report')}</h3>
+    ${r.fields?Object.entries(r.fields).map(([key,value])=>`<p><b>${esc(labels[key]||key)}</b><br><span style="white-space:pre-wrap">${esc(value)}</span></p>`).join(''):`<p class="warnBox">${t('hub.blocker_explanation','Waiting for the machine report or operator confirmation')}</p>`}
+    <p>${esc(approvalCountLabel(d.approvals))}</p>
+    <p class="queueNote">${t('review.count_not_merge','Remaining counts approvals only. GitHub also checks CI, Code Owners and other merge conditions.')}</p>
+    </section>`;
 }
 function updateApprove() {
   if (!current || approved) return;

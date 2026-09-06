@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATE = ROOT / "city-template"
 SAMPLES = sorted(ROOT.glob("sample-*-station"))
 MIRRORED = ("pr-analysis.yml", "pr-comment.yml", "pr-recheck.yml", "pr-base-freshness.yml", "history-index.yml",
-            "starter-kit.yml")
+            "starter-kit.yml", "review-report.yml")
 
 
 @unittest.skipUnless(TEMPLATE.is_dir() and SAMPLES, "sibling city repositories not checked out")
@@ -40,7 +40,7 @@ class CityWorkflowContractTest(unittest.TestCase):
 
     def test_posting_workflow_truncates_instead_of_failing_on_long_comments(self) -> None:
         wf = self._wf(TEMPLATE, "pr-comment.yml")
-        self.assertIn('if [ "$size" -gt 60000 ]; then', wf)
+        self.assertIn('[ "$size" -gt 60000 ]; then', wf)
         self.assertIn("head -c 60000", wf)
         self.assertIn("Truncated to fit the GitHub comment size limit", wf)
         self.assertIn('-gt 4194304', wf)  # absurd sizes are still rejected

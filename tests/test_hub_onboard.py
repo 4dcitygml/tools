@@ -511,6 +511,19 @@ class TestSavedOAuthPrCreation(_EnglishEnv):
         attr.github_api = lambda *a, **k: self.fail("must not call API without token")
         self.assertEqual(self.repo._create_pr_api("b", "t", "x"), (None, None))
 
+    def test_production_proposal_uses_standard_review_flow(self):
+        from unittest.mock import patch
+        captured = {}
+        attr.load_hub_token = lambda: "saved-token"
+        def fake_api(path, token, method="GET", payload=None, timeout=30):
+            captured.update(path=path, payload=payload)
+            return 201, {"html_url": "https://github.com/munakata-city/citygml/pull/1"}
+        attr.github_api = fake_api
+        with patch.object(attr, 'upstream_nwo', return_value='munakata-city/citygml'):
+            self.repo._create_pr_api('edit/b-1', 'title', 'body')
+        self.assertFalse(captured['payload']['draft'])
+        self.assertEqual(captured['path'], '/repos/munakata-city/citygml/pulls')
+
     def test_manual_fallback_compares_fork_branch_to_upstream_main(self):
         self.assertEqual(
             self.repo._compare_url("edit/b-1"),
@@ -774,7 +787,9 @@ class TestWindowsBundle(unittest.TestCase):
     def test_release_packages_include_tag_version(self):
         self.assertIn('f"citygml-hub-{version}-windows-full.zip"', self.workflow)
         self.assertIn('f"citygml-hub-{version}-macos.zip"', self.workflow)
-        self.assertIn("needs: [windows, macos-zip]", self.workflow)
+        self.assertIn("needs: [windows, macos-zip, common-tools]", self.workflow)
+        self.assertIn("citygml-tools-${version}-source.zip", self.workflow)
+        self.assertEqual(self.workflow.count("ref: ${{ inputs.release_tag || github.ref }}"), 3)
         self.assertIn("GH_REPO: ${{ github.repository }}", self.workflow)
 
     def test_release_packages_include_admin_review_ui(self):

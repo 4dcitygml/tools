@@ -801,7 +801,7 @@ class TexRepo(attr.Repo):
                 result["prUrl"] = pr_url
             elif _shutil.which("gh"):
                 gh = subprocess.run(
-                    ["gh", "pr", "create", "--head", branch, "--title", pr_title, "--body", pr_body],
+                    ["gh", "pr", "create", *(["--draft"] if self._draft_proposal() else []), "--head", branch, "--title", pr_title, "--body", pr_body],
                     capture_output=True,
                     text=True,
                     cwd=str(self.root),

@@ -10,7 +10,7 @@
 # Contract with the wrapper:
 #   - cwd = city repository checkout; out/ holds the comment bodies so far
 #   - $RUNNER_TEMP/citygml_outcomes.env holds KEY=VALUE lines from the drivers
-#   - STRICT_GATE=1 (practice repositories, set via the CITYGML_STRICT_GATE
+#   - STRICT_GATE=1 (required in production, set via the CITYGML_STRICT_GATE
 #     repository variable) makes this script exit non-zero when any check is
 #     "❌ Needs attention", so the job conclusion becomes a real merge gate for
 #     branch protection / auto-merge. Default (unset) keeps the original
@@ -90,7 +90,7 @@ def result(outcome, applicable=True, warning_path=None):
         return "fail"
     if outcome == "success":
         return "pass"
-    if outcome in ("failure", "skipped", "cancelled") or not outcome:
+    if outcome == "failure":
         return "fail"
     return "pending"
 
@@ -161,10 +161,35 @@ inspection += ["", "<sub>" + T(
     "In the review screen, pass is green, not applicable is gray,"
     " and unresolved is red.") + "</sub>"]
 Path("out/inspection.md").write_text("\n".join(inspection) + "\n", encoding="utf-8")
+# Structured evidence for the trusted report publisher (never infer status from emoji).
+scope_json = Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'citygml_commit_scope.json'
+scope_record = json.loads(scope_json.read_text()) if scope_json.is_file() else {}
+Path("out/inspection.json").write_text(json.dumps({
+    "version": 1, "pr": pr.get("number"),
+    "context": {"head": pr.get("head", {}).get("sha"), "base": pr.get("base", {}).get("sha"),
+                "title": pr.get("title") or "", "body": pr.get("body") or "",
+                "labels": sorted(x["name"] for x in pr.get("labels", []) if x["name"] != "city-review")},
+    "lang": json.loads(Path("4dcitygml.json").read_text()).get("lang", "en") if Path("4dcitygml.json").is_file() else "en",
+    "checks": [{"key": key, "label": name, "status": state} for key, name, state in rows],
+    "outcomes": {k: v for k, v in os.environ.items() if k.endswith("_OUTCOME")},
+    "hasGml": has_gml, "bulk": bulk, "scopeExtract": scope_extract,
+    "lifecycle": scope_record.get('lifecycle', []),
+    "toolsRef": os.environ.get("CITYGML_TOOLS_REF", ""),
+}, ensure_ascii=False), encoding="utf-8")
+
 
 failed = [(key, name) for key, name, state in rows if state == "fail"]
+incomplete = [(key, name) for key, name, state in rows if state == "pending"]
 resubmit = ["<!-- citygml-auto-resubmission -->"]
-if failed:
+if incomplete:
+    resubmit += [
+        "<!-- status:pending -->",
+        "## " + T("ci.incomplete_heading", "Automated inspection is incomplete"),
+        "", T("ci.incomplete_body", "Some checks did not finish. Retry the failed process before deciding whether the proposer must fix the data. No operator transcription is required."),
+        "",
+    ]
+    resubmit += [f"- {name}" for _, name in incomplete]
+elif failed:
     resubmit += [
         "<!-- status:active -->",
         "## 💬 " + T("ci.resubmit_heading",
@@ -196,11 +221,11 @@ if failed:
     print("Items to confirm were collected into a comment. The PR itself remains accepted.")
 PY
 
-# Practice-repository merge gate (policy §2/§3): with STRICT_GATE=1, any
-# "❌ Needs attention" row turns the job red so branch protection blocks
+# Production merge gate (also used in practice): with STRICT_GATE=1, any
+# failed or incomplete row turns the job red so branch protection blocks
 # auto-merge until the submitter fixes and resubmits. The comment bodies above
 # are already written and will still be uploaded/posted (wrapper uses always()).
-if [ "${STRICT_GATE:-}" = "1" ] && grep -q "❌" out/inspection.md; then
+if [ "${STRICT_GATE:-}" = "1" ] && "$PY" -c 'import json,sys; sys.exit(0 if any(r["status"] not in ("pass","na") for r in json.load(open("out/inspection.json"))["checks"]) else 1)'; then
   echo "::error::STRICT_GATE: some checks need attention; failing the job so auto-merge stays blocked (see the inspection comment)."
   exit 1
 fi
