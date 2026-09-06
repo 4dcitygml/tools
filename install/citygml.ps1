@@ -71,7 +71,7 @@ function Install-Latest {
   $want = "citygml-hub-" + $tag.Substring(4) + "-windows-full.zip"
   $asset = $best.assets | Where-Object { $_.name -eq $want } | Select-Object -First 1
   if (-not $asset) { throw "Asset $want is missing in $tag." }
-  if (-not ($asset.digest -like "sha256:*")) { throw "$want: GitHub published no sha256 digest." }
+  if (-not ($asset.digest -like "sha256:*")) { throw "${want}: GitHub published no sha256 digest." }
   $sha = $asset.digest.Substring(7).ToLowerInvariant()
   Write-Host "Downloading the editing tools ($tag) …"
   $tmp = Join-Path $env:TEMP "citygml-hub-download.zip"
