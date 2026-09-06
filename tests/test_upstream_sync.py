@@ -106,7 +106,7 @@ class _SyncFixture(unittest.TestCase):
         self.clone = clone_of(self.up, base)
         self._saved = [(m, m.upstream_url) for m in self.modules]
         for m in self.modules:
-            m.upstream_url = lambda root=None, _u=self.up: str(_u)
+            m.upstream_url = lambda root=None, _u=self.up, **_kw: str(_u)
 
     def tearDown(self):
         for m, fn in self._saved:
@@ -164,7 +164,7 @@ class TestStartupSync(_SyncFixture):
     def test_unreachable_upstream_is_silent(self):
         attr_url, hub_url = attr.upstream_url, hub.upstream_url
         for m in self.modules:
-            m.upstream_url = lambda root=None: str(Path(self.temp.name) / "nope")
+            m.upstream_url = lambda root=None, **_kw: str(Path(self.temp.name) / "nope")
         try:
             before = git(self.clone, "rev-parse", "main")
             for m in self.modules:
@@ -243,7 +243,7 @@ class TestPrBranchBase(_SyncFixture):
     def test_offline_falls_back_to_local_head(self):
         head = git(self.clone, "rev-parse", "HEAD")
         for m in self.modules:
-            m.upstream_url = lambda root=None: str(Path(self.temp.name) / "nope")
+            m.upstream_url = lambda root=None, **_kw: str(Path(self.temp.name) / "nope")
         result = self.repo.create_pr(self.payload)
         self.assertTrue(result["ok"])
         self.assertEqual(git(self.clone, "rev-parse", f"{result['branch']}~1"), head)

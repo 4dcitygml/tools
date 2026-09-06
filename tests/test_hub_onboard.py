@@ -705,10 +705,15 @@ class TestEntranceOsMismatch(unittest.TestCase):
         # keeps an escape hatch for misdetection (user can still proceed to the instructions)
         self.assertIn("Instructions for Mac (", self.html)
 
-    def test_release_wf_injects_both_os(self):
+    def test_release_zip_is_an_installer_payload(self):
+        # hub-v1.2.0: the entrance page and the top-level launchers are no longer bundled;
+        # the zip holds program/ only and carries the per-user launchers for the installer.
         wf = (REPO_ROOT / ".github" / "workflows" / "release-hub.yml").read_text(encoding="utf-8")
-        self.assertIn('replace("%%BUNDLE_OS%%", "win")', wf)
-        self.assertIn('sub=("%%BUNDLE_OS%%", "mac")', wf)
+        self.assertNotIn("%%BUNDLE_OS%%", wf)
+        self.assertNotIn('f"{ROOT}/READ-ME-FIRST.html"', wf)
+        self.assertIn('allowed_top = {"program"}', wf)
+        for name in ("citygml.sh", "citygml.ps1", "git_sync.py", "shortcuts.py", "pr_classification.py"):
+            self.assertIn(f'f"{{LIB}}/{name}"', wf, name)
 
     def test_mac_steps_cover_tcc_dialog(self):
         # Folder-access confirmation (TCC) screen (#95). Beginner testing reported it

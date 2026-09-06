@@ -69,10 +69,13 @@ def example_pr(number=123):
 def fake_github_api(path, token, method="GET", payload=None, timeout=30):
     if "/collaborators/" in path:
         return 200, {"permission": "push"}
-    if path.endswith("/pulls?state=open&sort=updated&direction=desc&per_page=50"):
+    if path.endswith("/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1"):
         return 200, [example_pr()]
     if path.endswith("/pulls/123"):
         return 200, example_pr()
+    if path.endswith("/pulls/123/commits?per_page=100"):
+        return 200, [{"sha": "abc123", "commit": {
+            "message": "Update attributes (Storeys Above Ground): 2 → 3\n\nBuilding: 13101-bldg-1\n"}}]
     if path.endswith("/pulls/123/files?per_page=100"):
         return 200, [{
             "filename": "city/udx/bldg/53394611_bldg_6697_op.gml",
@@ -100,6 +103,10 @@ class TestReviewParsers(_EnglishEnv):
         self.assertEqual(hub.review_kind(example_pr()), "attribute")
         tex = example_pr()
         tex["title"] = "テクスチャ更新(2面): 13101-bldg-1"
+        # Exchange Contract A5: the branch prefix wins over the title …
+        self.assertEqual(hub.review_kind(tex), "attribute")
+        # … and the title decides only when the branch carries no prefix.
+        tex["head"]["ref"] = "feature/x"
         self.assertEqual(hub.review_kind(tex), "texture")
 
     def test_markdown_change_table(self):
@@ -176,7 +183,7 @@ class TestReviewParsers(_EnglishEnv):
         self.assertEqual(
             [p["label"] for p in points],
             [
-                "Description and evidence", "One change = one building",
+                "Description and evidence", "Change classification", "One change = one building",
                 "Consistency with the latest version", "Changed file scope",
                 "CityGML format", "Minimal diff", "Texture consistency",
                 "Geometric structure", "Attribute value plausibility",

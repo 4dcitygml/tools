@@ -14,14 +14,13 @@
 # Both zips bundle LICENSE / NOTICE / THIRD_PARTY_NOTICES.md, and the archive contents
 # (entry points, licenses, layout) are asserted per OS before upload.
 #
-# Zip layout (avoiding the #86 dropout): only these three items are visible at the top of the
-# extracted folder:
-#   READ-ME-FIRST.html / start-windows.bat|.command / program/
-# Everything "meaningless to the user" — index/review.html, .py, .bat, preset.json,
-# PortableGit, PythonPortable, license files — is hidden inside program/
-# (app.py's BUNDLE_DIRS also searches there).
-# The editors themselves (attr/tex) are not embedded in the launcher; they are supplied from
-# the clone (this launcher runs in-clone code via importlib with --serve-tool).
+# Zip layout (hub-v1.2.0): the zip is the payload of the one-line installer
+# (install/citygml.sh | citygml.ps1), not a user-facing download. The only top-level
+# item is program/; the installer unpacks it into citygml-tools/citygml-hub/<tag>/ and
+# starts program/hub.py. program/ also carries the editors, language and theme packs,
+# the shared modules (git_sync.py, shortcuts.py, pr_classification.py) and the per-user
+# launchers (citygml.sh / citygml.ps1) that the installer copies into place.
+# Cities distribute no code: nothing is ever loaded from a city clone.
 # The data itself is not needed, so only tools/hub is fetched via blob:none + sparse-checkout.
 #
 # Note: the embeddable package ships a python314._pth (site disabled, isolated sys.path).
@@ -69,6 +68,10 @@ jobs:
             tools/tex_editor
             tools/i18n
             tools/themes
+            scripts/pr_classification.py
+            tools/git_sync.py
+            tools/shortcuts.py
+            install
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
         working-directory: tools/hub
@@ -155,20 +158,22 @@ jobs:
 
           repo_root = pathlib.Path("../../..")
           with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
-              # Only these two files are visible at the top level. Embed a "this zip is
-              # for Windows" marker in the entrance page (guides the user before the
-              # steps when opened on the wrong OS, #94)
-              entrance = pathlib.Path("../getting-started.html").read_text(encoding="utf-8")
-              z.writestr(f"{ROOT}/READ-ME-FIRST.html",
-                         entrance.replace("%%BUNDLE_OS%%", "win"))
-              # The launcher doubles as the in-program fallback (dual-layout aware)
-              z.write("../packaging/start-windows.bat", f"{ROOT}/start-windows.bat")
-              # Everything below is hidden in program/
+              # hub-v1.2.0: the zip is the installer's payload, not a user-facing download.
+              # The one-line installer (install/citygml.ps1) unpacks it into
+              # citygml-tools/citygml-hub/<tag>/ and starts program/hub.py; nothing is
+              # meant to be double-clicked inside. Only program/ exists at the top level.
               z.write("../app.py", f"{LIB}/hub.py")
               z.write("../index.html", f"{LIB}/index.html")
               z.write("../review.html", f"{LIB}/review.html")
               z.write("../packaging/start-windows.bat", f"{LIB}/start-windows.bat")
               z.write("../preset.json", f"{LIB}/preset.json")
+              # The A5 classification table shared with CI (hub-v1.2.0)
+              z.write(repo_root / "scripts" / "pr_classification.py", f"{LIB}/pr_classification.py")
+              # Shared sync/shortcut modules and the per-user launchers (hub-v1.2.0)
+              z.write(repo_root / "tools" / "git_sync.py", f"{LIB}/git_sync.py")
+              z.write(repo_root / "tools" / "shortcuts.py", f"{LIB}/shortcuts.py")
+              z.write(repo_root / "install" / "citygml.sh", f"{LIB}/citygml.sh")
+              z.write(repo_root / "install" / "citygml.ps1", f"{LIB}/citygml.ps1")
               z.write(repo_root / "LICENSE", f"{LIB}/LICENSE")
               z.write(repo_root / "NOTICE", f"{LIB}/NOTICE")
               z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
@@ -205,10 +210,13 @@ jobs:
           ROOT = "citygml-hub"
           LIB = f"{ROOT}/program"
           required = [
-              f"{ROOT}/READ-ME-FIRST.html",
-              f"{ROOT}/start-windows.bat",
               f"{LIB}/hub.py",
               f"{LIB}/start-windows.bat",
+              f"{LIB}/citygml.ps1",
+              f"{LIB}/citygml.sh",
+              f"{LIB}/git_sync.py",
+              f"{LIB}/shortcuts.py",
+              f"{LIB}/pr_classification.py",
               f"{LIB}/index.html",
               f"{LIB}/review.html",
               f"{LIB}/preset.json",
@@ -231,7 +239,7 @@ jobs:
           if missing:
               raise RuntimeError(f"Distribution zip missing required files: {missing}")
           top = {n.split("/", 2)[1] for n in names if n.startswith(f"{ROOT}/")}
-          allowed_top = {"READ-ME-FIRST.html", "start-windows.bat", "program"}
+          allowed_top = {"program"}
           if top - allowed_top:
               raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - allowed_top}")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
@@ -314,6 +322,35 @@ jobs:
         with:
           name: hub-windows
           path: tools/hub/dist/citygml-hub-*-windows-full.zip
+      - name: Test the Windows installer (install/citygml.ps1) against the built zip
+        # Runs the per-user launcher the way a resident's PowerShell 5.1 would, with the
+        # test hooks pointing at this build instead of the GitHub API / download:
+        # first run installs into a versioned folder, second run starts it without network.
+        shell: powershell
+        working-directory: tools/hub/dist
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Get-ChildItem -Filter "citygml-hub-*-windows-full.zip" | Select-Object -First 1
+          if (-not $zip) { throw "built zip not found" }
+          $ver = $zip.Name -replace '^citygml-hub-(.*)-windows-full\.zip$', '$1'
+          $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $rel = @(@{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
+                      assets = @(@{ name = $zip.Name; browser_download_url = "u"; digest = "sha256:$sha" }) })
+          $json = Join-Path $env:RUNNER_TEMP "releases.json"
+          $rel | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 $json
+          $env:CITYGML_TOOLS_DIR = Join-Path $env:RUNNER_TEMP "citygml-tools"
+          $env:CITYGML_RELEASES_JSON = $json
+          $env:CITYGML_ASSET_FILE = $zip.FullName
+          $env:CITYGML_NO_EXEC = "1"
+          $script = Resolve-Path "..\..\..\install\citygml.ps1"
+          $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script "4dcitygml/sample-newyork-station" 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0 -or $out -notmatch "EXEC hub-$ver 4dcitygml/sample-newyork-station") { throw "installer first run failed" }
+          if (-not (Test-Path (Join-Path $env:CITYGML_TOOLS_DIR "citygml-hub\hub-$ver\program\PythonPortable\python.exe"))) { throw "installed layout missing bundled Python" }
+          Remove-Item Env:CITYGML_RELEASES_JSON; Remove-Item Env:CITYGML_ASSET_FILE
+          $out2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $script "4dcitygml/sample-newyork-station" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $out2 -notmatch "EXEC hub-$ver") { Write-Host $out2; throw "installer second run (no network) failed" }
+          Write-Host "installer OK: first run installed hub-$ver, second run started it without network"
       - name: Upload Windows package directly to requested Release
         if: inputs.release_tag != ''
         shell: bash
@@ -328,7 +365,7 @@ jobs:
 
   macos-zip:
     # M1: a zip that bundles no binaries and uses the CLT python3 + git (no signing needed).
-    # start-mac.command is stored with the execute bit set (for double-click launch).
+    # program/citygml.sh is stored with the execute bit set (the installer copies it into place).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -340,6 +377,10 @@ jobs:
             tools/tex_editor
             tools/i18n
             tools/themes
+            scripts/pr_classification.py
+            tools/git_sync.py
+            tools/shortcuts.py
+            install
       - name: Assemble macOS zip
         # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
         # names, so build with Python's zipfile (non-ASCII names always get EFS).
@@ -368,15 +409,18 @@ jobs:
           version = ref.removeprefix("hub-") if ref.startswith("hub-v") else "dev"
           artifact = f"citygml-hub-{version}-macos.zip"
           with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
-              # Only these two are visible at the top level
-              add(z, f"{base}/getting-started.html", f"{ROOT}/READ-ME-FIRST.html",
-                  sub=("%%BUNDLE_OS%%", "mac"))
-              add(z, f"{base}/packaging/start-mac.command", f"{ROOT}/start-mac.command", 0o755)
-              # The full body is hidden in program/ (the .command looks in the adjacent program/)
+              # hub-v1.2.0: installer payload only (see the Windows step); program/ is the
+              # sole top-level item. The per-user launcher program/citygml.sh keeps its
+              # execute bit so the installer can copy it into place as is.
               add(z, f"{base}/app.py", f"{LIB}/hub.py")
               add(z, f"{base}/index.html", f"{LIB}/index.html")
               add(z, f"{base}/review.html", f"{LIB}/review.html")
               add(z, f"{base}/preset.json", f"{LIB}/preset.json")
+              add(z, "scripts/pr_classification.py", f"{LIB}/pr_classification.py")
+              add(z, "tools/git_sync.py", f"{LIB}/git_sync.py")
+              add(z, "tools/shortcuts.py", f"{LIB}/shortcuts.py")
+              add(z, "install/citygml.sh", f"{LIB}/citygml.sh", 0o755)
+              add(z, "install/citygml.ps1", f"{LIB}/citygml.ps1")
               add(z, "LICENSE", f"{LIB}/LICENSE")
               add(z, "NOTICE", f"{LIB}/NOTICE")
               add(z, "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
@@ -401,9 +445,12 @@ jobs:
           ROOT = "citygml-hub"
           LIB = f"{ROOT}/program"
           required = [
-              f"{ROOT}/READ-ME-FIRST.html",
-              f"{ROOT}/start-mac.command",
               f"{LIB}/hub.py",
+              f"{LIB}/citygml.sh",
+              f"{LIB}/citygml.ps1",
+              f"{LIB}/git_sync.py",
+              f"{LIB}/shortcuts.py",
+              f"{LIB}/pr_classification.py",
               f"{LIB}/index.html",
               f"{LIB}/review.html",
               f"{LIB}/preset.json",
@@ -421,9 +468,12 @@ jobs:
           missing = [n for n in required if n not in names]
           if missing:
               raise RuntimeError(f"Distribution zip missing required files: {missing}")
-          info = zf.getinfo(f"{ROOT}/start-mac.command")
+          info = zf.getinfo(f"{LIB}/citygml.sh")
           if not (info.external_attr >> 16) & 0o100:
-              raise RuntimeError("start-mac.command does not have execute bit")
+              raise RuntimeError("program/citygml.sh does not have execute bit")
+          top = {n.split("/", 2)[1] for n in names if n.startswith(f"{ROOT}/")}
+          if top - {"program"}:
+              raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - {'program'}}")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
           print(f"{artifacts[0].name} sha256={digest}")
       - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
@@ -458,6 +508,31 @@ jobs:
         with:
           name: hub-macos
           path: citygml-hub-*-macos.zip
+      - name: Test the macOS installer (install/citygml.sh) against the built zip
+        # Same idea as the Windows step: the per-user launcher with the test hooks
+        # (fake releases payload + local asset) — first run installs, second run needs no network.
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="$(ls citygml-hub-*-macos.zip | head -n 1)"
+          ver="${zip#citygml-hub-}"; ver="${ver%-macos.zip}"
+          sha="$(sha256sum "$zip" | cut -d' ' -f1)"
+          python3 - "$zip" "$ver" "$sha" > "$RUNNER_TEMP/releases.json" <<'PY'
+          import json, sys
+          zip_name, ver, sha = sys.argv[1:]
+          print(json.dumps([{"tag_name": f"hub-{ver}", "draft": False, "prerelease": False, "html_url": "x",
+                             "assets": [{"name": zip_name, "browser_download_url": "u", "digest": f"sha256:{sha}"}]}]))
+          PY
+          export CITYGML_TOOLS_DIR="$RUNNER_TEMP/citygml-tools" CITYGML_RELEASES_JSON="$RUNNER_TEMP/releases.json" \
+                 CITYGML_ASSET_FILE="$PWD/$zip" CITYGML_NO_EXEC=1
+          out="$(bash install/citygml.sh 4dcitygml/sample-newyork-station)"
+          echo "$out"; grep -q "EXEC hub-$ver 4dcitygml/sample-newyork-station" <<<"$out"
+          test -f "$CITYGML_TOOLS_DIR/citygml-hub/hub-$ver/program/hub.py"
+          test -x "$CITYGML_TOOLS_DIR/citygml-hub/hub-$ver/program/citygml.sh"
+          unset CITYGML_RELEASES_JSON CITYGML_ASSET_FILE
+          out2="$(bash install/citygml.sh 4dcitygml/sample-newyork-station)"
+          grep -q "EXEC hub-$ver" <<<"$out2"
+          echo "installer OK: first run installed hub-$ver, second run started it without network"
       - name: Upload macOS package directly to requested Release
         if: inputs.release_tag != ''
         shell: bash
@@ -491,7 +566,7 @@ jobs:
           test -f "$windows"
           test -f "$macos"
           {
-            echo "citygml-hub (launcher). For Windows: citygml-hub-${version}-windows-full.zip (Python and git bundled, no installation needed), for macOS: citygml-hub-${version}-macos.zip (no binaries, runs on CLT python3/git). After extraction, open 'READ-ME-FIRST.html'."
+            echo "Install or update with the one-line command in your city's README (install/citygml.sh or citygml.ps1 from the install-v1 tag of 4dcitygml/tools); the hub also offers this version from its update banner. The zips below are the installer's payload: citygml-hub-${version}-windows-full.zip (Python and Git bundled) and citygml-hub-${version}-macos.zip (runs on the Command Line Tools python3/git). SHA-256 digests are published by GitHub on each asset."
             echo
             echo '```'
             (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")

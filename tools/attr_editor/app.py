@@ -28,6 +28,7 @@ The clone location is remembered in ~/.citygml_attr_editor.json.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -390,19 +391,44 @@ def git_base_args(*, net: bool = False) -> list:
     return args
 
 
-FETCH_TIMEOUT = 15  # [s] upstream sync is fail-open: the network must never block startup
+_git_sync_mod = None
+
+
+def git_sync_module():
+    """Shared sync implementation (tools/git_sync.py in the source tree, program/git_sync.py in the bundle)."""
+    global _git_sync_mod
+    if _git_sync_mod is not None:
+        return _git_sync_mod or None
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent / "git_sync.py",):        # tools/attr_editor/.. and program/attr_editor/.. alike
+        if cand.is_file():
+            spec = importlib.util.spec_from_file_location("git_sync", cand)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _git_sync_mod = mod
+            return mod
+    _git_sync_mod = False
+    return None
 
 
 def sync_upstream_main(root) -> "str | None":
     """Bring the machine-managed local main in line with the upstream city repo.
 
-    Local main is a mirror the tools maintain; user edits live only on the
-    branches the tools create, which are never touched here. Fast-forwards when
-    possible, hard-resets when histories diverged (the practice repo rewrites
-    main daily). Skips with a console warning when tracked files are modified,
-    and silently when offline or not a git clone (fail-open).
-    Returns the new main commit when an update happened, else None.
+    Delegates to the shared git_sync module: one cheap ls-remote round trip, then a
+    fetch with git's progress-based abort (no wall-clock cut-off — a large annual
+    update may take minutes and must be allowed to finish). Fail-open: offline or
+    not a clone leaves the data as it is. Returns the new main commit when an
+    update happened, else None.
     """
+    mod = git_sync_module()
+    exe, _ = git_cmd()
+    if mod is None or not exe:
+        return None
+    result = mod.sync_main(Path(root).resolve(), upstream_url(root), git_base_args(net=True), log=print)
+    return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
+
+
+def _legacy_sync_upstream_main(root) -> "str | None":  # pragma: no cover - kept for reference only
     root = Path(root).resolve()
     exe, _ = git_cmd()
     if not exe:
@@ -411,7 +437,7 @@ def sync_upstream_main(root) -> "str | None":
     def run(*args: str, net: bool = False) -> subprocess.CompletedProcess:
         return subprocess.run(
             [*git_base_args(net=net), "-C", str(root), *args],
-            capture_output=True, text=True, timeout=FETCH_TIMEOUT,
+            capture_output=True, text=True, timeout=60,
         )
 
     try:
@@ -1939,19 +1965,14 @@ class Repo:
         return r
 
     def _fetch_upstream_main(self) -> "str | None":
-        """Freshly fetched commit of the upstream city's main (None when offline)."""
-        try:
-            r = subprocess.run(
-                [*git_base_args(net=True), "-C", str(self.root),
-                 "fetch", "--quiet", upstream_url(self.root), "main"],
-                capture_output=True, text=True, timeout=FETCH_TIMEOUT,
-            )
-            if r.returncode != 0:
-                return None
-            head = self._git("rev-parse", "FETCH_HEAD", check=False)
-            return head.stdout.strip() or None
-        except (OSError, subprocess.SubprocessError):
+        """Freshly fetched commit of the upstream city's main (None when offline).
+
+        Runs right before a submission, so it is allowed to take as long as the
+        transfer needs; only a stalled transfer is cut (git_sync's low-speed abort)."""
+        mod = git_sync_module()
+        if mod is None:
             return None
+        return mod.fetch_main(self.root, upstream_url(self.root), git_base_args(net=True), log=print)
 
     def _fresh_pr_base(self, rel: str) -> "str | None":
         """Commit to cut the edit branch from, so the PR base is never stale.
@@ -2400,10 +2421,18 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
+    """Merge cfg into the shared config file.
+
+    The file is shared with the hub, which keeps one clone per city under
+    `cities` (runtime contract): never replace the whole file, only the keys given."""
     try:
-        CONFIG_PATH.write_text(
-            json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # Runtime contract: writers merge and write atomically (temp file + rename), so a
+        # second tool writing at the same moment can never leave a torn or truncated file.
+        current = load_config()
+        current.update(cfg)
+        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + f".tmp{os.getpid()}")
+        tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, CONFIG_PATH)
     except OSError:
         # The clone already finished, so do not fail first-run setup just because the config save failed.
         pass

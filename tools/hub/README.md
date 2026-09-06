@@ -12,7 +12,7 @@ run".
 ## Launch
 
 ```bash
-python3 tools/hub/app.py        # → opens http://localhost:8760
+python3 tools/hub/app.py        # → opens http://localhost:8760 (or the next free port, +2, when another city's hub is running)
 ```
 
 The only dependency is the Python 3.9+ standard library. `gh` (GitHub CLI) is **not
@@ -240,11 +240,11 @@ as hidden.
 
 | File | Role |
 |---|---|
-| `app.py` | Local HTTP server (status, contribution API, child-process launch). Port 8760. In the zip: `program/hub.py`. |
+| `app.py` | Local HTTP server (status, contribution API, child-process launch). Port 8760, stepping by +2 when taken by another city's hub; a hub already serving the same clone is reused. In the zip: `program/hub.py`. |
 | `index.html` | Dashboard UI. In the zip: `program/index.html`. |
 | `review.html` | Maintainer UI for per-building change-history review and approval. |
 | `getting-started.html` | Entrance of the distribution zip (launch-guide wizard). In the zip: `READ-ME-FIRST.html`. |
-| `packaging/start-mac.command` / `.bat` | Launchers for the `.py` version. In the zip: `start-mac.command` (mac) / `program/start-windows.bat` (win). |
+| `packaging/start-mac.command` / `.bat` | Launchers for running from a source checkout. The release zip has no top-level launcher any more (hub-v1.2.0): it is the payload of the one-line installer, which unpacks it into `citygml-tools/citygml-hub/<tag>/` and starts `program/hub.py`; `program/citygml.sh` / `citygml.ps1` are the per-user launchers it copies into place. |
 
 - Each tool starts on its default port (attr_editor=8765 / tex_editor=8766); if already
   listening, it is reused.
