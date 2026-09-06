@@ -333,9 +333,13 @@ jobs:
           $zip = Get-ChildItem -Filter "citygml-hub-*-windows-full.zip" | Select-Object -First 1
           if (-not $zip) { throw "built zip not found" }
           $ver = $zip.Name -replace '^citygml-hub-(.*)-windows-full\.zip$', '$1'
+          # PR builds are versioned "dev"; the installer only accepts hub-vX.Y.Z, so present the
+          # same file under a contract-shaped name (the file on disk is unchanged).
+          if ($ver -notmatch '^v\d+\.\d+\.\d+$') { $ver = "v0.0.0" }
+          $assetName = "citygml-hub-$ver-windows-full.zip"
           $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $rel = @(@{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
-                      assets = @(@{ name = $zip.Name; browser_download_url = "u"; digest = "sha256:$sha" }) })
+                      assets = @(@{ name = $assetName; browser_download_url = "u"; digest = "sha256:$sha" }) })
           $json = Join-Path $env:RUNNER_TEMP "releases.json"
           ConvertTo-Json -InputObject $rel -Depth 5 | Set-Content -Encoding UTF8 $json
           $env:CITYGML_TOOLS_DIR = Join-Path $env:RUNNER_TEMP "citygml-tools"
@@ -518,12 +522,14 @@ jobs:
           set -euo pipefail
           zip="$(ls citygml-hub-*-macos.zip | head -n 1)"
           ver="${zip#citygml-hub-}"; ver="${ver%-macos.zip}"
+          # PR builds are versioned "dev"; present the file under a contract-shaped name.
+          [[ "$ver" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || ver="v0.0.0"
           sha="$(sha256sum "$zip" | cut -d' ' -f1)"
-          python3 - "$zip" "$ver" "$sha" > "$RUNNER_TEMP/releases.json" <<'PY'
+          python3 - "$ver" "$sha" > "$RUNNER_TEMP/releases.json" <<'PY'
           import json, sys
-          zip_name, ver, sha = sys.argv[1:]
+          ver, sha = sys.argv[1:]
           print(json.dumps([{"tag_name": f"hub-{ver}", "draft": False, "prerelease": False, "html_url": "x",
-                             "assets": [{"name": zip_name, "browser_download_url": "u", "digest": f"sha256:{sha}"}]}]))
+                             "assets": [{"name": f"citygml-hub-{ver}-macos.zip", "browser_download_url": "u", "digest": f"sha256:{sha}"}]}]))
           PY
           export CITYGML_TOOLS_DIR="$RUNNER_TEMP/citygml-tools" CITYGML_RELEASES_JSON="$RUNNER_TEMP/releases.json" \
                  CITYGML_ASSET_FILE="$PWD/$zip" CITYGML_NO_EXEC=1
