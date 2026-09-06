@@ -140,6 +140,10 @@
   <div class="who" id="who"></div>
 </header>
 <main>
+  <section id="updateBanner" hidden style="background:#fff8e1;border:1px solid #e6c65a;border-radius:8px;padding:10px 14px;margin-bottom:12px;line-height:1.7">
+    <div id="updateText"></div>
+    <div id="updateActions" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"></div>
+  </section>
   <section id="welcome" hidden>
     <h2 data-i18n="hub.welcome_title">🎉 Ready to go — what to do first</h2>
     <p data-i18n="hub.welcome_body">In the "Tools" section below, first press the green "Launch" button of the Attribute Editor. The editing screen for viewing and fixing buildings opens in a new tab. You can leave this dashboard tab open.</p>
@@ -265,13 +269,64 @@ async function loadStatus() {
     `<div><span class="k">${t('hub.stat_repo', 'Repository')}</span>${esc(s.nwo || s.repo)}</div>` +
     `<div><span class="k">${t('hub.stat_branch', 'Branch')}</span><code>${esc(s.branch)}</code></div>` +
     `<div><span class="k">${t('hub.stat_git_user', 'git user')}</span>${esc(s.gitUser || t('hub.stat_unset', '(not set)'))} &lt;${esc(s.gitEmail || '')}&gt;</div>` +
-    `<div><span class="k">GitHub</span>${g.login ? `✅ ${t('hub.stat_connected_user', 'Connected (@{login})', { login: esc(g.login) })}` : t('hub.stat_disconnected', '⚠ Not connected')}</div>`;
+    `<div><span class="k">GitHub</span>${g.login ? `✅ ${t('hub.stat_connected_user', 'Connected (@{login})', { login: esc(g.login) })}` : t('hub.stat_disconnected', '⚠ Not connected')}</div>` +
+    renderSyncLine(s.sync) +
+    (s.hubTag ? `<div><span class="k">${t('hub.stat_version', 'Version')}</span>${esc(s.hubTag)} · <a href="#" onclick="makeShortcut();return false">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</a><span id="shortcutResult"></span></div>` : '');
   renderGhWarn(g);
+  if (s.sync && (s.sync.state === 'pending')) setTimeout(loadStatus, 3000);
   clearTimeout(ghPollTimer);
   if (g.waiting) ghPollTimer = setTimeout(loadStatus, 2000);
   if (g.login && ghWasConnected === false) loadContributions(true);
   ghWasConnected = !!g.login;
   return s;
+}
+
+// City data sync (background; the CI freshness gate stays the authority) — one status line.
+function renderSyncLine(sync) {
+  if (!sync) return '';
+  let text = '';
+  if (sync.state === 'pending') text = '… ' + t('hub.sync_checking', 'Checking for the latest city data …');
+  else if (sync.state === 'up-to-date') text = '✅ ' + t('hub.sync_up_to_date', 'City data is up to date');
+  else if (sync.state === 'updated' || sync.state === 'ref-moved') text = '✅ ' + t('hub.sync_updated', 'City data updated to the latest version');
+  else if (sync.state === 'offline') text = '⚠ ' + t('hub.sync_offline', 'Could not reach the city repository; using the local copy');
+  else if (sync.state === 'dirty') text = '⚠ ' + t('hub.sync_dirty', 'Local changes present; the city data was not updated');
+  else return '';
+  return `<div><span class="k">${t('hub.stat_data', 'City data')}</span>${text}</div>`;
+}
+const postJson = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+// Tool updates: announced only; downloaded on request; applied at the next start.
+let updateDismissed = false;
+async function loadUpdate() {
+  let u; try { u = await api('/api/update'); } catch (e) { return; }
+  const box = $('updateBanner'); if (!box) return;
+  if (updateDismissed || !u.available || !u.latest) { box.hidden = true; return; }
+  const f = u.fetch || {};
+  let text = t('hub.update_available', 'A newer version of the editing tools is available: {tag}', { tag: esc(u.latest) });
+  if (u.minHubOk === false && u.minHub) text += ' ' + t('hub.update_min_required', 'This city requires {tag} or newer.', { tag: esc(u.minHub) });
+  let actions = '';
+  if (f.state === 'running') text = t('hub.update_fetching', 'Downloading and verifying {tag} …', { tag: esc(f.tag || u.latest) });
+  else if (f.state === 'done') text = t('hub.update_ready', '{tag} is ready. It will be used from the next start.', { tag: esc(f.tag || u.latest) });
+  else {
+    if (f.state === 'failed') text += '<br>' + t('hub.update_failed', 'Could not get {tag}: {reason}', { tag: esc(f.tag || u.latest), reason: esc(f.message || '') });
+    actions += `<button onclick="fetchUpdate()">${t('hub.update_fetch', 'Get it now')}</button>`;
+  }
+  if (u.notesUrl) actions += `<a href="${esc(u.notesUrl)}" target="_blank" rel="noopener">${t('hub.update_notes', 'Release notes ↗')}</a>`;
+  if (f.state !== 'running') actions += `<button onclick="updateDismissed=true;loadUpdate()">${t('hub.update_later', 'Later')}</button>`;
+  $('updateText').innerHTML = text; $('updateActions').innerHTML = actions; box.hidden = false;
+  if (!u.checked || f.state === 'running') setTimeout(loadUpdate, 2000);
+}
+async function fetchUpdate() {
+  try { await api('/api/update/fetch', postJson({})); } catch (e) {}
+  loadUpdate();
+}
+async function makeShortcut() {
+  const out = $('shortcutResult'); if (out) out.textContent = ' …';
+  try {
+    const r = await api('/api/shortcut', postJson({}));
+    if (out) out.textContent = ' ' + (r.ok === false ? r.error
+      : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', { name: r.name }));
+  } catch (e) { if (out) out.textContent = ' ' + t('hub.shortcut_failed', 'Could not create the icon: {reason}', { reason: String(e) }); }
 }
 
 function renderGhWarn(g) {
@@ -561,6 +616,7 @@ function showWelcome() {
 
 async function init() {
   showWelcome();
+  loadUpdate();
   const statusTask = loadStatus().catch(e => {
     $('who').innerHTML = '<b>' + t('hub.status_error', 'Cannot check the connection status') + '</b>';
     $('statlines').innerHTML = '<div class="warnbox">' + t('hub.status_error_hint', 'Check your internet connection. The tools remain fully usable.') + '</div>';

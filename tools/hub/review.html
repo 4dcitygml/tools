@@ -336,7 +336,7 @@ async function selectPr(number) {
   rememberBuilding(queueData?.items?.find(x=>x.number===number)?.buildingId);
   document.querySelectorAll('.queueItem').forEach(b=>b.classList.toggle('active',Number(b.dataset.n)===number));
   $('main').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading_detail','Loading the proposed changes…')+'</div>';
-  try { current=await api(`/api/reviews/${number}`); rememberBuilding(current.buildingId); renderDetail(); }
+  try { const detail=await api(`/api/reviews/${number}`); if(selected!==number) return; current=detail; rememberBuilding(current.buildingId); renderDetail(); }
   catch(e) { $('main').innerHTML=`<div class="empty">${t('review.load_error','Could not load it.')}<br>${esc(e.message)}</div>`; }
 }
 
