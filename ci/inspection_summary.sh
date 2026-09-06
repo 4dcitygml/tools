@@ -38,14 +38,19 @@ event = json.load(open(sys.argv[1], encoding="utf-8"))
 pr = event.get("pull_request", {})
 title = str(pr.get("title") or "")
 branch = str(pr.get("head", {}).get("ref") or "")
+# Classification (Exchange Contract A5): one table shared with the analysis driver
+# and the review clients (scripts/pr_classification.py). Fail-open to attribute.
+try:
+    sys.path.insert(0, os.environ.get("TOOLS_DIR") or "")
+    from scripts import pr_classification as _classification
+except Exception:  # pragma: no cover - only when TOOLS_DIR is not a tools checkout
+    _classification = None
 kind = os.environ.get("PROPOSAL_KIND") or (
-    "texture" if branch.startswith("tex/")
-    or title.startswith(("Update textures", "Add textures", "テクスチャ", "Textur"))  # ja/de literals: match generated repo-language titles and contributor input — do not translate
-    else "geometry" if any(x in title for x in (
-        "geometry", "building shape", "rebuild",
-        "幾何", "建物形状", "建替", "建て替"))  # Japanese literals: match contributor input — do not translate
-    else "attribute"
+    _classification.kind_for_checks(_classification.classify_by_name(branch, title))
+    if _classification else "attribute"
 )
+classification_outcome = os.environ.get("CLASSIFICATION_OUTCOME")
+classification_advisory = classification_outcome == "warning"   # CITYGML_CLASSIFICATION_WARN_ONLY
 has_gml = os.environ.get("GML_COUNT") != "0"
 scope_extract = os.environ.get("SCOPE_EXTRACT") == "true"
 # source-baseline PRs skip the per-building reviewability lint and the 3D preview (bulk data)
@@ -94,11 +99,31 @@ def result(outcome, applicable=True, warning_path=None):
         return "fail"
     return "pending"
 
+# Repository scope (A11): what a city repository accepts. Folded into `file-scope`
+# together with the data-level quality gate, so the row is applicable to every PR.
+_repo_scope_path = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "citygml_repo_scope.json"
+try:
+    repo_scope_report = json.loads(_repo_scope_path.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    repo_scope_report = {}
+repo_scope_outcome = os.environ.get("REPO_SCOPE_OUTCOME")
+
+
+def file_scope_status():
+    if repo_scope_outcome == "failure":
+        return "fail"
+    if has_gml and not scope_extract:
+        return result(os.environ.get("QUALITY_OUTCOME"))
+    return "pass" if repo_scope_outcome == "success" else "pending"
+
+
 # Exchange format v2: matching uses the key (<!--cp:key-->) + emoji; display
 # names follow the repo language (English defaults; hub matches by key/emoji).
 rows = [
     ("reason", T("ci.check_reason", "Description and evidence"),
      result(os.environ.get("REASON_OUTCOME"))),
+    ("classification", T("ci.check_classification", "Change classification"),
+     result("success" if classification_advisory else classification_outcome)),
     ("commit-scope", T("ci.check_commit_scope", "One change = one building"),
      result(os.environ.get("COMMIT_SCOPE_OUTCOME"))),
     ("scope-reproducibility",
@@ -110,9 +135,7 @@ rows = [
     )),
     ("freshness", T("ci.check_freshness", "Consistency with the latest version"),
      result(os.environ.get("FRESHNESS_OUTCOME"))),
-    ("file-scope", T("ci.check_file_scope", "Changed file scope"), result(
-        os.environ.get("QUALITY_OUTCOME"), has_gml and not scope_extract
-    )),
+    ("file-scope", T("ci.check_file_scope", "Changed file scope"), file_scope_status()),
     ("schema", T("ci.check_schema", "CityGML format"),
      result(os.environ.get("FORMAT_OUTCOME"), has_gml)),
     ("minimal-diff", T("ci.check_minimal_diff", "Minimal diff"), result(
@@ -205,6 +228,20 @@ elif failed:
         resubmit += ["", T("ci.resubmit_freshness",
                            "Another change was applied first. Please merge"
                            " in the latest version and resubmit.")]
+    if any(key == "classification" for key, _ in failed) and _classification:
+        # Strict rule, helpful reply (A5): the table and both ways to fix it.
+        resubmit += ["", _classification.guide_markdown(_CAT)]
+    if repo_scope_outcome == "failure" and repo_scope_report.get("rejected"):
+        # A11: name the files a city repository does not accept and say where they belong.
+        resubmit += ["", "### " + T("ci.repo_scope_heading", "Files this city repository does not accept"), "",
+                     T("ci.repo_scope_intro",
+                       "A city repository holds data, documents and configuration. Tools, scripts and other code "
+                       "belong in 4dcitygml/tools — please propose them there. Workflow files may change only "
+                       "their CITYGML_TOOLS_REF pin."), ""]
+        resubmit += [f"- `{r['path']}` — {r.get('note') or r.get('category')}" for r in repo_scope_report["rejected"]]
+        resubmit += ["", T("ci.repo_scope_label_note",
+                           "Maintainers can accept a CI maintenance change by applying the `tooling` label; "
+                           "the report records that.")]
     resubmit += ["", T("ci.resubmit_outro",
                        "Updating the PR after fixing re-runs the automated"
                        " checks. No reviewer action is needed.")]
@@ -216,6 +253,9 @@ else:
         T("ci.resolved_body",
           "No items need resubmission. Waiting for reviewer confirmation."),
     ]
+if classification_advisory and _classification:
+    # Transition release: the rule is announced with the same guidance, not enforced.
+    resubmit += ["", _classification.guide_markdown(_CAT, advisory=True)]
 Path("out/resubmission.md").write_text("\n".join(resubmit) + "\n", encoding="utf-8")
 if failed:
     print("Items to confirm were collected into a comment. The PR itself remains accepted.")

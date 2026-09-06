@@ -26,5 +26,22 @@
   "ci.resolved_heading": "Automated checks complete",
   "ci.resolved_body": "No items need resubmission. Waiting for reviewer confirmation.",
   "ci.incomplete_heading": "Automated inspection is incomplete",
-  "ci.incomplete_body": "Some checks did not finish. Retry the failed process before deciding whether the proposer must fix the data. No operator transcription is required."
+  "ci.incomplete_body": "Some checks did not finish. Retry the failed process before deciding whether the proposer must fix the data. No operator transcription is required.",
+  "ci.check_classification": "Change classification",
+  "ci.classify_heading": "How to classify this proposal",
+  "ci.classify_advisory_heading": "Advisory: this proposal will need a classification",
+  "ci.classify_intro": "The automated checks could not tell what kind of change this proposal is. Every proposal that changes data files must say so in its branch name or its title. Pick the matching row and apply either fix.",
+  "ci.classify_col_class": "Kind of change",
+  "ci.classify_col_branch": "Branch name starts with",
+  "ci.classify_col_title": "Or the title starts with / contains",
+  "ci.classify_attribute": "Attribute values (storeys, usage, height …)",
+  "ci.classify_texture": "Textures and photos",
+  "ci.classify_geometry": "Shape, position, rebuild",
+  "ci.classify_fix_branch": "Rename the branch so it starts with the prefix, for example `git branch -m edit/<building-id>-<date>` and push it again; or",
+  "ci.classify_fix_title": "Edit the pull request title so it starts with one of the title forms. Editing the title re-runs the checks without a new commit.",
+  "ci.classify_other": "Proposals that change no data files (documentation, code, tool pins) need no classification. Bulk conversions declare themselves with commit trailers instead.",
+  "ci.classify_contract": "Full rules: Exchange Contract, section A5.",
+  "ci.repo_scope_heading": "Files this city repository does not accept",
+  "ci.repo_scope_intro": "A city repository holds data, documents and configuration. Tools, scripts and other code belong in 4dcitygml/tools — please propose them there. Workflow files may change only their CITYGML_TOOLS_REF pin.",
+  "ci.repo_scope_label_note": "Maintainers can accept a CI maintenance change by applying the `tooling` label; the report records that."
 }

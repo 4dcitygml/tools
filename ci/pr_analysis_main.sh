@@ -135,16 +135,61 @@ GML_COUNT="$(wc -l < changed_gml.txt | tr -d ' ')"
 record GML_COUNT "$GML_COUNT"
 record CHANGED_OUTCOME success
 
+# IMAGES_CHANGED makes the summary's texture row applicable whenever image files
+# are touched, even if the PR title/branch classifies as an attribute change
+# (otherwise a bogus "image" in an attribute-titled PR would surface in no row).
+IMAGES_CHANGED="$(grep -qE '_appearance/.*\.(jpg|jpeg|png|tif|tiff)$' all_changed.txt && echo true || echo false)"
+record IMAGES_CHANGED "$IMAGES_CHANGED"
+
+# --- Classification (Exchange Contract A5) (hard step) ---
+# One table for CI and the review clients: scripts/pr_classification.py. A data PR
+# (changed .gml or images) must be attribute / texture / geometry by branch or
+# title, or administrative by trailers; anything else is rejected with guidance
+# (the inspection summary appends the how-to-fix table). No silent default.
+# CITYGML_CLASSIFICATION_WARN_ONLY=true (repository variable) turns the rejection
+# into a warning for a city's first release under contract v3.0.0.
+git log --format=%B "${BASE_SHA}..${HEAD_SHA}" > /tmp/pr-messages.txt
+DATA_CHANGED=false
+if [ "$GML_COUNT" != "0" ] || [ "$IMAGES_CHANGED" = "true" ]; then DATA_CHANGED=true; fi
+ADMINISTRATIVE=false
+if grep -qE '^(Change-Type|Provenance-Manifest):' /tmp/pr-messages.txt; then ADMINISTRATIVE=true; fi
+PR_CLASS="$("$PY" "$TOOLS_DIR/scripts/pr_classification.py" --branch "$PR_BRANCH" --title "$PR_TITLE" \
+  --data-changed "$DATA_CHANGED" --administrative "$ADMINISTRATIVE" || true)"
+CHECK_KIND="$("$PY" "$TOOLS_DIR/scripts/pr_classification.py" --branch "$PR_BRANCH" --title "$PR_TITLE" \
+  --data-changed "$DATA_CHANGED" --administrative "$ADMINISTRATIVE" --print kind)"
+record PR_CLASS "$PR_CLASS"
+if [ "$PR_CLASS" = "unclassified" ]; then
+  if [ "${CITYGML_CLASSIFICATION_WARN_ONLY:-}" = "true" ]; then
+    echo "::warning::This data proposal has no classification (branch prefix or title). It will be required; see the guidance comment."
+    record CLASSIFICATION_OUTCOME warning
+  else
+    echo "::error::This data proposal has no classification. Rename the branch (edit/ tex/ geom/) or edit the title; see the guidance comment."
+    record CLASSIFICATION_OUTCOME failure
+  fi
+else
+  echo "Classification: $PR_CLASS"
+  record CLASSIFICATION_OUTCOME success
+fi
+
+# --- Repository scope (Exchange Contract A11) (continue-on-error) ---
+# Cities distribute data, documents and configuration only; code belongs in
+# 4dcitygml/tools. Workflow files may change only their CITYGML_TOOLS_REF pin
+# (verified against the tools-v tags) unless a maintainer applied the `tooling`
+# label. The result folds into the `file-scope` row of the inspection summary.
+set +e
+"$PY" "$TOOLS_DIR/scripts/repo_scope.py" --repo "$WORKSPACE" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
+  --event "$EVENT" --json-output "${RUNNER_TEMP:-/tmp}/citygml_repo_scope.json" > /tmp/repo-scope.txt 2>&1
+rc=$?
+cat /tmp/repo-scope.txt
+[ "$rc" -eq 0 ] && record REPO_SCOPE_OUTCOME success || record REPO_SCOPE_OUTCOME failure
+set -e
+
 # --- Determine topology inspection scope (hard step, only when .gml changed) ---
 TOPOLOGY_RUN="false"
 PROPOSAL_KIND=""
 if [ "$GML_COUNT" != "0" ]; then
-  kind="attribute"
-  if [[ "$PR_BRANCH" == tex/* || "$PR_TITLE" == "Update textures"* || "$PR_TITLE" == "Add textures"* || "$PR_TITLE" == テクスチャ* || "$PR_TITLE" == Textur* ]]; then  # ja/de literals: match generated repo-language titles and contributor input — do not translate
-    kind="texture"
-  elif [[ "$PR_TITLE" == *geometry* || "$PR_TITLE" == *"building shape"* || "$PR_TITLE" == *rebuild* || "$PR_TITLE" == *幾何* || "$PR_TITLE" == *建物形状* || "$PR_TITLE" == *建替* || "$PR_TITLE" == *建て替* || "$PR_BRANCH" == geom/* || "$PR_BRANCH" == geometry/* ]]; then  # Japanese literals: match contributor input — do not translate
-    kind="geometry"
-  fi
+  # The class for check scoping comes from scripts/pr_classification.py (A5), computed above.
+  kind="$CHECK_KIND"
   PROPOSAL_KIND="$kind"
   SCOPE_OUT="${RUNNER_TEMP:-/tmp}/topology_scope_output.txt"
   : > "$SCOPE_OUT"
@@ -291,12 +336,7 @@ else
 fi
 
 # --- Texture immutability (R1) + image content (magic bytes) check (continue-on-error) ---
-# IMAGES_CHANGED makes the summary's texture row applicable whenever image files
-# are touched, even if the PR title/branch classifies as an attribute change
-# (otherwise a bogus "image" in an attribute-titled PR would surface in no row).
-IMAGES_CHANGED="$(git diff --name-only --diff-filter=AMR "$BASE_SHA" "$HEAD_SHA" \
-  | grep -qE '_appearance/.*\.(jpg|jpeg|png|tif|tiff)$' && echo true || echo false)"
-record IMAGES_CHANGED "$IMAGES_CHANGED"
+# (IMAGES_CHANGED was computed with the classification step above.)
 set +e
 (
   set -euo pipefail

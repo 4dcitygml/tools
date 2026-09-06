@@ -130,18 +130,46 @@ def git_base_args(*, net: bool = False) -> list:
     return args
 
 
-FETCH_TIMEOUT = 15  # [s] upstream sync is fail-open: the network must never block startup
+_git_sync_mod = None
+
+
+def git_sync_module():
+    """Shared sync implementation: program/git_sync.py in the bundle, tools/git_sync.py in the source tree."""
+    global _git_sync_mod
+    if _git_sync_mod is not None:
+        return _git_sync_mod or None
+    for cand in (APP_DIR / "git_sync.py", APP_DIR.parent / "git_sync.py"):
+        if cand.is_file():
+            spec = importlib.util.spec_from_file_location("git_sync", cand)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _git_sync_mod = mod
+            return mod
+    _git_sync_mod = False
+    return None
 
 
 def sync_upstream_main(root) -> "str | None":
     """Bring the machine-managed local main in line with the upstream city repo.
 
-    Same behavior as the editors' startup sync (attr_editor.sync_upstream_main;
-    kept local because the hub is self-contained): fast-forward when possible,
-    hard reset when histories diverged (the practice repo rewrites main daily),
-    console warning + skip when tracked files are modified, silent skip when
-    offline or not a clone. Tool-made edit branches are never touched.
+    Delegates to the shared git_sync module (one ls-remote round trip, then a
+    fetch with git's progress-based abort instead of a wall-clock cut-off). The
+    sync target is the clone's own city (4dcitygml.json / remote), never the
+    environment. Returns the new main commit when an update happened, else None.
     """
+    mod = git_sync_module()
+    exe, _ = git_cmd()
+    if mod is None or not exe:
+        return None
+    result = mod.sync_main(Path(root).resolve(), upstream_url(root, ignore_env=True),
+                           git_base_args(net=True), log=print)
+    return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
+
+
+FETCH_TIMEOUT = 60  # [s] local git commands of the legacy implementation below (unused by the hub)
+
+
+def _legacy_sync_upstream_main(root) -> "str | None":  # pragma: no cover - superseded by git_sync
     root = Path(root).resolve()
     exe, _ = git_cmd()
     if not exe:
@@ -225,7 +253,13 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     try:
-        CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Runtime contract: writers merge and write atomically (temp file + rename), so a
+        # second tool writing at the same moment can never leave a torn or truncated file.
+        current = load_config()
+        current.update(cfg)
+        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + f".tmp{os.getpid()}")
+        tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, CONFIG_PATH)
     except OSError:
         pass
 
@@ -1089,14 +1123,11 @@ class Hub:
         }
 
     def _tool_app(self, t: dict) -> "Path | None":
-        """Actual tool app.py (resolved from the clone layout first, then the hub bundle).
+        """Actual tool app.py, always from the hub bundle (program/<editor>/) or the tools source tree.
 
-        In the public layout the tools (tools repo) and the data (city repo) are
-        separate, so when absent from the clone, use the copy next to the hub itself (tools/…).
+        Cities distribute no code: a `tools/` folder inside a city clone is never
+        executed (the earlier clone-first lookup is gone).
         """
-        cand = self.root / t["path"]
-        if cand.is_file():
-            return cand
         rel = Path(t["path"]).relative_to("tools")
         for cand in (APP_DIR / rel, APP_DIR.parent / rel):  # distribution: program/<editor>/app.py
             if cand.is_file():
@@ -2662,12 +2693,13 @@ def _normalize_upstream(value: str) -> "str | None":
     return f"https://github.com/{nwo}"
 
 
-def upstream_url(root=None) -> str:
+def upstream_url(root=None, ignore_env: bool = False) -> str:
     """URL of the target city repository. Priority: CITYGML_UPSTREAM > the clone's
     4dcitygml.json > the git remote `upstream` > default (demo city). The city is
     decided automatically — via the environment variable for the install script,
-    via 4dcitygml.json for users with a clone (project plan §5.1b)."""
-    env = _normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
+    via 4dcitygml.json for users with a clone (project plan §5.1b).
+    ignore_env=True asks for the clone's own city only (sync target)."""
+    env = None if ignore_env else _normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
     if env:
         return env
     if root:

@@ -46,7 +46,7 @@ a release verification item; executable filter/persistence logic is checked loca
 - XML/XSD (i-UR 2.0–3.2 bundled), structure, references, textures, geometry checks and comparison views; PR comments on large PRs are truncated at 60,000 characters with a pointer to the artifacts
 - Base-freshness guidance
 - The hub: device-flow sign-in, fork → PR, checkpoint list in the repository language, Approve / Request changes, and a queue separating Draft / checking / waiting-for-latest-main / waiting-for-review
-- The starter kit (release `starter-kit`) and its update mechanism (`.release-tag`)
+- The one-line installer / per-user launcher (`install/citygml.sh`, `citygml.ps1`), versioned hub folders, the in-hub update banner with digest-verified download, and desktop launchers (`tools/shortcuts.py`) — replacing the earlier starter-kit release and `.release-tag` mechanism (hub-v1.2.0)
 
 ## 2. To implement before unlocking the corresponding PR types
 
@@ -69,3 +69,24 @@ a release verification item; executable filter/persistence logic is checked loca
 Unimplemented dedicated gates are never substituted by documentation alone.
 Confirm reject and revert behavior on a real repository before putting them
 into public operation.
+
+## 3. Exchange contract v3.0.0: implementation still pending
+
+The contract ([exchange-contract.md](exchange-contract.md)) is the authority;
+these items are where the implementations have not caught up with v3.0.0 yet.
+
+- CI: the `classification` gate (A5) is implemented in this repository
+  (`scripts/pr_classification.py` is the one table; `ci/pr_analysis_main.sh`
+  records `CLASSIFICATION_OUTCOME`, `ci/inspection_summary.sh` adds the
+  `<!--cp:classification-->` row and appends the guidance table to the
+  resubmission comment; the city-template report publisher expects fourteen
+  keys; `CITYGML_CLASSIFICATION_WARN_ONLY` gives a city an advisory first
+  release). Pending: a tools release containing it, and the cities' pin
+  updates (`CITYGML_TOOLS_REF`), after which the gate is live.
+- Hub: show every open PR whatever its class (today `other` is dropped from
+  the review queue); take the `reason` verdict from the `cp:reason` row instead
+  of re-deriving it; resolve the building from the A2 trailers before falling
+  back to title/branch patterns.
+- Documents: `city-template/docs/pr-operations.md` and `getting-started.md`
+  say thirteen gates; the ja/de editions of `pr-operations.md` still describe
+  the earlier operator-explanation procedure and the `city-review` label.

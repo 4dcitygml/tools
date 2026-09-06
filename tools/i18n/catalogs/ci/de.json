@@ -27,5 +27,22 @@
   "ci.resolved_heading": "Automatische Prüfungen abgeschlossen",
   "ci.resolved_body": "Keine Punkte erfordern eine erneute Einreichung. Warten auf Bestätigung durch die Prüfer.",
   "ci.incomplete_heading": "Automatische Prüfung unvollständig",
-  "ci.incomplete_body": "Einige Prüfungen wurden nicht abgeschlossen. Den fehlgeschlagenen Prozess erneut ausführen, bevor Datenkorrekturen angefordert werden. Der Betreiber muss keine Prüfergebnisse abschreiben."
+  "ci.incomplete_body": "Einige Prüfungen wurden nicht abgeschlossen. Den fehlgeschlagenen Prozess erneut ausführen, bevor Datenkorrekturen angefordert werden. Der Betreiber muss keine Prüfergebnisse abschreiben.",
+  "ci.check_classification": "Einordnung der Änderung",
+  "ci.classify_heading": "So wird dieser Vorschlag eingeordnet",
+  "ci.classify_advisory_heading": "Hinweis: Dieser Vorschlag wird eine Einordnung benötigen",
+  "ci.classify_intro": "Die automatischen Prüfungen konnten nicht erkennen, um welche Art von Änderung es sich handelt. Jeder Vorschlag, der Datendateien ändert, muss die Art im Branch-Namen oder im Titel angeben. Wählen Sie die passende Zeile und wenden Sie eine der beiden Korrekturen an.",
+  "ci.classify_col_class": "Art der Änderung",
+  "ci.classify_col_branch": "Branch-Name beginnt mit",
+  "ci.classify_col_title": "Oder der Titel beginnt mit / enthält",
+  "ci.classify_attribute": "Attributwerte (Geschosse, Nutzung, Höhe …)",
+  "ci.classify_texture": "Texturen und Fotos",
+  "ci.classify_geometry": "Form, Lage, Neubau",
+  "ci.classify_fix_branch": "Den Branch so umbenennen, dass er mit dem Präfix beginnt (z. B. `git branch -m edit/<Gebäude-ID>-<Datum>`) und erneut pushen; oder",
+  "ci.classify_fix_title": "Den Titel des Pull Requests so bearbeiten, dass er mit einer der Titelformen beginnt. Das Bearbeiten des Titels startet die Prüfungen neu, ohne neuen Commit.",
+  "ci.classify_other": "Vorschläge ohne Änderung an Datendateien (Dokumentation, Code, Werkzeug-Pins) brauchen keine Einordnung. Sammelkonvertierungen erklären sich selbst über Commit-Trailer.",
+  "ci.classify_contract": "Vollständige Regeln: Exchange Contract, Abschnitt A5.",
+  "ci.repo_scope_heading": "Dateien, die dieses Stadt-Repository nicht annimmt",
+  "ci.repo_scope_intro": "Ein Stadt-Repository enthält Daten, Dokumente und Konfiguration. Werkzeuge, Skripte und anderer Code gehören nach 4dcitygml/tools — bitte dort vorschlagen. Workflow-Dateien dürfen nur ihren CITYGML_TOOLS_REF-Pin ändern.",
+  "ci.repo_scope_label_note": "Betreuende können eine CI-Wartungsänderung mit dem Label `tooling` annehmen; der Bericht hält das fest."
 }

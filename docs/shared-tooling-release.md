@@ -69,17 +69,35 @@ tools-v1.1.0 includes shared reports and standard approvals.
 Required machine checks are `analyze` and `ci-report`; the retired operator-only
 confirmation gate is not reinstated. See [implementation status](implementation-status.md).
 
-The city's `install/tools-release.json` selects the **Hub client** tag, assets
-and checksums. Its historical filename does not select a tools-v source package.
-Update client settings and CI pins separately, and verify the combination before
-rollout. A new client does not update city CI or change an ongoing case's tools version.
+Cities pin only the CI tools version (`CITYGML_TOOLS_REF` in their workflows).
+The **Hub client** is not pinned by cities: its version is decided by the
+`hub-v*` releases of this repository (see below). A new client does not update
+city CI or change an ongoing case's tools version.
 
-## Remaining distribution work
+## Client distribution (hub-v releases)
 
-City starter kits currently remain in city releases. They connect a user's
-client to their city, so any future common starter distribution belongs with
-the client route. Automatic tools-version selection, version management and
-Issue-to-PR automation remain future work. The source ZIP is not an automatic
-city installer.
+- **Entry**: one command from the city's README —
+  `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh)" -- <owner/repo>`
+  (Windows: the `citygml.ps1` equivalent). The script comes from the moving tag
+  `install-v1` of this repository, installs the newest `hub-v*` release after
+  verifying it against the SHA-256 digest GitHub publishes for the asset, keeps
+  a copy of itself in `~/Documents/citygml-tools/`, and hands over to the hub.
+  Without an argument it connects to a practice city chosen by the system language.
+- **Afterwards**: the hub creates a desktop launcher (`.app` / `.lnk`) that
+  runs the per-user copy of the script with the city id; nothing else is
+  needed. Versions live side by side in `citygml-tools/citygml-hub/<tag>/`; the
+  launcher starts the newest installed one.
+- **Updates**: the hub checks the releases API at each start and shows a banner
+  when a newer version exists. *Get it now* downloads and digest-verifies it
+  into its own folder; it is used from the next start. Nothing is downloaded
+  without that click and nothing restarts by itself. A city may declare
+  `min_hub` in `4dcitygml.json` (advisory) to say why an update matters.
+- **Cities distribute no code** (Exchange Contract A11): no `install/`
+  folder, no starter kit release, no client pin. Everything that runs on a
+  contributor's computer comes from `hub-v*` release assets.
+
+Remaining work: automatic tools-version selection for CI, Issue-to-PR
+automation, and thinning the city-side `.github/` to a pin-only wrapper. The
+source ZIP is not an automatic city installer.
 
 Release publication and any adoption in an actual city are separate actions.

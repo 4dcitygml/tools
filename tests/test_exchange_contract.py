@@ -55,9 +55,53 @@ class TestContractDocMatchesCode(unittest.TestCase):
     contract must be updated in the same change."""
 
     def test_version_and_rfc2119(self):
-        self.assertIn("v2.1.0", DOC)   # current version (title + changelog)
-        self.assertIn("v2.0.0", DOC)   # the changelog keeps every published version
+        self.assertIn("Exchange Contract v3.1.0", DOC)   # current version (title)
+        for published in ("v3.1.0", "v3.0.0", "v2.1.0", "v2.0.0"):   # the changelog keeps every published version
+            self.assertIn(f"**{published}**", DOC)
+
+    def test_city_repository_scope_a11(self):
+        # A11 mirrors scripts/repo_scope.py: the accepted categories, the pin rule, the label.
+        from scripts import repo_scope as rs
+        for token in ("### A11.", "`data_dirs`", "`provenance/`", "`.github/CODEOWNERS`", "`CITYGML_TOOLS_REF:`",
+                      "`tools-v*`", "`tooling`", "`install/**`", "`tools/**`"):
+            self.assertIn(token, DOC, token)
+        for suffix in (".py", ".sh", ".command", ".ps1", ".bat", ".js"):
+            self.assertIn(suffix, rs.CODE_SUFFIXES)
+        self.assertEqual(rs.TOOLING_LABEL, "tooling")
         self.assertIn("RFC 2119", DOC)
+
+    def test_contract_is_the_authority(self):
+        # v3.0.0: the document outranks every tool, and the official tools are reference clients only.
+        self.assertIn("highest authority", DOC)
+        self.assertIn("reference clients", DOC)
+        self.assertIn("re-implement a gate", DOC)
+        self.assertIn("MUST show every open PR", DOC)
+
+    def test_trailers_read_by_the_scope_gate_are_all_documented(self):
+        # Every trailer the commit scope gate parses must appear in the contract, and vice versa (A2).
+        from scripts.commit_building_scope import _TRAILER_RE
+        pattern = _TRAILER_RE.pattern
+        names = pattern[pattern.index("^(") + 2:pattern.index("):")].split("|")
+        for name in names:
+            self.assertIn(f"`{name}:`", DOC, name)
+        self.assertIn("`Scope-Municipality:`", DOC)
+
+    def test_reinspection_request_interface(self):
+        # A8 mirrors pr-recheck.yml: marker, optional workflow marker, authorization.
+        for token in ("<!-- citygml-ci-retry-request -->",
+                      "<!-- citygml-retry-workflow:pr-comment.yml -->",
+                      "<!-- citygml-retry-workflow:review-report.yml -->",
+                      "`OWNER`, `MEMBER` or `COLLABORATOR`"):
+            self.assertIn(token, DOC, token)
+
+    def test_labels_and_markers(self):
+        for label in ("`texture-override`", "`identity-review`", "`tooling`"):
+            self.assertIn(label, DOC)
+        self.assertIn("`city-review` was a label", DOC)
+        for marker in ("citygml-automatic-inspection", "citygml-change-summary",
+                       "citygml-base-freshness", "citygml-auto-resubmission",
+                       "citygml-commit-scope", "citygml-reviewability-lint", "citygml-quality-lint"):
+            self.assertIn(f"<!-- {marker} -->", DOC, marker)
 
     def test_bulk_submission_clause(self):
         # A7 (v2.1.0): bulk submissions carry a provenance manifest and are verified by reproduction.
@@ -82,13 +126,19 @@ class TestContractDocMatchesCode(unittest.TestCase):
             self.assertIn(change_type, DOC)
 
     def test_classification_prefixes(self):
-        for prefix in ("edit/", "tex/", "Update attributes", "Update building info",
-                       "属性修正", "Attributkorrektur", "Update textures",
-                       "Add textures", "テクスチャ", "Textur"):
-            self.assertIn(prefix, DOC)
+        # The A5 table in the contract and the one table CI uses (scripts/pr_classification.py) are the same.
+        from scripts import pr_classification as pc
+        for cls in pc.NAME_CLASSES:
+            self.assertIn(f"`{cls}`", DOC)
+            for literal in pc.BRANCH_PREFIXES[cls] + pc.TITLE_PREFIXES[cls] + pc.TITLE_KEYWORDS[cls]:
+                self.assertIn(f"`{literal}`", DOC, literal)
+        ci = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertIn("scripts/pr_classification.py", ci)
+        self.assertIn("`other`", DOC)          # v3.0.0: `other` is an explicit class
+        self.assertIn("`classification`", DOC)  # and its gate
 
     def test_inspection_keys(self):
-        for key in ("reason", "commit-scope", "scope-reproducibility", "reproduction", "freshness",
+        for key in ("reason", "classification", "commit-scope", "scope-reproducibility", "reproduction", "freshness",
                     "file-scope", "schema", "minimal-diff", "texture", "structure",
                     "plausibility", "topology", "model"):
             self.assertIn(f"`{key}`", DOC)
