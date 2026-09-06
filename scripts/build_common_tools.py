@@ -63,8 +63,8 @@ def build(root, output, tag=None):
     if root == output or root in output.parents:
         raise ValueError('Archive output must be outside the source checkout')
     if tag:
-        if not re.fullmatch(r'hub-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
-            raise ValueError('Expected an existing hub-v<semver> release tag')
+        if not re.fullmatch(r'tools-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
+            raise ValueError('Expected an existing tools-v<semver> release tag')
         commit = git(root, 'rev-parse', 'HEAD')
         if git(root, 'rev-parse', f'refs/tags/{tag}^{{commit}}') != commit or git(root, 'status', '--porcelain'):
             raise ValueError('Release archive requires a clean checkout at the release tag')
@@ -105,7 +105,7 @@ def verify(path):
             raise ValueError('Unsupported distribution manifest')
         if manifest['mode'] == 'local-preview' and (manifest['release_tag'] is not None or manifest['source_commit'] is not None):
             raise ValueError('Local preview cannot claim a release identity')
-        if manifest['mode'] == 'release' and (not re.fullmatch(r'[0-9a-f]{40}', manifest['source_commit'] or '') or not re.fullmatch(r'hub-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', manifest['release_tag'] or '')):
+        if manifest['mode'] == 'release' and (not re.fullmatch(r'[0-9a-f]{40}', manifest['source_commit'] or '') or not re.fullmatch(r'(?:tools|hub)-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', manifest['release_tag'] or '')):
             raise ValueError('Missing release identity')
         expected = {f'{PREFIX}/{name}' for name in manifest['files']} | {PREFIX + '/distribution.json'}
         if set(names) != expected or not REQUIRED <= manifest['files'].keys():

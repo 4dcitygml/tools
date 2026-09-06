@@ -3,27 +3,39 @@
 
 # Shared tooling distribution
 
-Introduced in hub-v1.1.0. Each release workflow builds and smoke-tests the
-Windows, macOS and common source packages before publishing its assets.
+Two independent release series serve different destinations. Confirm published assets and compatible city settings before adoption.
 
-The existing `hub-v<version>` release can now carry three assets:
+| Series | Destination | Assets |
+|---|---|---|
+| `hub-v<version>` | Contributors' Mac/Windows computers | `citygml-hub-<version>-macos.zip`, `citygml-hub-<version>-windows-full.zip` |
+| `tools-v<version>` | City operators and processing environments | `citygml-tools-<version>-source.zip` |
 
-Its display name is **4dcitygml tools**. The historical `hub-v` tag prefix is
-retained for compatibility with existing download paths; the release covers
-the shared tools as well as the Hub.
+`release-hub.yml` builds and smoke-tests both Hub clients. `release-tools.yml`
+builds and smoke-tests the common source. Each workflow accepts only its own
+series for publication, including a manually requested tag. A manual dispatch
+on a branch with the release tag left empty builds without publishing a Release.
+Existing assets are not silently overwritten on a rerun.
 
-| Asset | Audience and contents |
-|---|---|
-| `citygml-hub-<version>-windows-full.zip` | Hub users on Windows; existing portable Python/Git entry point |
-| `citygml-hub-<version>-macos.zip` | Hub users on macOS; existing launcher |
-| `citygml-tools-<version>-source.zip` | Operators/developers; processing scripts, CI, schemas, semantic definitions, documentation and tool sources |
+Hub releases keep their existing tag and asset naming. The first
+independent tools release is `tools-v1.1.0`. The two series may advance
+independently; matching numbers are not a compatibility check. Tools releases
+use `--latest=false` so the repository's general latest-release link does not
+switch from a client download to an operator package. Use explicit release tags
+and asset names for both destinations.
 
-All three jobs select the same requested tag. A normal tag-triggered release
-waits for all three build/smoke jobs. The common source archive contains a
-`distribution.json` with its source commit, release tag and per-file hashes.
-The archive SHA-256 is included in the release notes. The source package
-requires Python and dependencies from `requirements.txt`; it is not a bundled
-Python executable. City CI continues to fetch its immutable tools commit.
+The common source includes processing, CI, schemas, semantic definitions,
+documentation and supporting tool sources. Its `distribution.json` records the
+source commit, release tag and per-file hashes; the outer ZIP SHA-256 is included
+in release notes. It requires Python and `requirements.txt` dependencies.
+City CI continues to fetch its immutable tools commit.
+
+### Transition from the mixed hub-v1.1.0 release
+
+The published `hub-v1.1.0` initially contains both Hub clients and a common
+source archive. Publish and verify `tools-v1.1.0` first, then link to it from the
+Hub release notes and remove only the old common source attachment. Preserve
+the two Hub assets, their hashes and the existing Hub tag. Build the tools
+archive afresh: its recorded tag and commit must match its own release.
 
 The source packager includes only the declared common source directories and
 license/dependency files. City datasets, local records, caches and downloaded
@@ -53,16 +65,21 @@ and update the city's analysis/history pins through its normal reviewed change.
 The generating tools SHA must match the trusted city CI SHA for this recipe.
 Existing pins are not replaced with a guessed or local snapshot SHA.
 
-hub-v1.1.0 also includes the shared report and standard approval changes. Required machine checks remain `analyze` and
-`ci-report`; the retired operator-only confirmation gate is not reinstated.
-See [implementation status](implementation-status.md).
+tools-v1.1.0 includes shared reports and standard approvals.
+Required machine checks are `analyze` and `ci-report`; the retired operator-only
+confirmation gate is not reinstated. See [implementation status](implementation-status.md).
+
+The city's `install/tools-release.json` selects the **Hub client** tag, assets
+and checksums. Its historical filename does not select a tools-v source package.
+Update client settings and CI pins separately, and verify the combination before
+rollout. A new client does not update city CI or change an ongoing case's tools version.
 
 ## Remaining distribution work
 
-The agreed destination is a common release that also includes the starter kit
-and passes each city's settings into it. This source archive is one step toward
-that destination. City-specific starter kits still use their existing route.
-Automatic latest-release selection, old-version management and the common
-starter migration are not implemented by this packaging change.
+City starter kits currently remain in city releases. They connect a user's
+client to their city, so any future common starter distribution belongs with
+the client route. Automatic tools-version selection, version management and
+Issue-to-PR automation remain future work. The source ZIP is not an automatic
+city installer.
 
 Release publication and any adoption in an actual city are separate actions.

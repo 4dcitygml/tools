@@ -71,18 +71,24 @@ class CommonToolsArchiveTest(unittest.TestCase):
 
     def test_tagged_release_requires_clean_matching_tree(self):
         repo = GitRepo(self.root); repo.run('add', '.'); repo.run('commit', '-qm', 'Fixture')
-        repo.run('tag', 'hub-v1.2.3')
-        m = B.build(self.root, self.archive, 'hub-v1.2.3')
+        repo.run('tag', 'tools-v1.2.3')
+        m = B.build(self.root, self.archive, 'tools-v1.2.3')
         self.assertEqual(m['source_commit'], repo.run('rev-parse', 'HEAD'))
         (self.root / 'README.md').write_text('changed')
-        with self.assertRaises(ValueError): B.build(self.root, self.base / 'dirty.zip', 'hub-v1.2.3')
+        with self.assertRaises(ValueError): B.build(self.root, self.base / 'dirty.zip', 'tools-v1.2.3')
+
+    def test_new_common_build_rejects_hub_release_tag(self):
+        repo = GitRepo(self.root); repo.run('add', '.'); repo.run('commit', '-qm', 'Fixture')
+        repo.run('tag', 'hub-v1.1.0')
+        with self.assertRaisesRegex(ValueError, 'tools-v'):
+            B.build(self.root, self.archive, 'hub-v1.1.0')
 
     def test_ignored_files_cannot_enter_a_release_payload(self):
         (self.root / '.gitignore').write_text('scripts/ignored.py\n')
-        repo = GitRepo(self.root); repo.run('add', '.'); repo.run('commit', '-qm', 'Fixture'); repo.run('tag', 'hub-v1.2.3')
+        repo = GitRepo(self.root); repo.run('add', '.'); repo.run('commit', '-qm', 'Fixture'); repo.run('tag', 'tools-v1.2.3')
         (self.root / 'scripts/ignored.py').write_text('unversioned')
         with self.assertRaisesRegex(ValueError, 'tagged Git tree'):
-            B.build(self.root, self.archive, 'hub-v1.2.3')
+            B.build(self.root, self.archive, 'tools-v1.2.3')
 
 
 if __name__ == '__main__': unittest.main()

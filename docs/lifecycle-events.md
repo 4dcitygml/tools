@@ -3,6 +3,9 @@
 
 # Building lifecycle events: rebuild, split and merge
 
+City tooling is distributed independently as `tools-v1.1.0`.
+See [distribution status](shared-tooling-release.md) before adopting it.
+
 One real-world event is one PR with one dedicated commit, even when it involves
 several `uro:buildingID` values. An event is not an arbitrary batch of unrelated
 building corrections, and does not claim the reproducibility of a bulk conversion.
@@ -89,7 +92,7 @@ are appropriate. Structural validation cannot prove those real-world facts.
 
 ## Deployment status
 
-Included in hub-v1.1.0; city pin updates and pilot verification are still required. Test genuine
+Included in tools-v1.1.0; city pin updates and pilot verification are still required. Test genuine
 rebuild/split/merge PRs (including multiple meshes and comparison views) and rejection
 cases in the pilot before enabling this submission route. The current editing
 screens do not author lifecycle events; prepare the GML and event record separately.

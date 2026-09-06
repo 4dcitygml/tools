@@ -3,6 +3,9 @@
 
 # Implementation status of the review gates
 
+City tooling is distributed independently as `tools-v1.1.0`.
+See [distribution status](shared-tooling-release.md) before adopting it.
+
 What the shared CI and tools check today, and what is still to be built
 before the corresponding PR types are unlocked. Moved here from the city
 repositories' PR operations guide (its §7) because it describes the tools,
@@ -10,7 +13,7 @@ not a city's procedure. Updated with each tools release.
 
 ## 1. What the current gates check
 
-Included in hub-v1.1.0 (2026-09-06): CI generates a shared versioned
+Included in tools-v1.1.0 (2026-09-06): CI generates a shared versioned
 report. All reviewers use standard GitHub Approve. The city can change its
 required approval count and reviewer membership over time. The hub reads active
 rulesets and classic protection, counts distinct current eligible approvals,
@@ -25,15 +28,15 @@ trusted report verifier checks only current machine evidence. It never dismisses
 human reviews or forces role order. The shared helper retains its historical
 filename for portable package compatibility.
 
-These changes are not in hub-v1.0.2. Adopt hub-v1.1.0 with updated city pins and
+These changes are not in hub-v1.0.2. Adopt tools-v1.1.0 with updated city pins and
 complete GitHub acceptance tests before operation. Remove the prototype
 `operator-explanation` required check on migration. Browser integration remains
 a release verification item; executable filter/persistence logic is checked locally.
 
-- LOD0 semantic correction: a pilot CityGML 2.0 / i-UR 3.1 recipe renames FootPrint to RoofEdge with input/rationale digests, per-building commits, exact whole-file and intermediate-commit checks, reproduction and a generated review note. Included in hub-v1.1.0; city GitHub pilot pending. This does not unlock arbitrary semantic corrections. See [recipe scope and workflow](lod0-semantic-correction.md).
-- Ordinary multi-building PRs without a supported reproducible bulk submission are rejected (included in hub-v1.1.0)
+- LOD0 semantic correction: a pilot CityGML 2.0 / i-UR 3.1 recipe renames FootPrint to RoofEdge with input/rationale digests, per-building commits, exact whole-file and intermediate-commit checks, reproduction and a generated review note. Included in tools-v1.1.0; city GitHub pilot pending. This does not unlock arbitrary semantic corrections. See [recipe scope and workflow](lod0-semantic-correction.md).
+- Ordinary multi-building PRs without a supported reproducible bulk submission are rejected (included in tools-v1.1.0)
 - The 1-buildingID constraint and trailer match for normal commits; prohibition of duplicate buildingID commits within a PR
-- Lifecycle events: one dedicated commit/PR, digest-bound event record, old/new ID and trailer-category matching, repository-wide participant ID uniqueness, explicit evidence and date fields, and generated event explanation. Real-world relationships remain a city judgment; see [event specification](lifecycle-events.md). Included in hub-v1.1.0; city pilot verification pending.
+- Lifecycle events: one dedicated commit/PR, digest-bound event record, old/new ID and trailer-category matching, repository-wide participant ID uniqueness, explicit evidence and date fields, and generated event explanation. Real-world relationships remain a city judgment; see [event specification](lifecycle-events.md). Included in tools-v1.1.0; city pilot verification pending.
 - Commit-scope exceptions for `lifecycle`, `layout`, `source-baseline` (first history entry only), `scope-extract`
 - `identity-baseline` / `identity-correction` commits: trailer and manifest reference, byte-preserving ID replacement, tier rule, repository-wide ID uniqueness
 - `source-update` value replacements within one attribute family: manifest-backed `Building:` commits, byte-exact application of the manifest's changes, all targets applied

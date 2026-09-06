@@ -3,7 +3,10 @@
 
 # LOD0 semantic correction: pilot recipe
 
-Status: pilot implementation included in hub-v1.1.0; city GitHub PR verification pending.
+City tooling is distributed independently as `tools-v1.1.0`.
+See [distribution status](shared-tooling-release.md) before adopting it.
+
+Status: pilot implementation included in tools-v1.1.0; city GitHub PR verification pending.
 This recipe changes the interpretation of an existing boundary. It does not
 repair its coordinates or establish that any particular building is a roof outline.
 A plan and reviewable evidence are required before adoption.

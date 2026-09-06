@@ -787,9 +787,9 @@ class TestWindowsBundle(unittest.TestCase):
     def test_release_packages_include_tag_version(self):
         self.assertIn('f"citygml-hub-{version}-windows-full.zip"', self.workflow)
         self.assertIn('f"citygml-hub-{version}-macos.zip"', self.workflow)
-        self.assertIn("needs: [windows, macos-zip, common-tools]", self.workflow)
-        self.assertIn("citygml-tools-${version}-source.zip", self.workflow)
-        self.assertEqual(self.workflow.count("ref: ${{ inputs.release_tag || github.ref }}"), 3)
+        self.assertIn("needs: [windows, macos-zip]", self.workflow)
+        self.assertNotIn("citygml-tools-${version}-source.zip", self.workflow)
+        self.assertEqual(self.workflow.count("ref: ${{ inputs.release_tag || github.ref }}"), 2)
         self.assertIn("GH_REPO: ${{ github.repository }}", self.workflow)
 
     def test_release_packages_include_admin_review_ui(self):

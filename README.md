@@ -44,7 +44,7 @@ request.
 
 1. Download your city's **starter kit** (linked from the city repository's
    README) and unzip it. It contains the starters and the city's configuration;
-   the pinned hub release is downloaded and checksum-verified on first start.
+   the pinned tools release is downloaded and checksum-verified on first start.
 2. Double-click `start-mac.command` (macOS) or `start-windows.bat` (Windows).
 3. The hub opens in your browser, connected to that city. (A hub release
    downloaded directly from this repository connects to the Tokyo Station demo.)
@@ -68,25 +68,25 @@ Consult [implementation status](docs/implementation-status.md) before enabling a
 
 ## Common releases
 
-One [4dcitygml tools release](https://github.com/4dcitygml/tools/releases)
-delivers the shared components at a recorded source version. The existing
-`hub-v<version>` tag format is retained for download compatibility; it names
-the common release, which includes more than the Hub.
+[Releases](https://github.com/4dcitygml/tools/releases) serve two destinations:
 
-| Download | Use |
-|---|---|
-| Windows Hub ZIP | Launch the city tools with bundled Python and Git |
-| macOS Hub ZIP | Launch the city tools using Command Line Tools Python and Git |
-| Common source ZIP | Use processing, CI, schemas, semantic definitions, documentation and tool sources; Python dependencies are required |
+| Series | Downloads | Who updates it |
+|---|---|---|
+| `hub-v` | Mac and Windows Hub clients | The user, through their city's starter kit |
+| `tools-v` | Common processing, CI, schemas, semantic definitions, guidance and supporting sources | City operators, after checking the impact on their procedures |
 
-The source ZIP is introduced in version 1.1.0. See
-[distribution and verification](docs/shared-tooling-release.md) for exact asset
-names and checks. City CI pins an immutable tools commit; each case records the
-version used. Installing a new Hub does not update a city's CI pin.
+Hub keeps its existing two client assets and version series. City tooling has its own
+`tools-v1.1.0` release. Versions can advance
+independently. See [distribution and verification](docs/shared-tooling-release.md)
+for the current transition, exact filenames and checks.
 
-City starter kits currently remain in city releases. Moving them into the common
-release, automatic version selection and automatic Issue-to-PR processing are
-still planned work.
+City CI pins an immutable tools commit; each case records the version used.
+Installing a new Hub does not update a city's CI pin. The common source ZIP
+requires Python dependencies and is not an automatic city installer.
+
+City starter kits currently remain in city releases. A shared starter route,
+automatic version selection and automatic Issue-to-PR processing are still
+planned work.
 
 ## For municipalities
 
