@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="hub.settings_doc_title">Settings — Building Data Editing Tools</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; margin: 0; background: #f6f8fa; color: #24292f; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; border-bottom: 1px solid #d0d7de; padding-bottom: 4px; }
+  table.kv { border-collapse: collapse; width: 100%; }
+  .kv th { text-align: left; padding: 6px 12px 6px 0; font-weight: 600; white-space: nowrap; vertical-align: top; width: 34%; }
+  .kv td { padding: 6px 0; word-break: break-all; }
+  code { background: #eaeef2; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid #d0d7de; background: #fff; cursor: pointer; font-size: 13px; margin: 2px 4px 2px 0; }
+  button.danger { color: #cf222e; border-color: #cf222e; }
+  .muted { color: #57606a; font-size: 12px; }
+  .note { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 10px 14px; line-height: 1.7; font-size: 13px; }
+  a { color: #0969da; }
+  #msg { margin: 8px 0; color: #1a7f37; }
+</style></head><body><main>
+<p><a href="/" data-i18n="hub.settings_back">← Back to the dashboard</a></p>
+<h1 data-i18n="hub.settings_title">Settings</h1>
+<p class="muted" data-i18n="hub.settings_lead">These are the values this city currently uses. Changes are made with the buttons; the settings file is not edited by hand.</p>
+<div id="msg"></div>
+<div id="body"></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const t = window.t || ((k, d, p) => { let s = d; if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]); return s; });
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? undefined : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  return r.json();
+}
+function row(k, v) { return `<tr><th>${k}</th><td>${v}</td></tr>`; }
+async function load() {
+  const s = await api('/api/settings');
+  const acct = s.login ? `<b>@${esc(s.login)}</b>` : t('hub.settings_no_account', '(no account chosen)');
+  const idn = s.identity || {};
+  const mi = s.machineIdentity || {};
+  const u = s.update || {};
+  let updateText = '';
+  if (u.available && u.fetch && u.fetch.state === 'done') updateText = t('hub.update_ready', '{tag} is ready. It will be used from the next start.', {tag: esc(u.latest)});
+  else if (u.available) updateText = t('hub.update_available', 'A newer version of the editing tools is available: {tag}', {tag: esc(u.latest)}) + ` — <a href="/">${t('hub.settings_update_on_dashboard', 'get it from the dashboard')}</a>`;
+  else if (u.checked && !u.error) updateText = t('hub.settings_up_to_date', 'This is the newest version.');
+  else updateText = t('hub.settings_update_unknown', 'Could not check for a newer version (offline?). It is checked again at the next start.');
+  $('body').innerHTML = `
+    <h2>${t('hub.settings_city_section', 'This city')}</h2>
+    <table class="kv">
+      ${row(t('hub.settings_city', 'City'), esc(s.city || ''))}
+      ${row(t('hub.settings_account', 'GitHub account'), acct + ' ' +
+        (s.login ? `<button onclick="changeAccount()">${t('hub.settings_change', 'Change')}</button><button class="danger" onclick="disconnect()">${t('hub.settings_disconnect', 'Disconnect')}</button>`
+                 : `<button onclick="location.href='/'">${t('hub.settings_choose', 'Choose')}</button>`))}
+      ${row(t('hub.settings_fork', 'Your copy on GitHub'), s.fork ? `<a href="https://github.com/${esc(s.fork)}" target="_blank" rel="noopener">${esc(s.fork)}</a>` : (s.login ? `<a href="/">${t('hub.settings_fork_missing', 'not yet — create it on the account screen')}</a>` : '—'))}
+      ${row(t('hub.settings_clone', 'Data folder on this computer'), `<code>${esc(s.clone || '')}</code>`)}
+      ${row(t('hub.settings_identity', 'Name used in your edits'), (idn.name || idn.email) ? `${esc(idn.name)} &lt;${esc(idn.email)}&gt;` : t('hub.settings_identity_unset', '(written when an account is chosen)'))}
+      ${row(t('hub.settings_machine_identity', 'Git identity of this computer (not used here)'), (mi.name || mi.email) ? `${esc(mi.name)} &lt;${esc(mi.email)}&gt;` : t('hub.legacy_none', '(not set)'))}
+    </table>
+    <h2>${t('hub.settings_tools_section', 'The editing tools')}</h2>
+    <table class="kv">
+      ${row(t('hub.stat_version', 'Version'), esc(s.hubTag || '') + ' <span class="muted">' + updateText + '</span>')}
+      ${row(t('hub.settings_icon', 'Desktop icon'), `<button onclick="makeShortcut()">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</button><span id="shortcutResult" class="muted"></span>`)}
+      ${row(t('hub.settings_tools_dir', 'Tools folder'), `<code>${esc((s.paths || {}).tools || '')}</code>`)}
+      ${row(t('hub.settings_config_file', 'Settings file'), `<code>${esc((s.paths || {}).config || '')}</code>`)}
+      ${row(t('hub.settings_auth_dir', 'Saved connections'), `<code>${esc((s.paths || {}).auth || '')}</code>`)}
+    </table>
+    <h2>${t('hub.settings_accounts_section', 'Accounts saved on this computer')}</h2>
+    ${(s.accounts || []).length ? `<table class="kv">${s.accounts.map(a => row('@' + esc(a.login),
+      `<span class="muted">${esc(a.name || '')}</span> <button class="danger" onclick="deleteAccount('${esc(a.login)}')">${t('hub.settings_delete_account', 'Delete')}</button>`)).join('')}</table>`
+      : `<p class="muted">${t('hub.settings_no_accounts', 'None.')}</p>`}
+    <p class="muted">${t('hub.settings_accounts_note', 'Deleting removes the connection key from this computer only. To revoke it on GitHub as well: Settings → Applications → Authorized OAuth Apps.')}</p>
+    <h2>${t('hub.settings_reset_section', 'Start over')}</h2>
+    <p><button class="danger" onclick="forgetCity()">${t('hub.settings_forget', 'Forget this city on this computer')}</button>
+      <span class="muted">${t('hub.settings_forget_note', 'The account choice and the registration of the data folder are forgotten; the folder itself stays. The next start runs the initial setup again.')}</span></p>
+    <h2>${t('hub.settings_uninstall_section', 'Removing the tools')}</h2>
+    <div class="note">${t('hub.settings_uninstall_body',
+      'Close the tools, then delete: the tools folder <code>{tools}</code> (the programs and the launcher), any desktop icons you created (they are only shortcuts), the saved connections <code>{auth}</code> and the settings file <code>{config}</code>. Your data folder <code>{clone}</code> holds your edits — delete it only when nothing is left to send. On GitHub, revoke the tool under Settings → Applications → Authorized OAuth Apps; your copy of the data and the proposals you sent stay on GitHub.',
+      {tools: esc((s.paths || {}).tools || ''), auth: esc((s.paths || {}).auth || ''), config: esc((s.paths || {}).config || ''), clone: esc(s.clone || '')})}</div>`;
+}
+async function changeAccount() { await api('/api/auth/disconnect', {}); location.href = '/'; }
+async function disconnect() {
+  if (!confirm(t('hub.settings_disconnect_confirm', 'Disconnect this account from this city and delete its connection key from this computer?'))) return;
+  await api('/api/auth/disconnect', {delete: true}); location.href = '/';
+}
+async function deleteAccount(login) {
+  if (!confirm(t('hub.settings_delete_account_confirm', 'Delete the saved connection of @{login} from this computer?', {login}))) return;
+  const r = await api('/api/accounts/delete', {login});
+  $('msg').textContent = r.ok === false ? (r.error || '') : t('hub.settings_deleted', 'Deleted.');
+  load();
+}
+async function forgetCity() {
+  if (!confirm(t('hub.settings_forget_confirm', 'Forget this city on this computer? The data folder is kept.'))) return;
+  await api('/api/settings/forget', {}); location.href = '/';
+}
+async function makeShortcut() {
+  const out = $('shortcutResult'); out.textContent = '…';
+  try {
+    const r = await api('/api/shortcut', {});
+    out.textContent = r.ok === false ? r.error : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', {name: r.name});
+  } catch (e) { out.textContent = t('hub.shortcut_failed', 'Could not create the icon: {reason}', {reason: String(e)}); }
+}
+load();
+</script></main></body></html>

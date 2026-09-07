@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support import TempHome, runtime
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location(
     "theme_loader", REPO_ROOT / "tools" / "themes" / "theme_loader.py")
@@ -107,6 +109,13 @@ class TestCssAndInjection(unittest.TestCase):
 
 
 class TestAppIntegration(unittest.TestCase):
+    def setUp(self):
+        self._home = TempHome()
+        self.tmp = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
+
     def test_attr_editor_applies_theme_to_html(self):
         spec = importlib.util.spec_from_file_location(
             "attr_app_theme_test", REPO_ROOT / "tools" / "attr_editor" / "app.py")
@@ -114,7 +123,7 @@ class TestAppIntegration(unittest.TestCase):
         spec.loader.exec_module(attr)
         d = Path(tempfile.mkdtemp())
         (d / "theme.json").write_text('{"extends": "us"}', encoding="utf-8")
-        out = attr.themed_html(b"<html><head></head><body></body></html>", d)
+        out = runtime.themed_html(b"<html><head></head><body></body></html>", d)
         self.assertIn(b"--accent: #0039a6;", out)
 
     def test_attr_editor_ignores_broken_theme(self):
@@ -126,7 +135,7 @@ class TestAppIntegration(unittest.TestCase):
         (d / "theme.json").write_text('{"extends": "wa", "tokens": {"accent": "bad"}}',
                                       encoding="utf-8")
         html = b"<html><head></head><body></body></html>"
-        self.assertEqual(attr.themed_html(html, d), html)  # broken theme is ignored and served plain
+        self.assertEqual(runtime.themed_html(html, d), html)  # broken theme is ignored and served plain
 
 
 if __name__ == "__main__":

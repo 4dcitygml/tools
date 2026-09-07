@@ -1,38 +1,31 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""sample-tokyo-station integrated front-end (launcher) — local server.
+"""4dcitygml hub — the local screen a contributor starts from.
 
-From a single screen:
-- **Launch by button** the attribute editor (attr_editor) / texture editor (tex_editor)
-  (each tool's local server starts as a child process and its URL opens)
-- Check the GitHub account / git status (entry point of the guided support; detailed tools are #59)
-- **List of your own Pull Requests / Issues** (with reply/review indicators)
-- **Merged PR count and achievement badges** (gamification)
-- "I'm stuck / suggest" in-hub form (creates a UX feedback Issue with the connected token)
+One process serves one city clone: it keeps the clone's main in line with the city
+repository (git_sync), launches the attribute and texture editors as child processes,
+holds the GitHub account the city is bound to (accounts), lists the person's own
+proposals, offers the review screen, and announces newer tool versions (applied at
+the next start). Everything it needs travels in its own folder (runtime.py and the
+other shared modules); a city clone carries no code.
 
-Depends only on the Python 3.9+ standard library. **The GitHub authentication for the
-initial setup implements the OAuth device flow itself**, so neither gh nor a terminal
-is needed (if gh is present, its token is reused).
-The post-launch dashboard (PR / Issue lists) uses the `gh` CLI as before.
+Standard library only. GitHub is reached over HTTPS with the account's token (OAuth
+device flow for a new sign-in); the GitHub CLI is consulted only when the person
+explicitly chooses "use this computer's GitHub".
 
 Usage:
-    python3 tools/hub/app.py            # no arguments needed inside a clone → http://localhost:8760
-    python3 tools/hub/app.py --repo ~/sample-tokyo-station [--port 8760] [--no-browser]
+    python3 hub.py                                  # started by the launcher (CITYGML_UPSTREAM selects the clone)
+    python3 tools/hub/app.py --repo <clone> [--port 8760] [--no-browser]
 """
 from __future__ import annotations
 
 import argparse
-import ast
 from concurrent.futures import ThreadPoolExecutor
-import importlib.util
 import json
 import mmap
 import os
 import re
-import shlex
-import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -40,235 +33,33 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 APP_DIR = Path(__file__).resolve().parent
-RES_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
-EXE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR
-# Where to look for bundled items (PortableGit / PythonPortable / preset.json). In the
-# distribution zip, so that users only see the "guide HTML and launcher file", the whole
-# bundle goes into "program/" next to the launcher file. Both locations are checked
-# so development (running directly in the repo) also works.
-LIB_SUBDIR = "program"
-BUNDLE_DIRS = list(dict.fromkeys(
-    [d for base in (EXE_DIR, APP_DIR) for d in (base, base / LIB_SUBDIR)]
-))
-# The clone destination is shared across the ecosystem (same config file as the attribute editor)
-CONFIG_PATH = Path.home() / ".citygml_attr_editor.json"
-UPSTREAM_URL = "https://github.com/4dcitygml/sample-tokyo-station"  # Default (demo city). The actual target is resolved by upstream_url()
+# The shared runtime (program/runtime.py in the bundle, tools/runtime.py in the source
+# tree) holds every fact the tools share and puts the other shared modules on sys.path.
+_SHARED = next((d for d in (APP_DIR, APP_DIR.parent) if (d / "runtime.py").is_file()), None)
+if _SHARED is None:
+    sys.exit("runtime.py is missing next to the hub: install the tools again with the one-line command")
+sys.path.insert(0, str(_SHARED))
+import runtime  # noqa: E402
+import accounts  # noqa: E402
+import git_sync  # noqa: E402
+import pr_classification  # noqa: E402
+import shortcuts  # noqa: E402
+
 DEFAULT_PORT = 8760
 
-_git_resolved: "tuple[str, bool] | None" = None
+
+def tr(key: str, default: str, **params) -> str:
+    """Server-generated text of the hub in the display language (fail-open)."""
+    return runtime.tr("hub", key, default, **params)
 
 
-def _system_git_is_configured(exe: str) -> bool:
-    """Whether the Git on PATH has the global settings needed for committing."""
-    try:
-        for key in ("user.name", "user.email"):
-            r = subprocess.run(
-                [exe, "config", "--global", "--get", key],
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=5,
-            )
-            if r.returncode != 0 or not r.stdout.strip():
-                return False
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
-
-
-def git_cmd() -> "tuple[str | None, bool]":
-    """Return the git executable to use and whether it is the bundled Git (same approach as attr_editor).
-
-    The all-in-one Windows zip bundles MinGit under the compatibility name
-    `program/PortableGit/`. If the Git on PATH has user.name / user.email set
-    globally, prefer it along with its existing authentication environment;
-    otherwise fall back to the bundled Git.
-    """
-    global _git_resolved
-    if _git_resolved is None:
-        sys_git = shutil.which("git")
-        found: "tuple[str, bool] | None" = (
-            (sys_git, False) if sys_git and _system_git_is_configured(sys_git) else None
-        )
-        if found is None:
-            for base in BUNDLE_DIRS:
-                for name in ("git.exe", "git"):
-                    cand = base / "PortableGit" / "cmd" / name
-                    if cand.is_file():
-                        found = (str(cand), True)
-                        break
-                if found:
-                    break
-        if found is None:
-            found = (sys_git, False) if sys_git else ("", False)
-        _git_resolved = found
-    exe, bundled = _git_resolved
-    return (exe or None), bundled
-
-
-def git_base_args(*, net: bool = False) -> list:
-    exe, bundled = git_cmd()
-    args = [exe or "git"]
-    # With the bundled Git, when we hold a token from our own authentication
-    # (device flow), use **only** that. Do not change the existing Git's credential
-    # helpers. The leading empty helper (credential.helper=) resets the system's
-    # default helper list. Without this, on macOS osxkeychain runs alongside and,
-    # depending on sandboxing and permissions, a "keychain not found" dialog can
-    # appear (observed in the 2026-07-31 end-to-end test).
-    # The bundled PortableGit's Credential Manager (which shows a GUI) is the last resort.
-    if net and bundled and GIT_CRED_PATH.is_file():
-        helper = f"store --file={shlex.quote(GIT_CRED_PATH.as_posix())}"
-        args += ["-c", "credential.helper=",
-                 "-c", f"credential.https://github.com.helper={helper}"]
-    elif net and bundled:
-        args += ["-c", "credential.helper=manager"]
-    return args
-
-
-_git_sync_mod = None
-
-
-def git_sync_module():
-    """Shared sync implementation: program/git_sync.py in the bundle, tools/git_sync.py in the source tree."""
-    global _git_sync_mod
-    if _git_sync_mod is not None:
-        return _git_sync_mod or None
-    for cand in (APP_DIR / "git_sync.py", APP_DIR.parent / "git_sync.py"):
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("git_sync", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _git_sync_mod = mod
-            return mod
-    _git_sync_mod = False
-    return None
-
-
-SYNC = None   # BackgroundSync of the active clone (started in main); its state is served by /api/status
-
-
-def sync_upstream_main(root) -> "str | None":
-    """Bring the machine-managed local main in line with the upstream city repo.
-
-    Delegates to the shared git_sync module (one ls-remote round trip, then a
-    fetch with git's progress-based abort instead of a wall-clock cut-off). The
-    sync target is the clone's own city (4dcitygml.json / remote), never the
-    environment: a start script for another city must not rewrite this clone.
-    Returns the new main commit when an update happened, else None.
-    """
-    mod = git_sync_module()
-    exe, _ = git_cmd()
-    if mod is None or not exe:
-        return None
-    result = mod.sync_main(Path(root).resolve(), upstream_url(root, ignore_env=True),
-                           git_base_args(net=True), log=print)
-    return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
-
-
-FETCH_TIMEOUT = 60  # [s] local git commands of the legacy implementation below (unused by the hub)
-
-
-def _legacy_sync_upstream_main(root) -> "str | None":  # pragma: no cover - superseded by git_sync
-    root = Path(root).resolve()
-    exe, _ = git_cmd()
-    if not exe:
-        return None
-
-    def run(*args: str, net: bool = False) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [*git_base_args(net=net), "-C", str(root), *args],
-            capture_output=True, text=True, timeout=FETCH_TIMEOUT,
-        )
-
-    try:
-        if run("rev-parse", "--git-dir").returncode != 0:
-            return None
-        # The sync target is the clone's own city (4dcitygml.json / remote), never the
-        # environment: a start script for another city must not rewrite this clone.
-        if run("fetch", "--quiet", upstream_url(root, ignore_env=True), "main", net=True).returncode != 0:
-            return None
-        new = run("rev-parse", "FETCH_HEAD").stdout.strip()
-        if not new:
-            return None
-        branch = run("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        if branch != "main":
-            cur = run("rev-parse", "refs/heads/main").stdout.strip()
-            if new != cur and run("branch", "-f", "main", new).returncode == 0:
-                print(f"Upstream update merged into main ({new[:12]})")
-                return new
-            return None
-        cur = run("rev-parse", "HEAD").stdout.strip()
-        if new == cur:
-            return None
-        dirty = [
-            ln for ln in run("status", "--porcelain").stdout.splitlines()
-            if ln.strip() and not ln.startswith("??")
-        ]
-        if dirty:
-            print("Warning: skipped upstream sync due to local unsaved changes")
-            return None
-        if run("merge", "--ff-only", "FETCH_HEAD").returncode == 0:
-            print(f"Upstream update merged (main → {new[:12]})")
-            return new
-        if run("reset", "--hard", "FETCH_HEAD").returncode == 0:
-            print(f"Updated main to match upstream (was {cur[:12]}; old state remains in reflog)")
-            return new
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
-
-
-_py_resolved: "tuple[str, bool] | None" = None
-
-
-def python_cmd() -> "tuple[str, bool]":
-    """Python executable used to launch child tools (.py editors) and whether it is the bundled portable one.
-
-    Same approach as PortableGit: prefer `PythonPortable/` next to the exe/py if present.
-    This lets the .py edition work on Windows without Python installed (if the
-    launcher starts the main app with the bundled python, sys.executable also
-    points to it, but detect it here too just in case, to reliably pass it to
-    child tools). Falls back to sys.executable if not found.
-    """
-    global _py_resolved
-    if _py_resolved is None:
-        found: "str | None" = None
-        for base in BUNDLE_DIRS:
-            for rel in ("python.exe", "pythonw.exe", "bin/python3", "python3"):
-                cand = base / "PythonPortable" / rel
-                if cand.is_file():
-                    found = str(cand)
-                    break
-            if found:
-                break
-        _py_resolved = (found or sys.executable, found is not None)
-    return _py_resolved
-
-
-def load_config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def save_config(cfg: dict) -> None:
-    """Merge cfg into the shared config file (never drop keys another tool wrote, e.g. `lang`)."""
-    try:
-        # Runtime contract: writers merge and write atomically (temp file + rename), so a
-        # second tool writing at the same moment can never leave a torn or truncated file.
-        current = load_config()
-        current.update(cfg)
-        tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + f".tmp{os.getpid()}")
-        tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, CONFIG_PATH)
-    except OSError:
-        pass
+def current_login() -> "str | None":
+    """The account this hub process works as (the one bound to its city), or None."""
+    return SESSION.login
 
 
 # ---- One clone per city (hub-v1.2.0) ----
@@ -278,174 +69,37 @@ def save_config(cfg: dict) -> None:
 # remembered per city under `cities[<owner/repo>]`; the legacy single `repo` key is
 # kept as "last used" for the standalone attribute editor.
 
-def city_key(value: str) -> "str | None":
-    """owner/repo in lower case (the config key), or None when value is not a GitHub repo."""
-    url = _normalize_upstream(value)
-    return url.split("github.com/")[-1].lower() if url else None
-
-
-def requested_city() -> "str | None":
-    """The city the start script asked for (CITYGML_UPSTREAM), or None when started by hand."""
-    return city_key(os.environ.get("CITYGML_UPSTREAM", ""))
-
-
-def clone_city(root) -> "str | None":
-    """The city a clone belongs to, from its own 4dcitygml.json (never from the environment)."""
-    try:
-        return city_key(json.loads((Path(root) / "4dcitygml.json").read_text(encoding="utf-8")).get("repo", ""))
-    except (OSError, ValueError, AttributeError):
-        return None
-
-
-def remember_city_clone(city: "str | None", dest) -> None:
-    """Record dest as the clone for city (and as the last-used clone)."""
-    cfg = load_config()
-    cities = dict(cfg.get("cities") or {}) if isinstance(cfg.get("cities"), dict) else {}
-    if city:
-        cities[city] = {"repo": str(dest), "last_used": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-    save_config({"repo": str(dest), "cities": cities})
-
-
-def saved_clone_for(city: str) -> "Path | None":
-    """The remembered clone of city, verified against the clone's own 4dcitygml.json.
-
-    Falls back to the legacy single `repo` entry once, migrating it into `cities`
-    when it turns out to belong to this city. A clone of another city is never
-    returned, whatever the config says."""
-    cfg = load_config()
-    cities = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
-    entry = cities.get(city) if isinstance(cities, dict) else None
-    candidates = [str((entry or {}).get("repo") or ""), str(cfg.get("repo") or "")]
-    for cand in candidates:
-        if cand and has_building_data(Path(cand)) and clone_city(cand) == city:
-            if cand != str((entry or {}).get("repo") or ""):
-                remember_city_clone(city, cand)   # migrate the legacy entry
-            return Path(cand)
-    return None
-
-
-def free_port(start: int, step: int = 2, tries: int = 20) -> int:
-    """First port from start (stepping by 2, like the child tools) that nothing listens on."""
-    port = start
-    for _ in range(tries):
-        if not port_open(port):
-            return port
-        port += step
-    return port
-
 
 # ---- Tool updates (hub-v1.2.0): check automatically, fetch on request, apply at the next start ----
 # The version of the hub is decided by 4dcitygml/tools releases (cities distribute no
 # code and pin no client version). At start the hub asks the releases API once; a
-# newer version is announced in a banner. "Get it now" downloads the asset, verifies
-# it against the SHA-256 digest GitHub publishes for it, and unpacks it into the
-# versioned folder next to the running one. Nothing is downloaded without that click,
-# and the running hub is never modified; the launcher picks the newest installed
-# version at the next start. A city may declare `min_hub` in 4dcitygml.json (data,
-# advisory): the banner then says why the update matters.
+# newer version is announced in a banner. "Get it now" runs the launcher's fetch mode
+# (runtime.fetch_latest_hub: download, SHA-256 digest check, unpack into the versioned
+# folder next to the running one). Nothing is downloaded without that click, and the
+# running hub is never modified; the launcher picks the newest installed version at
+# the next start. A city may declare `min_hub` in 4dcitygml.json (data, advisory):
+# the banner then says why the update matters.
 HUB_RELEASES_API = "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30"
-_HUB_TAG_RE = re.compile(r"^hub-v(\d+)\.(\d+)\.(\d+)$")
-
-
-def version_tuple(tag) -> "tuple | None":
-    m = _HUB_TAG_RE.match(str(tag or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else None
-
-
-def running_hub_tag() -> "str | None":
-    """The version this hub runs as: CITYGML_HUB_TAG from the launcher, else the versioned folder name."""
-    env = os.environ.get("CITYGML_HUB_TAG", "").strip()
-    if version_tuple(env):
-        return env
-    parent = APP_DIR.parent.name   # <tools>/citygml-hub/<tag>/program
-    return parent if version_tuple(parent) else None
-
-
-def hub_install_root() -> Path:
-    """<...>/citygml-hub, the folder holding one sub-folder per installed version."""
-    if running_hub_tag() and APP_DIR.parent.parent.name == "citygml-hub":
-        return APP_DIR.parent.parent
-    return Path.home() / "Documents" / "citygml-tools" / "citygml-hub"
-
-
-def platform_asset_name(tag: str) -> str:
-    flavor = "windows-full" if sys.platform.startswith("win") else "macos"
-    return f"citygml-hub-{str(tag).removeprefix('hub-')}-{flavor}.zip"
 
 
 def latest_hub_release(releases: list) -> "dict | None":
-    """The newest published hub-v release from the releases API payload (None when absent)."""
+    """The newest published hub-v release from the releases API payload: {tag, notesUrl}, or None."""
     best = None
     for rel in releases if isinstance(releases, list) else []:
-        key = version_tuple(rel.get("tag_name"))
+        key = runtime.version_tuple(rel.get("tag_name"))
         if not key or rel.get("draft") or rel.get("prerelease"):
             continue
-        if best is None or key > version_tuple(best["tag_name"]):
+        if best is None or key > runtime.version_tuple(best["tag_name"]):
             best = rel
-    if best is None:
-        return None
-    assets = {}
-    for a in best.get("assets") or []:
-        assets[str(a.get("name") or "")] = {"url": a.get("browser_download_url"), "digest": a.get("digest")}
-    return {"tag": best["tag_name"], "assets": assets, "notesUrl": best.get("html_url") or ""}
+    return {"tag": best["tag_name"], "notesUrl": best.get("html_url") or ""} if best else None
 
 
 def fetch_releases(url: str = HUB_RELEASES_API) -> list:
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
-                                               "User-Agent": "citygml-hub"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def _download(url: str, dest: Path) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "citygml-hub"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as fh:
-        shutil.copyfileobj(r, fh)
-
-
-def install_release(tag: str, asset_url: str, digest: str, root: Path, download=None) -> Path:
-    """Download one hub asset, verify it against GitHub's sha256 digest, unpack it into root/<tag>.
-
-    Staging → rename, so a failure leaves no half-installed version. An already
-    installed version is left untouched (the download is then skipped)."""
-    import hashlib
-    import tempfile
-    import zipfile
-    root = Path(root)
-    target = root / tag
-    if (target / "program" / "hub.py").is_file():
-        return target
-    expected = str(digest or "")
-    if not expected.startswith("sha256:"):
-        raise RuntimeError("GitHub published no sha256 digest for this asset")
-    expected = expected.split(":", 1)[1].lower()
-    root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="citygml-hub-stage.", dir=str(root)) as stage:
-        stage = Path(stage)
-        archive = stage / "asset.zip"
-        (download or _download)(asset_url, archive)
-        actual = hashlib.sha256(archive.read_bytes()).hexdigest()
-        if actual != expected:
-            raise RuntimeError(f"SHA-256 mismatch (expected {expected[:12]}…, got {actual[:12]}…); nothing installed")
-        with zipfile.ZipFile(archive) as z:
-            for info in z.infolist():
-                name = info.filename
-                if name.startswith("/") or ".." in Path(name).parts:
-                    raise RuntimeError("Unsafe path in archive")
-            z.extractall(stage / "x")
-            # Restore the execute bit of the launcher files (zipfile drops it on extract).
-            for info in z.infolist():
-                mode = (info.external_attr >> 16) & 0o777
-                if mode & 0o111:
-                    p = stage / "x" / info.filename
-                    if p.is_file():
-                        p.chmod(mode)
-        extracted = stage / "x" / "citygml-hub"
-        if not (extracted / "program" / "hub.py").is_file():
-            raise RuntimeError("The archive has an unexpected layout")
-        if not target.exists():
-            extracted.rename(target)
-    return target
+    status, raw, _ = runtime.request(url, headers={"Accept": "application/vnd.github+json"}, timeout=20)
+    if status != 200:
+        raise RuntimeError(f"GitHub releases API answered HTTP {status}")   # rate limit, outage: named, not "up to date"
+    data = json.loads(raw.decode("utf-8"))
+    return data if isinstance(data, list) else []
 
 
 def min_hub_of(clone_root) -> "str | None":
@@ -453,14 +107,14 @@ def min_hub_of(clone_root) -> "str | None":
         value = json.loads((Path(clone_root) / "4dcitygml.json").read_text(encoding="utf-8")).get("min_hub")
     except (OSError, ValueError, AttributeError):
         return None
-    return str(value) if version_tuple(value) else None
+    return str(value) if runtime.version_tuple(value) else None
 
 
 class UpdateManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._state = {
-            "running": running_hub_tag(), "latest": None, "available": False, "checked": False,
+            "running": runtime.running_hub_tag(), "latest": None, "available": False, "checked": False,
             "notesUrl": "", "minHub": None, "minHubOk": True, "error": "",
             "fetch": {"state": "idle", "tag": None, "message": ""},
         }
@@ -480,68 +134,45 @@ class UpdateManager:
             except Exception as e:  # offline etc.: silently keep the running version
                 self._set(checked=True, error=str(e))
                 return
-            running = version_tuple(self._state["running"])
-            newest = version_tuple(latest["tag"]) if latest else None
+            running = runtime.version_tuple(self._state["running"])
+            newest = runtime.version_tuple(latest["tag"]) if latest else None
             available = bool(newest and (running is None or newest > running))
             min_ok = True
-            if min_hub and version_tuple(min_hub) and running and version_tuple(min_hub) > running:
+            if min_hub and runtime.version_tuple(min_hub) and running and runtime.version_tuple(min_hub) > running:
                 min_ok = False
-                available = available or bool(newest and newest >= version_tuple(min_hub))
+                available = available or bool(newest and newest >= runtime.version_tuple(min_hub))
             fetch = dict(self._state["fetch"])
-            if latest and (hub_install_root() / latest["tag"] / "program" / "hub.py").is_file() and available:
+            if latest and (runtime.hubs_dir() / latest["tag"] / "program" / "hub.py").is_file() and available:
                 fetch = {"state": "done", "tag": latest["tag"], "message": ""}
             self._set(checked=True, latest=latest["tag"] if latest else None,
                       notesUrl=(latest or {}).get("notesUrl", ""), available=available,
-                      minHub=min_hub, minHubOk=min_ok, fetch=fetch, _assets=(latest or {}).get("assets", {}))
+                      minHub=min_hub, minHubOk=min_ok, fetch=fetch)
         threading.Thread(target=work, name="citygml-update-check", daemon=True).start()
 
-    def fetch_async(self, download=None) -> dict:
+    def fetch_async(self, fetch=None) -> dict:
+        """Start the launcher's fetch of the newest version (runtime.fetch_latest_hub); the
+        state reports running / done / failed. fetch is a test seam."""
         with self._lock:
             tag = self._state.get("latest")
-            assets = self._state.get("_assets") or {}
             if self._state["fetch"]["state"] == "running":
                 return dict(self._state["fetch"])
             if not tag:
                 return {"state": "failed", "tag": None, "message": "No newer version is known"}
             self._state["fetch"] = {"state": "running", "tag": tag, "message": ""}
-        asset = assets.get(platform_asset_name(tag)) or {}
 
         def work():
             try:
-                install_release(tag, asset.get("url"), asset.get("digest"), hub_install_root(), download)
-                self._set(fetch={"state": "done", "tag": tag, "message": ""})
+                got = (fetch or runtime.fetch_latest_hub)()
+                self._set(fetch={"state": "done", "tag": got or tag, "message": ""})
             except Exception as e:
-                self._set(fetch={"state": "failed", "tag": tag, "message": str(e)})
+                self._set(fetch={"state": "failed", "tag": tag, "message": runtime.public_message(e)})
         threading.Thread(target=work, name="citygml-update-fetch", daemon=True).start()
         return {"state": "running", "tag": tag, "message": ""}
 
 
-UPDATES = UpdateManager()
-
-_shortcuts_mod = None
-
-
-def shortcuts_module():
-    global _shortcuts_mod
-    if _shortcuts_mod is not None:
-        return _shortcuts_mod or None
-    for cand in (APP_DIR / "shortcuts.py", APP_DIR.parent / "shortcuts.py"):
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("shortcuts", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _shortcuts_mod = mod
-            return mod
-    _shortcuts_mod = False
-    return None
-
-
 def create_city_shortcut(clone_root: Path) -> dict:
     """A desktop launcher for the clone's city: only the city id is embedded (see tools/shortcuts.py)."""
-    mod = shortcuts_module()
-    if mod is None:
-        raise RuntimeError("shortcut module missing")
-    city = clone_city(clone_root)
+    city = runtime.clone_city(clone_root)
     if not city:
         raise RuntimeError("The clone does not name its city (4dcitygml.json repo)")
     try:
@@ -555,24 +186,24 @@ def create_city_shortcut(clone_root: Path) -> dict:
     else:
         display = name or city.split("/")[-1]
     logo = Path(clone_root) / str(cfg.get("logo") or "logo.png")
-    tools_dir = hub_install_root().parent
-    mod.ensure_launcher(tools_dir, APP_DIR)
-    path = mod.create_shortcut(tools_dir, str(display), city, tools_dir, logo if logo.is_file() else None)
-    mod.reveal(path)
+    shortcuts.ensure_launcher()
+    path = shortcuts.create_shortcut(runtime.tools_dir(), str(display), city, logo if logo.is_file() else None)
+    shortcuts.reveal(path)
     return {"ok": True, "path": str(path), "name": path.name}
 
 
-def running_hub_for(root, start: int = DEFAULT_PORT, step: int = 2, tries: int = 20) -> "str | None":
-    """URL of a hub already serving this clone, so the same city is opened, not started twice."""
+def running_hub_for(root, start: int = DEFAULT_PORT, step: int = 2, tries: int = 20) -> "tuple[str, str | None] | None":
+    """(URL, version tag) of a hub already serving this clone, or None. The caller decides
+    whether to open it (same version) or to start anyway (another version left running)."""
     root = Path(root).resolve()
     port = start
     for _ in range(tries):
-        if port_open(port):
+        if runtime.port_open(port):
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1) as r:
                     data = json.loads(r.read().decode("utf-8"))
                 if Path(str(data.get("repo") or "")).resolve() == root:
-                    return f"http://localhost:{port}/"
+                    return f"http://localhost:{port}/", data.get("hubTag") or None
             except Exception:
                 pass
         port += step
@@ -583,14 +214,14 @@ TOOLS = {
     "attr_editor": {
         "label": "Attribute Editor",
         "desc": "View and edit building attributes from the map and submit a PR",
-        "path": "tools/attr_editor/app.py",
+        "path": "attr_editor/app.py",
         "port": 8765,
         "icon": "🏢",
     },
     "tex_editor": {
         "label": "Texture Editor",
         "desc": "Replace facade photos (LOD2 textures) and submit a PR",
-        "path": "tools/tex_editor/app.py",
+        "path": "tex_editor/app.py",
         "port": 8766,
         "icon": "🖼️",
     },
@@ -664,26 +295,6 @@ def badge_for(merged: int) -> dict:
             "merged": merged, "next": None}
 
 
-_classification_mod = None
-
-
-def classification_module():
-    """scripts/pr_classification.py — the one A5 table shared with CI (bundled as program/pr_classification.py)."""
-    global _classification_mod
-    if _classification_mod is not None:
-        return _classification_mod or None
-    for cand in (APP_DIR / "pr_classification.py",                       # distribution: program/
-                 APP_DIR.parent.parent / "scripts" / "pr_classification.py"):  # source: tools/hub → repo/scripts
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("pr_classification", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _classification_mod = mod
-            return mod
-    _classification_mod = False
-    return None
-
-
 def review_kind(pr: dict) -> str:
     """The PR's class for the review screen — Exchange Contract A5, decided by the shared table.
 
@@ -694,8 +305,7 @@ def review_kind(pr: dict) -> str:
         return explicit
     title = str(pr.get("title") or "")
     head = str((pr.get("head") or {}).get("ref") or pr.get("headRefName") or "")
-    mod = classification_module()
-    return (mod.classify_by_name(head, title) if mod else None) or "other"
+    return pr_classification.classify_by_name(head, title) or "other"
 
 
 _TRAILER_ID_RE = re.compile(r"^(?:Building|Building-Added|Building-Deleted):[ \t]*(\S+)[ \t]*$", re.MULTILINE)
@@ -711,7 +321,7 @@ def building_id_from_commit_messages(messages: "list[str]") -> str:
 
 
 def building_id_from_commits(token: str, nwo: str, number: int) -> str:
-    code, commits = gh_api(f"/repos/{nwo}/pulls/{number}/commits?per_page=100", token)
+    code, commits = runtime.github_api(f"/repos/{nwo}/pulls/{number}/commits?per_page=100", token)
     if code != 200 or not isinstance(commits, list):
         return ""
     return building_id_from_commit_messages(
@@ -734,7 +344,7 @@ def latest_reviews(reviews: list) -> dict:
 
 _BUILDING_ID_REVIEW_RE = re.compile(r"(?<![\w-])(\d{5}-bldg-[A-Za-z0-9_-]+)")
 
-# Even in standalone distributions/tests without attr_editor, the main items always get readable English labels.
+# Even in tests without the attribute editor's dictionary, the main items get readable English labels.
 _CORE_ATTRIBUTE_LABELS = {
     "class": "Classification",
     "usage": "Usage",
@@ -760,23 +370,19 @@ def extract_building_id(*texts: object) -> str:
     return ""
 
 
-def load_attribute_labels(root: Path) -> dict[str, str]:
-    """Read the attribute editor's Japanese-name dictionary without executing it, shared with the confirmation screen."""
+def attr_editor_module():
+    """The attribute editor, bundled next to the hub (imported on first use: the review
+    screen borrows its attribute names and its 3D model of a building)."""
+    from attr_editor import app
+    return app
+
+
+def attribute_labels() -> dict[str, str]:
+    """Display names of attributes: the core set plus the attribute editor's dictionary."""
     labels = dict(_CORE_ATTRIBUTE_LABELS)
-    source = root / "tools" / "attr_editor" / "app.py"
     try:
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        for node in tree.body:
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if not any(isinstance(t, ast.Name) and t.id == "LABELS" for t in targets):
-                continue
-            value = ast.literal_eval(node.value)
-            if isinstance(value, dict):
-                labels.update({str(k): str(v) for k, v in value.items()})
-            break
-    except (OSError, SyntaxError, ValueError):
+        labels.update({str(k): str(v) for k, v in attr_editor_module().LABELS.items()})
+    except Exception:   # a broken editor module must not stop the hub
         pass
     return labels
 
@@ -1208,161 +814,16 @@ def review_ready_reason(reason: str) -> bool:
                 and "please fill in" not in normalized.lower())
 
 
-def port_open(port: int, host: str = "127.0.0.1") -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.25)
-        return s.connect_ex((host, port)) == 0
-
-
-def has_building_data(root) -> bool:
-    """Whether the clone has building data (PLATEAU layout or data_dirs in 4dcitygml.json)."""
-    root = Path(root)
-    try:
-        if any(root.glob("*/udx/bldg")):
-            return True
-    except OSError:
-        return False
-    try:
-        meta = json.loads((root / "4dcitygml.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return any(
-        (root / str(rel)).is_dir() and any((root / str(rel)).glob("*.gml"))
-        for rel in (meta.get("data_dirs") or [])
-        if isinstance(rel, str)
-    )
-
-
-def detect_repo() -> "Path | None":
-    """Search the ancestors for a repository root that has building data."""
-    for anc in [APP_DIR, *APP_DIR.parents]:
-        try:
-            if has_building_data(anc):
-                return anc
-        except OSError:
-            continue
-    return None
-
-
-def serve_tool(root: Path, key: str, port: int) -> None:
-    """Load tools/<key>/app.py inside the clone and start its server (blocking).
-
-    In the frozen distribution the hub exe itself takes this path via `--serve-tool`,
-    so each editor launches without a python interpreter. The tools actually live in
-    the clone (tools/…), so the same path resolves for both source and frozen runs.
-    """
-    t = TOOLS.get(key)
-    if t is None:
-        sys.exit(f"Unknown tool: {key}")
-    app = root / t["path"]
-    if not app.is_file():
-        sys.exit(f"Tool not found: {app}")
-    spec = importlib.util.spec_from_file_location(f"_tool_{key}", str(app))
-    mod = importlib.util.module_from_spec(spec)
-    # Put tools/ on the import path for relative-import compatibility (for tex, which inherits attr)
-    tools_dir = str(root / "tools")
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    spec.loader.exec_module(mod)
-    if not hasattr(mod, "create_server"):
-        sys.exit(f"{key} has no create_server (update required)")
-    server = mod.create_server(root, port)
-    print(f"Launched {t['label']}: http://localhost:{port}/")
-    server.serve_forever()
-
-
-
 # ---- Theme pack (shares tools/themes/theme_loader.py; runs without themes if missing) ----
-_theme_mod = None
-
-
-def theme_module():
-    global _theme_mod
-    if _theme_mod is not None:
-        return _theme_mod or None
-    import importlib.util
-    for cand in (APP_DIR / "themes" / "theme_loader.py",  # distribution: program/themes/
-                 RES_DIR.parent / "themes" / "theme_loader.py",
-                 APP_DIR.parent / "themes" / "theme_loader.py"):
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("theme_loader", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _theme_mod = mod
-            return mod
-    _theme_mod = False
-    return None
-
-
-def themed_html(data: bytes, repo_root) -> bytes:
-    """Apply the city repo's theme.json to the HTML. On an invalid theme.json, serve without a theme and warn."""
-    mod = theme_module()
-    if mod is None or repo_root is None:
-        return data
-    try:
-        tokens = mod.resolve_theme(repo_root)
-        return mod.inject_theme(data, mod.theme_css(tokens))
-    except Exception as e:  # Do not block display (themes are decoration, not functionality)
-        print(f"Ignoring theme.json: {e}", file=sys.stderr)
-        return data
 
 
 # ---- Language pack (shares tools/i18n/i18n_loader.py; runs with the original text if missing) ----
-_i18n_mod = None
-
-
-def i18n_module():
-    global _i18n_mod
-    if _i18n_mod is not None:
-        return _i18n_mod or None
-    import importlib.util
-    for cand in (APP_DIR / "i18n" / "i18n_loader.py",  # distribution: program/i18n/
-                 RES_DIR.parent / "i18n" / "i18n_loader.py",
-                 APP_DIR.parent / "i18n" / "i18n_loader.py"):
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("i18n_loader", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _i18n_mod = mod
-            return mod
-    _i18n_mod = False
-    return None
-
-
-def localized_html(data: bytes, app: str = "hub") -> bytes:
-    """Inject the selected language's catalog into the HTML. On failure, serve the original text and warn."""
-    mod = i18n_module()
-    if mod is None:
-        return data
-    try:
-        return mod.inject_i18n(data, app, mod.resolve_lang(None))
-    except Exception as e:
-        print(f"Ignoring language pack: {e}", file=sys.stderr)
-        return data
-
-
-def tr(key: str, default: str, **params) -> str:
-    """Translation of server-generated (Python) text (fail-open).
-
-    Even when the i18n module is missing or broken, apply the {name} placeholders
-    to default (the English original) and return it, never blocking display.
-    """
-    mod = i18n_module()
-    if mod is not None:
-        try:
-            return mod.translate("hub", key, default, **params)
-        except Exception:
-            pass
-    s = default
-    for k, v in params.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
 
 
 class Hub:
     def __init__(self, root: Path):
         self.root = root.resolve()
-        self._attribute_labels = load_attribute_labels(self.root)
+        self._attribute_labels = attribute_labels()
         self._attr_repo = None
         self._attr_repo_lock = threading.Lock()
         self._procs: dict[str, subprocess.Popen] = {}
@@ -1373,13 +834,27 @@ class Hub:
 
     # ---- Repository / account status ----
     def _git(self, *args: str) -> str:
-        exe, _ = git_cmd()
-        if exe is None:
-            return ""
-        r = subprocess.run(
-            [exe, "-C", str(self.root), *args], capture_output=True, text=True
-        )
-        return r.stdout.strip() if r.returncode == 0 else ""
+        return runtime.git_output(self.root, *args)
+
+    def ensure_origin(self, fork_nwo: str) -> bool:
+        """Point `origin` at the account's fork (hub-v1.2.1: the account may change after the clone).
+
+        The upstream city is never touched (sync uses the clone's 4dcitygml.json);
+        only where edits are uploaded follows the chosen account. Returns True when changed."""
+        current = (self.nwo() or "").lower()
+        if not fork_nwo or not current or current == fork_nwo.lower():
+            return False   # unknown / non-GitHub remote (e.g. an SSH alias): never touched
+        if current.split("/")[-1] != fork_nwo.lower().split("/")[-1]:
+            return False   # another repository: not a copy of this city
+        # A clone made straight from the city (origin = the city, any transport) is repointed
+        # as well: with an account chosen, uploads go to that account's copy over HTTPS only.
+        if not runtime.git_exe():
+            return False
+        r = runtime.git(self.root, "remote", "set-url", "origin", f"https://github.com/{fork_nwo}.git")
+        if r.returncode == 0:
+            print(f"  origin → {fork_nwo} (the account's copy)")
+            return True
+        return False
 
     def nwo(self) -> "str | None":
         """origin's owner/repo (for GitHub links and gh)."""
@@ -1390,8 +865,8 @@ class Hub:
         return m.group(1) if m else None
 
     def status(self) -> dict:
-        git_exe, git_bundled = git_cmd()
-        py_exe, py_bundled = python_cmd()
+        git_exe, git_bundled = runtime.git_exe(), runtime.git_bundled()
+        py_exe, py_bundled = runtime.python_exe(), runtime.python_bundled()
         return {
             "ok": True,
             "repo": str(self.root),
@@ -1399,8 +874,9 @@ class Hub:
             "gitUser": self._git("config", "user.name"),
             "gitEmail": self._git("config", "user.email"),
             "nwo": self.nwo(),
-            "hubTag": running_hub_tag(),
-            "sync": SYNC.state if SYNC is not None else None,
+            "account": current_login(),
+            "hubTag": runtime.running_hub_tag(),
+            "sync": SESSION.sync.state if SESSION.sync is not None else None,
             "runtime": {
                 "git": {"path": git_exe, "bundled": git_bundled},
                 "python": {"path": py_exe, "bundled": py_bundled},
@@ -1408,16 +884,11 @@ class Hub:
         }
 
     def _tool_app(self, t: dict) -> "Path | None":
-        """Actual tool app.py, always from the hub bundle (program/<editor>/) or the tools source tree.
-
-        Cities distribute no code: a `tools/` folder inside a city clone is never
-        executed (hub-v1.2.0; the earlier clone-first lookup is gone).
-        """
-        rel = Path(t["path"]).relative_to("tools")
-        for cand in (APP_DIR / rel, APP_DIR.parent / rel):  # distribution: program/<editor>/app.py
-            if cand.is_file():
-                return cand
-        return None
+        """The editor's app.py next to the hub (program/<editor>/ in the bundle, tools/<editor>/
+        in the source tree). Cities distribute no code: nothing is ever run from a clone."""
+        rel = Path(t["path"])
+        cand = runtime.SHARED_DIR / rel
+        return cand if cand.is_file() else None
 
     def _port_serves_our_repo(self, port: int) -> bool:
         """Whether the editor on that port has our own city (repo) open (5-second TTL)."""
@@ -1446,7 +917,7 @@ class Hub:
             return allocated
         port = t["port"]
         for _ in range(20):
-            if not port_open(port) or self._port_serves_our_repo(port):
+            if not runtime.port_open(port) or self._port_serves_our_repo(port):
                 break
             port += 2
         self._ports[key] = port
@@ -1457,11 +928,11 @@ class Hub:
         for key, t in TOOLS.items():
             exists = self._tool_app(t) is not None
             port = self._ports.get(key)
-            if port is None and port_open(t["port"]) and self._port_serves_our_repo(t["port"]):
+            if port is None and runtime.port_open(t["port"]) and self._port_serves_our_repo(t["port"]):
                 # Adopt a manually launched editor of our own city
                 port = self._ports[key] = t["port"]
             display = port or t["port"]
-            running = port is not None and port_open(port)
+            running = port is not None and runtime.port_open(port)
             out.append({
                 "key": key, "label": tool_label(key, t), "desc": tool_desc(key, t),
                 "icon": t["icon"],
@@ -1471,15 +942,9 @@ class Hub:
         return out
 
     def _launch_cmd(self, key: str, t: dict, port: "int | None" = None) -> list:
-        """Child-tool launch command. In the frozen distribution (an exe without a
-        python interpreter), re-invoke the hub exe itself with `--serve-tool`;
-        when running from source, launch each tool's app.py directly."""
-        port = port or t["port"]
-        if getattr(sys, "frozen", False):
-            return [sys.executable, "--serve-tool", key,
-                    "--repo", str(self.root), "--port", str(port)]
-        return [python_cmd()[0], str(self._tool_app(t) or (self.root / t["path"])),
-                "--repo", str(self.root), "--port", str(port), "--no-browser"]
+        """Child-tool launch command: the bundled (or system) python runs the editor's app.py."""
+        return [runtime.python_exe(), str(self._tool_app(t)), "--repo", str(self.root),
+                "--port", str(port or t["port"]), "--no-browser"]
 
     def launch(self, key: str) -> dict:
         t = TOOLS.get(key)
@@ -1490,13 +955,15 @@ class Hub:
             raise FileNotFoundError(t["path"])
         port = self._tool_port(key, t)
         url = f"http://localhost:{port}/"
-        if port_open(port):
+        if runtime.port_open(port):
             return {"ok": True, "url": url, "port": port, "already": True}
-        proc = subprocess.Popen(self._launch_cmd(key, t, port), cwd=str(self.root))
+        # The editors work as the same account as this hub (token and credential store by login).
+        env = {**accounts.scrub_git_env(os.environ), "CITYGML_ACCOUNT": current_login() or ""}
+        proc = subprocess.Popen(self._launch_cmd(key, t, port), cwd=str(self.root), env=env)
         self._procs[key] = proc
         # Wait a bit until the server listens (up to ~6 seconds)
         for _ in range(30):
-            if port_open(port):
+            if runtime.port_open(port):
                 break
             if proc.poll() is not None:
                 raise RuntimeError(tr(
@@ -1505,7 +972,7 @@ class Hub:
                     label=tool_label(key, t), code=proc.returncode,
                 ))
             time.sleep(0.2)
-        if not port_open(port):
+        if not runtime.port_open(port):
             raise RuntimeError(tr(
                 "hub.err_launch_no_response", "{label} is not responding (port {port})",
                 label=tool_label(key, t), port=port,
@@ -1538,19 +1005,18 @@ class Hub:
     }"""
 
     def _fetch_contributions(self) -> dict:
-        nwo = self.nwo()
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login")
-        if not token or not login or not nwo:
-            reason = (
-                tr("hub.err_origin_not_github",
-                   "The repository remote (origin) does not point to GitHub") if not nwo
-                else tr("hub.err_gh_not_connected",
+        # Proposals and issues live on the city repository (upstream); the clone's origin is
+        # the person's copy, where no PR ever exists.
+        nwo = runtime.upstream_nwo(self.root)
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login")
+        if not token or not login:
+            reason = tr("hub.err_gh_not_connected",
                         'GitHub is not connected (you can connect from "Connect to GitHub" '
-                        "in the account section)"))
+                        "in the account section)")
             return {"ok": False, "reason": reason, "login": None,
                     "prs": [], "issues": [], "merged": 0, "badge": badge_for(0)}
-        code, data = gh_api("/graphql", token, method="POST", payload={
+        code, data = runtime.github_api("/graphql", token, method="POST", payload={
             "query": self._CONTRIB_QUERY,
             "variables": {"qPr": f"repo:{nwo} author:{login} type:pr sort:updated",
                           "qIssue": f"repo:{nwo} author:{login} type:issue sort:updated"},
@@ -1580,7 +1046,7 @@ class Hub:
             )
             retry = ci_retry_info(check_status, [])
             if p.get("state") == "OPEN" and check_status == "fail":
-                c_code, c_data = gh_api(
+                c_code, c_data = runtime.github_api(
                     f"/repos/{nwo}/issues/{p['number']}/comments?per_page=100", token
                 )
                 comments = c_data if c_code == 200 and isinstance(c_data, list) else []
@@ -1610,16 +1076,16 @@ class Hub:
 
     # ---- PR review for administrators ----
     def _review_identity(self) -> tuple[str, str, str]:
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login") or ""
-        nwo = upstream_nwo(getattr(self, "root", None))
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
+        nwo = runtime.upstream_nwo(getattr(self, "root", None))
         if not token or not login:
             raise RuntimeError(tr("hub.err_connect_first", "Connect to GitHub first"))
         return token, login, nwo
 
     def reviewer_permission(self) -> dict:
         token, login, nwo = self._review_identity()
-        code, data = gh_api(f"/repos/{nwo}/collaborators/{login}/permission", token)
+        code, data = runtime.github_api(f"/repos/{nwo}/collaborators/{login}/permission", token)
         permission = str(data.get("permission") or "none") if code == 200 else "none"
         return {
             "login": login,
@@ -1717,26 +1183,11 @@ class Hub:
         return str(self._building_ref_from_local_files(files, comments).get("buildingId") or "")
 
     def _attribute_repo(self):
-        """Lazily reuse the existing attribute editor's 3D-model loading for the confirmation screen too."""
-        if self._attr_repo is not None:
-            return self._attr_repo
-        with self._attr_repo_lock:
-            if self._attr_repo is not None:
-                return self._attr_repo
-            app = self.root / "tools" / "attr_editor" / "app.py"
-            if not app.is_file():
-                raise FileNotFoundError(
-                    tr("hub.err_viewer_missing", "The 3D view component was not found"))
-            spec = importlib.util.spec_from_file_location("_hub_attr_editor", str(app))
-            if spec is None or spec.loader is None:
-                raise RuntimeError(
-                    tr("hub.err_viewer_load", "The 3D view component could not be loaded"))
-            mod = importlib.util.module_from_spec(spec)
-            tools_dir = str(self.root / "tools")
-            if tools_dir not in sys.path:
-                sys.path.insert(0, tools_dir)
-            spec.loader.exec_module(mod)
-            self._attr_repo = mod.Repo(self.root)
+        """The attribute editor's model of the clone (the 3D view of the review screen), built once."""
+        if self._attr_repo is None:
+            with self._attr_repo_lock:
+                if self._attr_repo is None:
+                    self._attr_repo = attr_editor_module().Repo(self.root)
         return self._attr_repo
 
     def review_building_model(self, tile: str, gid: str) -> dict:
@@ -1771,8 +1222,8 @@ class Hub:
         number = int(pr.get("number") or 0)
         if number < 1:
             return ""
-        c_status, comments = gh_api(f"/repos/{nwo}/issues/{number}/comments?per_page=100", token)
-        f_status, files = gh_api(f"/repos/{nwo}/pulls/{number}/files?per_page=100", token)
+        c_status, comments = runtime.github_api(f"/repos/{nwo}/issues/{number}/comments?per_page=100", token)
+        f_status, files = runtime.github_api(f"/repos/{nwo}/pulls/{number}/files?per_page=100", token)
         comments = comments if c_status == 200 and isinstance(comments, list) else []
         files = files if f_status == 200 and isinstance(files, list) else []
         return extract_building_id(*[c.get("body") for c in comments]) or self._building_id_from_local_files(
@@ -1794,21 +1245,21 @@ class Hub:
         head_sha = str((pr.get("head") or {}).get("sha") or "")
         check_runs: list = []
         if head_sha:
-            status, data = gh_api(
+            status, data = runtime.github_api(
                 f"/repos/{nwo}/commits/{head_sha}/check-runs?per_page=100", token
             )
             if status == 200 and isinstance(data, dict):
                 check_runs = data.get("check_runs") or []
         check_status = _overall_check_status(check_runs)
 
-        c_status, comment_data = gh_api(
+        c_status, comment_data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
         comments = comment_data if c_status == 200 and isinstance(comment_data, list) else []
         ci_rows = _inspection_summary_statuses(comments)
         if "reason" in ci_rows:
             reason_ok = ci_rows["reason"] == "pass"
-        r_status, review_data = gh_api(
+        r_status, review_data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews?per_page=100", token
         )
         reviews = review_data if r_status == 200 and isinstance(review_data, list) else []
@@ -1899,7 +1350,7 @@ class Hub:
         # a failing first page is an error the screen shows.
         pulls: list = []
         for page in range(1, 11):
-            code, data = gh_api(
+            code, data = runtime.github_api(
                 f"/repos/{nwo}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}",
                 token,
             )
@@ -1912,7 +1363,7 @@ class Hub:
                 break
 
         if include_examples and not any(int(p.get("number") or 0) == 6 for p in pulls):
-            ex_code, example = gh_api(f"/repos/{nwo}/pulls/6", token)
+            ex_code, example = runtime.github_api(f"/repos/{nwo}/pulls/6", token)
             if ex_code == 200 and isinstance(example, dict):
                 example = {**example, "example": True, "review_kind": "attribute"}
                 pulls.append(example)
@@ -1982,7 +1433,7 @@ class Hub:
                 "q": f'repo:{nwo} is:pr "{building_id}"',
                 "sort": "updated", "order": "desc", "per_page": "20",
             })
-            code, result = gh_api(f"/search/issues?{query}", token)
+            code, result = runtime.github_api(f"/search/issues?{query}", token)
             if code == 200 and isinstance(result, dict):
                 found = [x for x in (result.get("items") or []) if isinstance(x, dict)]
         if not any(int(x.get("number") or 0) == current_number for x in found):
@@ -2034,7 +1485,7 @@ class Hub:
         if number < 1:
             raise ValueError(tr("hub.err_bad_pr_number", "Invalid PR number"))
 
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         endpoints = {
@@ -2046,7 +1497,7 @@ class Hub:
         }
         fetched: dict = {}
         for key, endpoint in endpoints.items():
-            status, data = gh_api(endpoint, token)
+            status, data = runtime.github_api(endpoint, token)
             fetched[key] = data if status == 200 else ([] if key != "checks" else {})
 
         files = fetched["files"] if isinstance(fetched["files"], list) else []
@@ -2279,14 +1730,14 @@ class Hub:
         if not asset_path.match(path) or ".." in Path(path).parts:
             raise ValueError(tr("hub.err_not_texture", "Only texture images can be fetched"))
         token, _login, nwo = self._review_identity()
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         ref = str((pr.get(side) or {}).get("sha") or (pr.get(side) or {}).get("ref") or "")
         if not ref:
             raise RuntimeError(tr("hub.err_no_image_ref", "Could not resolve the image reference"))
         endpoint = f"/repos/{nwo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
-        status, data, mime = gh_raw(endpoint, token)
+        status, data, mime = runtime.github_raw(endpoint, token)
         if status != 200:
             raise FileNotFoundError(tr(
                 "hub.err_image_fetch", "Could not fetch the image (HTTP {status})",
@@ -2318,7 +1769,7 @@ class Hub:
                 "hub.err_cannot_approve", "Cannot approve: {blockers}",
                 blockers=tr("hub.blocker_separator", "; ").join(detail["blockers"])))
         token, login, nwo = self._review_identity()
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews",
             token,
             method="POST",
@@ -2363,7 +1814,7 @@ class Hub:
             raise RuntimeError(tr(
                 "hub.blocker_permission",
                 "Sign in with an account that has approval permission"))
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews",
             token,
             method="POST",
@@ -2383,7 +1834,7 @@ class Hub:
     def request_ci_retry(self, number: int, *, demo: bool = False) -> dict:
         """Safely request a re-run, via a PR comment, for temporary inspection failures only."""
         token, login, nwo = self._review_identity()
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         if str(pr.get("state") or "").lower() != "open":
@@ -2399,11 +1850,11 @@ class Hub:
                     "Only the proposer or a maintainer can request a re-run"))
 
         head_sha = str((pr.get("head") or {}).get("sha") or "")
-        c_code, c_data = gh_api(
+        c_code, c_data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
         comments = c_data if c_code == 200 and isinstance(c_data, list) else []
-        r_code, r_data = gh_api(
+        r_code, r_data = runtime.github_api(
             f"/repos/{nwo}/commits/{head_sha}/check-runs?per_page=100", token
         )
         check_runs = (
@@ -2424,7 +1875,7 @@ class Hub:
             f" version (`{head_sha[:12]}`).\n"
             "The data is unchanged; only the inspection runs again."
         )
-        post_code, data = gh_api(
+        post_code, data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments",
             token,
             method="POST",
@@ -2452,8 +1903,8 @@ class Hub:
 
     def feedback_defaults(self) -> dict:
         """Return the defaults and submitter info for the in-hub feedback form."""
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login") or ""
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
         contributions = self.contributions()
         badge = contributions.get("badge") if contributions.get("ok") else None
         categories = feedback_categories()
@@ -2535,7 +1986,7 @@ class Hub:
             "<sub>The achievement badge is background information about contribution"
             " experience; it does not decide issue priority.</sub>",
         ])
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/issues", token, method="POST",
             payload={"title": title, "body": body},
         )
@@ -2555,136 +2006,11 @@ class Hub:
 # --------------------------------------------------------------------------
 # Initial setup (GUI shown when there is no clone; same approach as attr_editor)
 # --------------------------------------------------------------------------
-class SetupManager:
-    """Run git clone in the background and report progress to the polling API."""
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.running = False
-        self.done = False
-        self.error: "str | None" = None
-        self.dest: "str | None" = None
-        self.lines: list = []
-
-    def state(self) -> dict:
-        with self.lock:
-            return {
-                "ok": True,
-                "gitAvailable": git_cmd()[0] is not None,
-                "running": self.running,
-                "done": self.done,
-                "error": self.error,
-                "dest": self.dest,
-                "log": self.lines[-8:],
-            }
-
-    def start(self, url: str, dest: str) -> None:
-        with self.lock:
-            if self.running:
-                raise RuntimeError(tr("hub.err_clone_running", "A clone is already running"))
-            if git_cmd()[0] is None:
-                raise RuntimeError(tr(
-                    "hub.err_git_missing_setup",
-                    "git was not found. Prepare git by following the setup guide"))
-            url = url.strip()
-            if not re.match(r"^(https://|git@|file://|/)", url):
-                raise ValueError(tr(
-                    "hub.err_bad_repo_url", "The repository URL format is invalid"))
-            dest_path = Path(dest).expanduser()
-            if dest_path.exists() and any(dest_path.iterdir()):
-                raise ValueError(tr(
-                    "hub.err_dest_not_empty", "The destination is not empty: {dest}",
-                    dest=dest_path))
-            self.running, self.done, self.error = True, False, None
-            self.dest = str(dest_path)
-            self.lines = [
-                tr("hub.clone_start", "Clone started: {url}", url=url),
-                tr("hub.clone_size_note",
-                   "(The data is several GB, so this takes minutes to tens of minutes)"),
-            ]
-        threading.Thread(target=self._run, args=(url, str(dest_path)), daemon=True).start()
-
-    def _run(self, url: str, dest: str) -> None:
-        try:
-            Path(dest).parent.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.Popen(
-                [*git_base_args(net=True), "clone", "--progress", url, dest],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
-            )
-            assert proc.stdout is not None
-            for raw in proc.stdout:
-                seg = raw.rstrip("\r\n").split("\r")[-1].strip()
-                if seg:
-                    with self.lock:
-                        if self.lines and self.lines[-1].split(":")[0] == seg.split(":")[0]:
-                            self.lines[-1] = seg
-                        else:
-                            self.lines.append(seg)
-            code = proc.wait()
-            with self.lock:
-                self.running = False
-                if code == 0:
-                    self.done = True
-                    self.lines.append(tr("hub.clone_done", "Clone finished"))
-                else:
-                    self.error = tr(
-                        "hub.err_clone_failed", "git clone failed (exit {code})", code=code)
-        except Exception as e:  # noqa: BLE001
-            with self.lock:
-                self.running = False
-                self.error = f"{type(e).__name__}: {e}"
-
-
-# --------------------------------------------------------------------------
-# Onboarding (#59 guided support): status diagnosis of the account/login/git config/fork.
-# Live diagnosis when gh is present; degrades to static guidance without it (gh is an optional dependency).
-# --------------------------------------------------------------------------
-def _run(args: list, timeout: int = 10):
-    try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-def git_identity() -> dict:
-    """git user.name / user.email (empty string when unset)."""
-    exe, _ = git_cmd()
-    if not exe:
-        return {"name": "", "email": ""}
-
-    def cfg(key: str) -> str:
-        r = _run([exe, "config", "--get", key])
-        return r.stdout.strip() if r and r.returncode == 0 else ""
-
-    return {"name": cfg("user.name"), "email": cfg("user.email")}
-
-
-def git_config_set(name: str, email: str) -> "str | None":
-    """Set git user.name / user.email with --global (button-driven). Returns an error message or None."""
-    exe, _ = git_cmd()
-    if not exe:
-        return tr("hub.err_git_missing", "git was not found")
-    name, email = name.strip(), email.strip()
-    if not name or not email:
-        return tr("hub.err_git_identity_required", "Enter both a name and an email")
-    for key, val in (("user.name", name), ("user.email", email)):
-        r = _run([exe, "config", "--global", key, val])
-        if not r or r.returncode != 0:
-            return (r.stderr.strip() if r else "") or tr(
-                "hub.err_git_config_failed", "Running git config failed")
-    return None
 
 
 def load_preset() -> dict:
     """preset.json next to the launcher (distribution defaults such as oauthClientId)."""
-    for base in BUNDLE_DIRS:
-        p = base / "preset.json"
-        if p.is_file():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                pass
-    return {}
+    return runtime.read_json(APP_DIR / "preset.json")
 
 
 # --------------------------------------------------------------------------
@@ -2700,10 +2026,6 @@ def load_preset() -> dict:
 # it via oauthClientId in preset.json or the CITYGML_OAUTH_CLIENT_ID environment
 # variable. If unset, fall back to gh.
 # --------------------------------------------------------------------------
-AUTH_PATH = Path.home() / ".citygml_auth.json"
-# Where the credentials git uses are stored. Embedding the token in the origin URL
-# leaves it in .git/config where it can leak, so use git's standard store helper with a dedicated file (0600).
-GIT_CRED_PATH = Path.home() / ".citygml_git_credentials"
 OAUTH_SCOPE = "public_repo"  # Necessary and sufficient for fork/push/PR on public repos (revert to "repo" when going private)
 DEVICE_CODE_URL = "https://github.com/login/device/code"
 ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -2713,146 +2035,254 @@ def oauth_client_id() -> str:
     return str(load_preset().get("oauthClientId") or os.environ.get("CITYGML_OAUTH_CLIENT_ID", ""))
 
 
-def _post_form(url: str, fields: dict, timeout: int = 15) -> dict:
-    data = urlencode(fields).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Accept", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def gh_api(path: str, token: str, method: str = "GET", payload: "dict | None" = None,
-           timeout: int = 30) -> "tuple[int, dict]":
-    """Call GitHub REST v3 (no gh dependency). Returns (HTTP status, JSON)."""
-    body = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request("https://api.github.com" + path, data=body, method=method)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("User-Agent", "citygml-hub")
-    if body is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8") or "{}"
-            return r.status, json.loads(raw)
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode("utf-8") or "{}")
-        except ValueError:
-            return e.code, {}
-
-
-def gh_raw(path: str, token: str, timeout: int = 30) -> "tuple[int, bytes, str]":
-    """Fetch a private image as bytes from the GitHub Contents API."""
-    req = urllib.request.Request("https://api.github.com" + path, method="GET")
-    req.add_header("Accept", "application/vnd.github.raw")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("User-Agent", "citygml-hub")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, response.read(), response.headers.get_content_type()
-    except urllib.error.HTTPError as exc:
-        return exc.code, b"", "application/octet-stream"
-
-
-def save_token(token: str) -> None:
-    try:
-        AUTH_PATH.write_text(json.dumps({"token": token}), encoding="utf-8")
-        os.chmod(AUTH_PATH, 0o600)
-    except OSError:
-        pass
-
-
-def load_token() -> str:
-    """Look for a saved token first, then gh's token (empty string if neither exists)."""
-    try:
-        tok = json.loads(AUTH_PATH.read_text(encoding="utf-8")).get("token", "")
-        if tok:
-            return str(tok)
-    except (OSError, ValueError):
-        pass
-    # CITYGML_HUB_NO_GH=1 disables reusing gh (to check the same "Connect" screen beginners see)
-    if shutil.which("gh") and os.environ.get("CITYGML_HUB_NO_GH") != "1":
-        r = _run(["gh", "auth", "token"])
-        if r and r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    return ""
-
-
-def github_user(token: str) -> "dict | None":
-    if not token:
-        return None
-    code, user = gh_api("/user", token)
-    return user if code == 200 and user.get("login") else None
-
-
-def write_git_credentials(token: str) -> None:
-    """Write the credential store for the bundled Git.
-
-    The origin URL can stay plain, so the token is not visible during screen
-    sharing or in `git remote -v`. When the existing Git is chosen, the user's
-    credential helpers are not changed.
-    """
-    exe, bundled = git_cmd()
-    if not exe or not bundled:
-        return
-    try:
-        GIT_CRED_PATH.write_text(f"https://x-access-token:{token}@github.com\n", encoding="utf-8")
-        os.chmod(GIT_CRED_PATH, 0o600)
-    except OSError:
-        return
-
-
-def apply_git_identity(user: dict) -> None:
-    """Auto-configure the git name/email from the GitHub info (only when unset).
-
-    This spares the user from typing. For accounts without a public email, build
-    GitHub's noreply address (an official address that is fine to use in commits).
-    """
-    cur = git_identity()
-    if cur["name"] and cur["email"]:
-        return
-    login = user.get("login") or ""
-    name = cur["name"] or user.get("name") or login
-    email = cur["email"] or user.get("email") or f"{user.get('id')}+{login}@users.noreply.github.com"
-    if name and email:
-        git_config_set(name, email)
-
-
 class AuthManager:
-    """Progress state of the device flow (one session per machine)."""
+    """The account of this hub process: the one its city is bound to (hub-v1.2.1).
+
+    One process serves one city, so one bound account. Nothing is used before the
+    person has chosen an account on the account screen (a saved one, this computer's
+    GitHub CLI sign-in, or a new device-flow sign-in); the choice is remembered per
+    city in the shared settings and is never made silently. The computer's own Git
+    configuration and credential helpers are left alone.
+    """
 
     # The screen polls the state every 2 seconds, so queries to GitHub are throttled
     # with a TTL (avoiding API rate limits and a sluggish screen).
     USER_TTL = 20
+    MACHINE_TTL = 300
 
-    def __init__(self) -> None:
+    def __init__(self, session: "Session") -> None:
+        self.session = session
         self.lock = threading.RLock()
         self.user_code = ""
         self.verify_url = ""
         self.waiting = False
         self.error: "str | None" = None
+        self.login: "str | None" = None
         self._token = ""
-        self._reused_auth = False
         self._user: "dict | None" = None
         self._user_at = 0.0
+        self._machine: "dict | None" = None
+        self._machine_at = 0.0
+        self._machine_busy = False
+        self._legacy: "dict | None" = None
+        self._migrated = False
+
+    # ---- binding to the city ----
+    @property
+    def city(self) -> "str | None":
+        return self.session.city
+
+    @property
+    def clone_root(self) -> "Path | None":
+        return self.session.hub.root if self.session.hub is not None else None
+
+    def attach(self) -> None:
+        """Adopt the account recorded for the session's city (at start; nothing is chosen silently)."""
+        city = self.city
+        with self.lock:
+            self.login = accounts.city_login(city) if city else None
+            self._token = accounts.token_for(self.login) if self.login else ""
+            self._user, self._user_at = None, 0.0
+        if self.login:
+            self._apply_identity()
+        threading.Thread(target=self._migrate_legacy, name="citygml-auth-migrate", daemon=True).start()
+
+    def _migrate_legacy(self) -> None:
+        """Move the single token of earlier versions into an account file (needs one API call)."""
+        if self._migrated:
+            return
+        self._migrated = True
+        try:
+            accounts.migrate_legacy_token()
+        except Exception:
+            pass
+
+    def _apply_identity(self) -> None:
+        root = self.clone_root
+        if not root or not self.login:
+            return
+        rec = accounts.load_account(self.login) or {}
+        accounts.apply_clone_identity(root, self.login, rec.get("id"))
+
+    def clone_opened(self) -> None:
+        """A clone is served from now on: record the binding when the account was chosen
+        before the clone existed (setup), and write the identity into the clone."""
+        if self.city and self.login:
+            accounts.bind_city_login(self.city, self.login)
+        self._apply_identity()
+
+    def _bind(self, login: str, token: str) -> None:
+        with self.lock:
+            self.login, self._token = login, token
+            self._user, self._user_at = None, 0.0
+            self.waiting, self.user_code, self.error = False, "", None
+        if self.city:
+            accounts.bind_city_login(self.city, login)
+        self._apply_identity()
+        self.session.account_changed()
+
+    def token(self) -> str:
+        with self.lock:
+            return self._token
 
     def user(self) -> "dict | None":
-        """Authenticated user (TTL cache). Also fixes up the git config on first fetch."""
+        """Authenticated user (TTL cache). A token GitHub rejects unbinds the account."""
         with self.lock:
             if self._user_at > time.time() - self.USER_TTL:
                 return self._user
-        token = self.token()
-        user = github_user(token) if token else None
-        if user:
-            apply_git_identity(user)
-            write_git_credentials(token)
+            token, login = self._token, self.login
+        code, user = runtime.github_user_status(token) if token else (0, None)
         with self.lock:
-            self._user, self._user_at = user, time.time()
+            if (self._token, self.login) != (token, login):
+                return self._user   # the binding changed while GitHub was asked: that answer is stale
+        if token and code == 401:
+            self._drop_dead_account(login, token)
+        with self.lock:
+            # unchanged binding, or unbound meanwhile (the account was just dropped): remember the
+            # answer so the screen's polling does not ask GitHub again within the TTL
+            if (self._token, self.login) == (token, login) or self.login is None:
+                self._user, self._user_at = user, time.time()
         return user
 
+    def _drop_dead_account(self, login, token) -> None:
+        """Forget the account whose token GitHub rejected — only if it is still the bound one."""
+        with self.lock:
+            if (self.login, self._token) != (login, token):
+                return
+            self.login, self._token = None, ""
+            self.error = tr("hub.err_auth_revoked",
+                            "GitHub no longer accepts the connection of @{login} (revoked or expired). "
+                            "It was removed from this computer. Choose one of the options on this "
+                            "screen: a new sign-in with the 8-digit code, or another account.",
+                            login=login or "")
+        if login:
+            accounts.delete_account(login)
+        if self.city:
+            accounts.bind_city_login(self.city, None)
+
+    def forget_user(self) -> None:
+        with self.lock:
+            self._user_at = 0.0
+
+    @staticmethod
+    def _save_failed(exc: Exception) -> str:
+        where = str(runtime.auth_dir())
+        return tr("hub.err_account_save_failed",
+                  "The connection could not be saved on this computer ({where}: {reason}). "
+                  "Check that the folder can be written to, then choose again.", where=where, reason=str(exc))
+
+    # ---- the choices on the account screen ----
+    def use_saved(self, login: str) -> "str | None":
+        """Use a stored account for this city. Returns an error message or None."""
+        try:
+            login = accounts.safe_login(login)
+        except ValueError:
+            return tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen.")
+        token = accounts.token_for(login)
+        if not token:
+            return tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen.")
+        code, user = runtime.github_user_status(token)
+        if code == 401:
+            accounts.delete_account(login)
+            return tr("hub.err_auth_revoked",
+                      "GitHub no longer accepts the connection of @{login} (revoked or expired). "
+                      "It was removed from this computer. Choose one of the options on this "
+                      "screen: a new sign-in with the 8-digit code, or another account.", login=login)
+        if not user:
+            return tr("hub.err_auth_check_failed",
+                      "GitHub could not be reached to check the connection; nothing was changed. "
+                      "Check the internet connection and press the same choice again.")
+        try:
+            accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+        except OSError as e:
+            return self._save_failed(e)
+        if user["login"] != login:
+            # Renamed or differently cased: keep one file per account. On a case-insensitive
+            # file system (macOS, Windows) the two names are already the same file.
+            try:
+                same = os.path.samefile(accounts.account_path(login), accounts.account_path(user["login"]))
+            except OSError:
+                same = False
+            if not same:
+                accounts.delete_account(login)
+        self._bind(user["login"], token)
+        return None
+
+    def use_machine(self) -> "str | None":
+        """Use this computer's GitHub CLI sign-in (only on an explicit click)."""
+        token = accounts.machine_token()
+        if not token:
+            return tr("hub.err_machine_missing",
+                      "This computer's GitHub CLI is not signed in (any more). Choose one of the other options.")
+        code, user = runtime.github_user_status(token)
+        if not user:
+            return tr("hub.err_auth_check_failed",
+                      "GitHub could not be reached to check the connection; nothing was changed. "
+                      "Check the internet connection and press the same choice again.")
+        try:
+            accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+        except OSError as e:
+            return self._save_failed(e)
+        self._bind(user["login"], token)
+        return None
+
+    def disconnect(self, delete: bool = False) -> None:
+        """Unbind this city's account (and optionally delete the stored account)."""
+        login = self.login
+        with self.lock:
+            self.login, self._token, self._user, self._user_at = None, "", None, 0.0
+            self.waiting, self.user_code, self.error = False, "", None
+            root = self.clone_root
+        if self.city:
+            accounts.bind_city_login(self.city, None)
+        if delete and login:
+            accounts.delete_account(login)
+        if root:
+            accounts.clear_clone_identity(root)
+        self.session.account_changed()
+
+    def machine(self) -> "dict | None":
+        """This computer's GitHub CLI login, read from the CLI's own config file.
+
+        Nothing is sent to GitHub and no token is read until the person presses the
+        button (use_machine). CITYGML_HUB_NO_GH=1 hides the option."""
+        with self.lock:
+            if self._machine_at > time.time() - self.MACHINE_TTL:
+                return self._machine
+        try:
+            login = accounts.machine_login_from_config()
+        except Exception:
+            login = ""
+        found = {"login": login} if login else None
+        with self.lock:
+            self._machine, self._machine_at, self._machine_busy = found, time.time(), False
+        return found
+
+    def legacy(self) -> dict:
+        """What earlier versions left on this computer (found once per process)."""
+        with self.lock:
+            if self._legacy is not None:
+                return self._legacy
+        found = accounts.legacy_traces()
+        with self.lock:
+            self._legacy = found
+        return found
+
+    def review_legacy(self, remove: bool) -> list:
+        """The hand-over screen was read; optionally remove what an earlier version wrote."""
+        removed = []
+        if remove:
+            removed = accounts.remove_legacy_traces()
+        accounts.acknowledge_legacy()
+        with self.lock:
+            self._legacy = None
+        return removed
+
     def state(self) -> dict:
-        user = self.user()
+        user = self.user() if self.login else None
+        legacy = self.legacy()
+        if not self.login:
+            self.machine()
         with self.lock:
             return {
                 "clientId": bool(oauth_client_id()),
@@ -2860,28 +2290,18 @@ class AuthManager:
                 "userCode": self.user_code,
                 "verifyUrl": self.verify_url,
                 "error": self.error,
-                "login": (user or {}).get("login"),
-                # Returned to explain that the 8-digit code screen was skipped by reusing a saved connection.
-                "reusedAuth": bool(user and self._reused_auth),
+                "login": (user or {}).get("login") if user else None,
+                "chosen": bool(self.login),
+                "bound": self.login,
+                "city": self.city,
+                "accounts": [a["login"] for a in accounts.list_accounts()],
+                "machine": self._machine,
+                "machineChecking": bool(self._machine_busy),
+                "legacy": legacy if legacy.get("any") else None,
+                "legacyReviewed": bool(accounts.is_legacy_acknowledged()),
             }
 
-    def token(self) -> str:
-        with self.lock:
-            if self._token:
-                return self._token
-        token = load_token()
-        if token:
-            with self.lock:
-                # If _poll put in a new token concurrently, prefer that one.
-                if self._token:
-                    return self._token
-                self._reused_auth = True
-        return token
-
-    def forget_user(self) -> None:
-        with self.lock:
-            self._user_at = 0.0
-
+    # ---- a new sign-in (device flow) ----
     def start(self) -> dict:
         cid = oauth_client_id()
         if not cid:
@@ -2891,7 +2311,13 @@ class AuthManager:
         with self.lock:
             if self.waiting:
                 return {"userCode": self.user_code, "verifyUrl": self.verify_url}
-            r = _post_form(DEVICE_CODE_URL, {"client_id": cid, "scope": OAUTH_SCOPE})
+            try:
+                r = runtime.post_form(DEVICE_CODE_URL, {"client_id": cid, "scope": OAUTH_SCOPE})
+            except (urllib.error.URLError, OSError):
+                raise RuntimeError(tr(
+                    "hub.err_auth_offline",
+                    "GitHub could not be reached to start the sign-in. Check the internet "
+                    "connection and press the button again."))
             if "device_code" not in r:
                 raise RuntimeError(r.get("error_description") or tr(
                     "hub.err_device_start", "Could not start connecting to GitHub"))
@@ -2907,7 +2333,7 @@ class AuthManager:
         while time.time() < deadline:
             time.sleep(interval)
             try:
-                r = _post_form(ACCESS_TOKEN_URL, {
+                r = runtime.post_form(ACCESS_TOKEN_URL, {
                     "client_id": cid, "device_code": device_code,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 })
@@ -2915,15 +2341,26 @@ class AuthManager:
                 continue  # keep waiting through temporary network errors
             if r.get("access_token"):
                 token = r["access_token"]
-                save_token(token)
-                write_git_credentials(token)
-                user = github_user(token)
+                user = runtime.github_user_status(token)[1]
+                save_error = None
                 if user:
-                    apply_git_identity(user)
-                with self.lock:
-                    self._token, self.waiting, self.user_code = token, False, ""
-                    self._reused_auth = False
-                    self._user, self._user_at = user, time.time()
+                    try:
+                        accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+                    except ValueError:
+                        user = None
+                    except OSError as e:
+                        save_error = self._save_failed(e)
+                if save_error:
+                    with self.lock:
+                        self.waiting, self.error = False, save_error
+                elif user:
+                    self._bind(user["login"], token)
+                else:
+                    with self.lock:
+                        self.waiting = False
+                        self.error = tr("hub.err_auth_user_failed",
+                                        "GitHub accepted the sign-in, but could not be asked who you are "
+                                        "(offline?). Check the internet connection and start the sign-in again.")
                 return
             err = r.get("error")
             if err == "authorization_pending":
@@ -2946,69 +2383,202 @@ class AuthManager:
             self.error = tr("hub.err_auth_expired", "The time limit expired. Please try again.")
 
 
-# One authentication state per process (shared by the setup screen and the dashboard).
-AUTH = AuthManager()
+class Session:
+    """Everything this hub process knows about the one city it serves (contract §1): the
+    city, its clone (once there is one), the account the city is bound to, the clone job
+    of the setup screen, the background data sync and the version check. What GitHub said
+    about the account's copy of the city (fork) and about reaching the city (access) is
+    remembered until an event — account chosen or dropped, copy created — clears it."""
 
+    def __init__(self) -> None:
+        self.city: "str | None" = None
+        self.hub: "Hub | None" = None
+        self.account = AuthManager(self)
+        self.setup = git_sync.CloneJob(clone_text, self.net_git_args, runtime.git_exe)
+        self.sync = None
+        self.updates = UpdateManager()
+        self.fork = runtime.Memo()
+        self.access = runtime.Memo()
 
+    # ---- the account ----
+    @property
+    def login(self) -> "str | None":
+        return self.account.login
 
+    def token(self) -> str:
+        return self.account.token()
 
-def _normalize_upstream(value: str) -> "str | None":
-    """Normalize any of owner/repo, https URL, or ssh URL to an https URL."""
-    v = (value or "").strip().removesuffix(".git")
-    m = (re.fullmatch(r"[\w.-]+/[\w.-]+", v)
-         or re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)", v)
-         or re.fullmatch(r"git@github\.com:([\w.-]+/[\w.-]+)", v))
-    if not m:
-        return None
-    nwo = m.group(1) if m.lastindex else v
-    return f"https://github.com/{nwo}"
+    def net_git_args(self) -> list:
+        """git arguments for a network command as the city's account (or anonymously)."""
+        return runtime.git_args(net=True, store=accounts.store_for(self.login))
 
-
-def upstream_url(root=None, ignore_env: bool = False) -> str:
-    """URL of the target city repository. Priority: CITYGML_UPSTREAM > the clone's
-    4dcitygml.json > the git remote `upstream` > default (demo city). The city is
-    decided automatically — via the environment variable for the install script,
-    via 4dcitygml.json for users with a clone (project plan §5.1b).
-    ignore_env=True asks for the clone's own city only (sync target)."""
-    env = None if ignore_env else _normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
-    if env:
-        return env
-    if root:
-        cj = Path(root) / "4dcitygml.json"
-        if cj.is_file():
+    def account_changed(self) -> None:
+        """The account was chosen or dropped: what was known about its copy is stale. With
+        a clone open, uploads must go to the new account's copy before anything else
+        happens (an editor may be launched right after this click), so the lookup and
+        the origin change run now, not in the background."""
+        self.fork.clear()
+        self.access.clear()
+        if self.hub is not None and self.login:
             try:
-                got = _normalize_upstream(json.loads(cj.read_text(encoding="utf-8")).get("repo", ""))
-                if got:
-                    return got
-            except Exception:
-                pass
-        git, _ = git_cmd()
-        if git:
+                self.fork_nwo(fresh=True)
+            except (urllib.error.URLError, OSError):
+                pass   # offline: origin is checked again on the next lookup
+
+    # ---- the clone ----
+    def open_clone(self, root, *, sync: bool = False) -> "Hub":
+        """Serve this clone from now on: remember it for its city, hand it to the account,
+        and (at start) keep its main in line with the city and look for newer tools.
+        Nothing is downloaded unasked."""
+        root = Path(root).resolve()
+        self.hub = Hub(root)
+        self.city = runtime.clone_city(root) or self.city
+        runtime.remember_clone(self.city, root)
+        self.account.clone_opened()
+        if sync:
+            if runtime.git_exe():
+                self.sync = git_sync.BackgroundSync(
+                    root, lambda: runtime.upstream_url(root, ignore_env=True), self.net_git_args, log=print).start()
+            self.updates.check_async(min_hub=min_hub_of(root))
+        return self.hub
+
+    def start(self, root, city: "str | None", *, sync: bool = True) -> None:
+        """What main() knows: the city the launcher asked for and the clone found for it (or None)."""
+        self.city = city
+        if root is not None:
+            self.open_clone(root, sync=sync)
+        self.account.attach()
+        if runtime.running_hub_tag():
             try:
-                r = subprocess.run([git, "-C", str(root), "remote", "get-url", "upstream"],
-                                   capture_output=True, text=True, timeout=10)
-                got = _normalize_upstream(r.stdout.strip()) if r.returncode == 0 else None
-                if got:
-                    return got
-            except Exception:
+                shortcuts.ensure_launcher()   # the person's launcher keeps up with the installed version
+            except OSError:
                 pass
-    return UPSTREAM_URL
 
+    def try_activate(self) -> None:
+        """After the setup screen's clone finished: serve it (the screen keeps polling until then)."""
+        st = self.setup
+        if self.hub is not None or not st.done or st.dest is None:
+            return
+        if runtime.has_building_data(Path(st.dest)):
+            self.open_clone(st.dest)
+        else:
+            st.done = False
+            st.error = tr("hub.err_clone_no_bldg",
+                          "No building data (udx/bldg) was found in the cloned destination")
 
-def upstream_nwo(root=None) -> str:
-    return upstream_url(root).rstrip("/").split("github.com/")[-1]  # e.g. 4dcitygml/sample-tokyo-station
+    def default_dest(self) -> str:
+        """Clone destination (decided without asking). Named after the city so several
+        cities' folders are told apart in the file manager; only steps aside with a
+        sequence number when it already exists and is not empty."""
+        name = f"CityGML Data ({self.city.split('/')[-1]})" if self.city else "CityGML Data"
+        return str(next_available_dest(runtime.home() / "Documents" / name))
+
+    # ---- what GitHub knows about the account and the city ----
+    def upstream_ok(self) -> "bool | None":
+        """Whether the city repository is reachable (None when no account is chosen). Asked
+        from the setup screen's polling, so a "no" is kept for 5 seconds; a "yes" is kept
+        until the account changes (access disappearing mid-way is not expected)."""
+        if not self.login:
+            return None
+        fresh, val = self.access.get()
+        if val:
+            return True
+        if fresh:
+            return False
+        return self.access.set(upstream_access(self.token()), 5)
+
+    def fork_nwo(self, *, fresh: bool = False) -> "str | None":
+        """The account's copy of the city (owner/repo), or None. Kept for a minute when
+        found, 10 seconds when not (the person may create it on GitHub meanwhile);
+        fresh=True asks again. A found copy becomes the clone's origin."""
+        if not self.login:
+            return None
+        valid, val = self.fork.get()
+        if valid and not fresh:
+            return val
+        found = find_fork(self.token(), self.login)
+        self.fork.set(found, 60 if found else 10)
+        if found and self.hub is not None:
+            self.hub.ensure_origin(found)
+        return found
+
+    def fork_or_none(self) -> "str | None":
+        """The account's copy, or None when GitHub cannot be asked right now (offline)."""
+        try:
+            return self.fork_nwo()
+        except (urllib.error.URLError, OSError):
+            return None
+
+    def copy_missing(self) -> bool:
+        """GitHub answered that the bound account has no copy of the city yet (offline: False,
+        the dashboard stays usable). The account screen then offers to create it."""
+        if not self.login or self.fork_or_none():
+            return False
+        fresh, val = self.fork.get()
+        return bool(fresh and val is None)
+
+    def setup_state(self) -> dict:
+        """The whole setup-screen state (account, copy, clone job) as one payload."""
+        auth = self.account.state()
+        fork_checked = True
+        try:
+            # Both only for a verified sign-in (auth["login"]); a saved but unverified account
+            # (offline) is shown as "bound", nothing is asked.
+            fork = self.fork_nwo() if auth["login"] else None
+            # If the fork already exists, upstream is reachable too (avoid extra API calls)
+            access = True if fork else (self.upstream_ok() if auth["login"] else None)
+        except (urllib.error.URLError, OSError):
+            fork, access, fork_checked = None, None, False   # offline: the screen stays usable
+        return {
+            "ok": True,
+            **auth,
+            "fork": fork,
+            "forkChecked": fork_checked,
+            "access": access,
+            "clone": self.setup.state(),
+            "dest": self.default_dest(),
+            "active": self.hub is not None,
+            # "account": the clone exists, the city only needs its account chosen (hub-v1.2.1)
+            "mode": "account" if self.hub is not None else "setup",
+        }
+
+    def settings_payload(self) -> dict:
+        """Everything the settings screen shows (hub-v1.2.1): effective values, read-only paths."""
+        auth = self.account.state()
+        root = self.hub.root if self.hub is not None else None
+        return {
+            "ok": True,
+            "city": self.city,
+            "login": auth.get("login"),
+            "chosen": auth.get("chosen"),
+            "fork": self.fork_or_none() if auth.get("login") else None,
+            "clone": str(root) if root else None,
+            "identity": accounts.clone_identity(root) if root else {"name": "", "email": ""},
+            "machineIdentity": accounts.machine_identity(),
+            "accounts": accounts.list_accounts(),
+            "hubTag": runtime.running_hub_tag(),
+            "update": {k: v for k, v in self.updates.snapshot().items() if not k.startswith("_")},
+            "paths": {
+                "config": str(runtime.config_path()),
+                "auth": str(runtime.auth_dir()),
+                "tools": str(runtime.tools_dir()),
+                "hubs": str(runtime.hubs_dir()),
+            },
+            "legacy": auth.get("legacy"),
+        }
+
 
 
 def upstream_access(token: str) -> bool:
     """Whether this token can reach upstream (the source data). Always 200 for a public repo."""
-    code, _ = gh_api(f"/repos/{upstream_nwo()}", token)
+    code, _ = runtime.github_api(f"/repos/{runtime.upstream_nwo()}", token)
     return code == 200
 
 
 def find_fork(token: str, login: str) -> "str | None":
     """The upstream fork owned by login (owner/repo), or None if absent."""
-    repo = upstream_nwo().split("/")[-1]
-    code, data = gh_api(f"/repos/{login}/{repo}", token)
+    repo = runtime.upstream_nwo().split("/")[-1]
+    code, data = runtime.github_api(f"/repos/{login}/{repo}", token)
     if code == 200 and data.get("fork"):
         return data.get("full_name")
     return None
@@ -3019,17 +2589,23 @@ def create_fork(token: str) -> "tuple[str | None, str | None]":
 
     Fork creation is asynchronous, so wait briefly and confirm the fork materialized.
     """
-    user = github_user(token)
+    user = runtime.github_user_status(token)[1]
     if not user:
         return None, tr("hub.err_connect_first", "Connect to GitHub first")
     login = user["login"]
     existing = find_fork(token, login)
     if existing:
         return existing, None
-    code, data = gh_api(f"/repos/{upstream_nwo()}/forks", token, method="POST", payload={})
+    code, data = runtime.github_api(f"/repos/{runtime.upstream_nwo()}/forks", token, method="POST", payload={})
     if code not in (200, 201, 202):
         msg = data.get("message") or f"HTTP {code}"
-        if code == 404:
+        if accounts.is_org_restriction(code, data):
+            msg = tr("hub.err_org_restricted",
+                     "The organization that hosts this city has not approved this tool yet. "
+                     "Ask an organization owner to grant it access (GitHub → Settings → "
+                     "Applications → this app → Organization access). You can keep editing "
+                     "meanwhile; sending waits until then.")
+        elif code == 404:
             msg = tr("hub.err_upstream_unreachable",
                      "The source data repository was not found on GitHub. It may "
                      "not be published yet — contact the data maintainer")
@@ -3042,397 +2618,18 @@ def create_fork(token: str) -> "tuple[str | None, str | None]":
     return data.get("full_name"), None
 
 
-# --------------------------------------------------------------------------
-# Setup screen (#86 redesign from scratch)
-#
-# The principle is the same "one screen, one action" as the entry page (getting-started.html).
-# In addition, there are **zero input fields**: neither the fork URL, name, email, nor
-# save location is asked (all are information the tool determines).
-# The only thing the user types is the 8-digit number entered on GitHub's browser page.
-#   1 Connect (device flow) → 2 Create your own copy → 3 Import the data → done
-# Approval and clone completion are auto-detected by polling and the screen advances
-# (the user is never made to press "Next").
-# To avoid JS/CSS braces, values are filled by %%TOKEN%% replacement, not .format.
-# --------------------------------------------------------------------------
-SETUP_HTML = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title data-i18n="hub.setup_doc_title">Initial setup — Building Data Editing Tools</title>
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg:#eef1f5; --card:#fff; --border:#dde1e6; --text:#1c2733; --muted:#6b7785;
-    --ok:#1f883d; --okbg:#eaf6ec; --okborder:#a9dfbb; --link:#0969da; --figbg:#f6f8fa; --err:#b32020;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#9aa5b1;
-      --ok:#3fb950; --okbg:#12261a; --okborder:#2ea04326; --link:#58a6ff; --figbg:#0d1117; --err:#ff7b72; }
-  }
-  * { box-sizing:border-box; }
-  html { height:100%; }
-  body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-size:16px;
-    font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
-    display:flex; align-items:flex-start; justify-content:center; padding:12px 16px; }
-  main { background:var(--card); border:1px solid var(--border); border-radius:16px;
-    width:100%; max-width:600px; padding:24px 30px 20px; margin:auto 0; }
-  .prog { display:flex; align-items:center; gap:8px; margin-bottom:14px; min-height:8px; }
-  .prog i { flex:1; height:6px; border-radius:3px; background:var(--border); }
-  .prog i.on { background:var(--ok); }
-  .prog span { font-size:13px; color:var(--muted); margin-left:4px; white-space:nowrap; }
-  h1 { font-size:23px; line-height:1.45; margin:0 0 8px; }
-  p.lead { font-size:15.5px; line-height:1.75; color:var(--muted); margin:0 0 4px; }
-  /* 8-digit code */
-  .code { font-family:ui-monospace,Menlo,monospace; font-size:38px; font-weight:700;
-    letter-spacing:.14em; text-align:center; background:var(--figbg); border:1px solid var(--border);
-    border-radius:12px; padding:16px 10px; margin:14px 0 10px; user-select:all; }
-  .safe { background:var(--okbg); border:1px solid var(--okborder); border-radius:10px;
-    padding:11px 14px; font-size:14.5px; line-height:1.7; }
-  .safe b { color:var(--ok); }
-  .safe + .safe, .log + .safe { margin-top:10px; }
-  .steps { margin:14px 0 12px; padding:10px 12px 10px 38px; background:var(--figbg);
-    border:1px solid var(--border); border-radius:10px; font-size:14.5px; line-height:1.7; }
-  .steps li + li { margin-top:6px; }
-  .err { color:var(--err); font-size:14px; line-height:1.7; margin-top:10px; }
-  /* progress log */
-  .log { background:var(--figbg); border:1px solid var(--border); border-radius:10px;
-    padding:10px 12px; font-size:12.5px; line-height:1.6; color:var(--muted);
-    font-family:ui-monospace,Menlo,monospace; height:104px; overflow:hidden; margin-top:12px; }
-  .bar { height:8px; background:var(--border); border-radius:5px; overflow:hidden; margin-top:12px; }
-  .bar > i { display:block; height:100%; background:var(--ok); width:30%;
-    animation:slide 1.6s ease-in-out infinite; }
-  @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
-  details { margin-top:14px; font-size:14px; line-height:1.8; color:var(--muted); }
-  details summary { cursor:pointer; color:var(--link); font-size:14px; }
-  details .in { padding:10px 2px 0; }
-  input { font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--border);
-    border-radius:8px; width:100%; margin-top:6px; background:var(--card); color:var(--text); }
-  code { background:var(--figbg); border:1px solid var(--border); padding:1px 6px;
-    border-radius:4px; font-size:13px; }
-  .nav { display:flex; align-items:center; gap:12px; margin-top:18px; }
-  button { font:inherit; font-weight:700; cursor:pointer; border-radius:10px; border:none;
-    background:var(--ok); color:#fff; padding:11px 24px; font-size:16px; }
-  button:disabled { background:#b7bdc4; cursor:default; }
-  button.ghost { background:transparent; color:var(--muted); font-weight:500;
-    border:1px solid var(--border); padding:10px 16px; font-size:14px; }
-  .hint { font-size:13px; color:var(--muted); margin-left:auto; text-align:right; }
-  a { color:var(--link); }
-  .spin { display:inline-block; width:14px; height:14px; border:2px solid var(--border);
-    border-top-color:var(--ok); border-radius:50%; animation:spin .8s linear infinite;
-    vertical-align:-2px; margin-right:6px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-</style></head><body><main>
-  <div class="prog" id="prog"></div>
-  <div id="screen"></div>
-  <div class="nav" id="nav"></div>
-<script>
-'use strict';
-const $ = id => document.getElementById(id);
-// Fallback so the English originals work even without an injected language pack (no i18n module)
-const t = window.t || ((k, d, p) => {
-  let s = d;
-  if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]);
-  return s;
-});
-const UPSTREAM = "%%UPSTREAM%%";
-const DEFAULT_DEST = "%%DEST%%";
-const STEPS = [t('hub.setup_step_connect', 'Connect'),
-  t('hub.setup_step_fork', 'Create a copy'),
-  t('hub.setup_step_clone', 'Import')];
-
-let st = null;        // state coming from the server
-let busy = false;     // a button action is running
-let dest = DEFAULT_DEST;
-let returnTabTitle = false; // do not change the return-tab title even while the GitHub tab is being used
-let pollError = '';
-
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? undefined : {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)});
-  return r.json();
-}
-
-// Which screen we are on (0=connect / 1=copy / 2=import / 3=done)
-function stepOf(s) {
-  if (!s) return 0;
-  if (s.active || (s.clone && s.clone.done)) return 3;
-  if (!s.login) return 0;
-  if (!s.fork) return 1;
-  return 2;
-}
-
-function renderProg(i) {
-  $('prog').innerHTML = i >= 3 ? '' :
-    STEPS.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('') +
-    `<span>${i + 1} / ${STEPS.length}</span>`;
-}
-
-// ---- Screen 1: connect to GitHub ----
-function screenConnect(s) {
-  if (!s.clientId) {
-    return {
-      html: `<h1>${t('hub.setup_noclient_title', 'Connect to GitHub')}</h1>
-        <p class="lead">${t('hub.setup_noclient_lead',
-          "This tool's GitHub connection settings are not configured yet. Please contact the distributor.")}</p>
-        <details open><summary>${t('hub.setup_noclient_diy_summary', 'If you configure it yourself')}</summary><div class="in">
-          ${t('hub.setup_noclient_diy_body',
-            'Place <code>preset.json</code> next to the launcher file (in the Program folder) and write <code>{"oauthClientId": "…"}</code>. On a machine already signed in with the GitHub CLI (<code>gh</code>), you can continue as is.')}
-        </div></details>`,
-      nav: `<button onclick="recheck()">${t('hub.setup_recheck', 'Check again')}</button>`,
-    };
-  }
-  if (s.waiting && s.userCode) {
-    return {
-      html: `<h1>${t('hub.setup_device_title', 'Connect to GitHub in another tab')}</h1>
-        <p class="lead">${t('hub.setup_device_lead',
-          'First check the number below. Pressing the next button opens <b>a new GitHub tab</b>.')}</p>
-        <div class="code" id="uc">${esc(s.userCode)}</div>
-        <ol class="steps">
-          <li>${t('hub.setup_device_step1', 'Enter the number on GitHub and press <b>Continue</b>.')}</li>
-          <li>${t('hub.setup_device_step2', 'On the next screen, press <b>Authorize</b>.')}</li>
-          <li>${t('hub.setup_device_step3',
-            'When finished, <b>close the GitHub tab</b>. Return to the "← Return here" tab on the left.')}</li>
-        </ol>
-        <div class="safe"><span class="spin"></span>${t('hub.setup_device_return',
-          '<b>This screen is where you return.</b> When you finish on GitHub, it advances automatically.')}</div>
-        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-      nav: `<button onclick="openVerification()">${t('hub.setup_btn_open_github', 'Copy the number and open GitHub')}</button>
-        <button class="ghost" onclick="copyCode()">${t('hub.setup_btn_copy_code', 'Copy the number only')}</button>`,
-    };
-  }
-  return {
-    html: `<h1>${t('hub.setup_connect_title', 'Connect this computer to GitHub')}</h1>
-      <p class="lead">${t('hub.setup_connect_lead',
-        'To fix and propose building data, you need a GitHub account. Pressing the button below first shows an <b>8-digit number</b>. Read the next screen, then open GitHub in another tab.')}</p>
-      <div class="safe">${t('hub.setup_connect_scope',
-        '<b>What you will authorize:</b> this tool asks GitHub for the <b>public_repo</b> permission — read and write access to the <b>public</b> repositories of your account. It is used only to create your own copy of the city data, upload your edits, and open change proposals (pull requests); private repositories are not covered. The connection key is stored only on this computer (in a file readable by your account alone) and you can revoke it anytime under GitHub → Settings → Applications.')}</div>
-      <div class="safe">${t('hub.setup_connect_note',
-        'If you do not have an account, you can <b>create one for free</b> from the page that opens (just an email address and a password). After finishing on GitHub, <b>return to this "Initial setup" tab</b>.')}</div>
-      ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-    nav: `<button id="go" onclick="doConnect()">${t('hub.setup_step_connect', 'Connect')}</button>`,
-  };
-}
-
-// ---- Screen 2: create your own copy ----
-function screenFork(s) {
-  const reusedNotice = s.reusedAuth
-    ? `<div class="safe">${t('hub.setup_reused_notice',
-        '<b>Your previous GitHub connection was carried over.</b><br> The connection is saved on this computer, so the 8-digit code screen was skipped and setup advanced to here automatically. This is not a malfunction or a mistake.')}</div>`
-    : '';
-  const authNotice = `<div class="safe">${t('hub.setup_auth_notice',
-    '<b>The GitHub connection is complete.</b><br> An email with the subject "[GitHub] A third-party OAuth application has been added to your account" is a normal notification of this connection. It is unrelated to any Mac prompt; no reply or action inside the email is needed.')}</div>`;
-  // Guided support when invite-only and the source data is not reachable yet (#96).
-  // The server auto-accepts pending invitations, so the only thing the user does is "tell the administrator their username".
-  if (s.access === false) {
-    return {
-      html: `<h1>${t('hub.setup_noaccess_title', 'The source data cannot be reached')}</h1>
-        <p class="lead">${t('hub.setup_noaccess_lead',
-          'The GitHub connection is done, but the data repository <b>{url}</b> could not be reached. It may not be published yet, or the network may be down. Contact the data maintainer, or try again later.',
-          {url: esc(UPSTREAM)})}</p>
-        ${reusedNotice}
-        ${authNotice}
-        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-      nav: `<button onclick="poll()">${t('hub.setup_btn_recheck', 'Check again')}</button>`,
-    };
-  }
-  return {
-    html: `<h1>${t('hub.setup_fork_title', 'Create your own copy')}</h1>
-      <p class="lead">${t('hub.setup_fork_lead',
-        'The source data stays as is; <b>your own working copy</b> is created on GitHub. You will use it later when proposing "I fixed this".<br> Just press the button (usually a few seconds, up to about a minute).')}</p>
-      ${reusedNotice}
-      ${authNotice}
-      <div class="safe">${t('hub.setup_fork_connected', 'Connected to GitHub as <b>{login}</b>.', {login: esc(s.login)})}</div>
-      ${s.forkError ? `<div class="err">${t('hub.setup_fork_error',
-        '<b>Could not create the copy.</b><br>{error}<br> Check your internet connection and try again with the button below.',
-        {error: esc(s.forkError)})}</div>` : ''}
-      `,
-    nav: busy
-      ? `<button disabled><span class="spin"></span>${t('hub.setup_btn_forking', 'Creating (up to 1 minute)…')}</button>`
-      : `<button onclick="doFork()">${s.forkError ? t('hub.setup_btn_fork_retry', 'Create the copy again') : t('hub.setup_step_fork', 'Create a copy')}</button>`,
-  };
-}
-
-// ---- Screen 3: import the data ----
-function screenClone(s) {
-  const c = s.clone || {};
-  if (c.gitAvailable === false) {
-    return {
-      html: `<h1>${t('hub.setup_git_missing_title', 'A component needed for the import was not found')}</h1>
-        <p class="lead">${t('hub.setup_git_missing_lead',
-          'Close the browser and the terminal for now, check the guide in "READ-ME-FIRST.html" on installing the component, and then open the same launcher file again.')}</p>
-        <div class="err">${t('hub.setup_git_missing_win',
-          'If this screen appears on the Windows edition, the distributed files are incomplete; please contact the distributor.')}</div>`,
-      nav: `<span class="hint">${t('hub.setup_git_missing_hint', 'After preparing, setup resumes where you left off')}</span>`,
-    };
-  }
-  if (c.running) {
-    return {
-      html: `<h1>${t('hub.setup_cloning_title', 'Importing the data')}</h1>
-        <p class="lead">${t('hub.setup_cloning_lead',
-          'The building data is large, so this takes <b>minutes to tens of minutes</b>. Please keep this screen open and wait.')}</p>
-        <div class="bar"><i></i></div>
-        <div class="log">${(c.log || []).map(esc).join('<br>')}</div>
-        <div class="safe">${t('hub.setup_cloning_note',
-          'The progress text may not change for several minutes. This is not abnormal. Keep your internet connection and wait <b>without closing this screen or the terminal</b>.')}</div>`,
-      nav: `<span class="hint">${t('hub.setup_cloning_hint', 'When it finishes, this advances to "Ready to go"')}</span>`,
-    };
-  }
-  const retry = Boolean(c.error);
-  const lastLog = (c.log || []).length
-    ? `<details><summary>${t('hub.setup_last_log_summary', 'Check the last progress')}</summary><div class="in log">${c.log.map(esc).join('<br>')}</div></details>`
-    : '';
-  return {
-    html: `<h1>${retry ? t('hub.setup_clone_retry_title', 'Try importing the data again')
-        : t('hub.setup_clone_title', 'Import the data to this computer')}</h1>
-      <p class="lead">${t('hub.setup_clone_lead_head',
-        'Your working copy on GitHub was confirmed (<b>{fork}</b>).', {fork: esc(s.fork)})}<br>
-        ${retry
-          ? t('hub.setup_clone_lead_retry', 'The previous attempt stopped partway. Next time, the tool automatically uses an empty save location.')
-          : t('hub.setup_clone_lead_first', 'Finally, the data is imported to this computer. The save location is decided automatically, so there is no need to change it.')}<br>
-        ${t('hub.setup_clone_takes', 'It takes <b>minutes to tens of minutes</b>.')}</p>
-      ${retry ? `<div class="err">${t('hub.setup_clone_error',
-        '<b>The previous import could not be completed.</b><br>{error}<br> The partial data is kept, not deleted, and the import safely restarts in an empty location.',
-        {error: esc(c.error)})}</div>` : ''}
-      <div class="safe">${t('hub.setup_clone_keep_open',
-        'While importing, keep your internet connection and do not close the browser or the terminal.')}</div>
-      ${lastLog}
-      <details><summary>${t('hub.setup_change_dest_summary', 'Change the save location')}</summary><div class="in">
-        <input id="dest" value="${esc(dest)}">
-      </div></details>`,
-    nav: `<button onclick="doClone()">${retry ? t('hub.setup_btn_clone_retry', 'Import again to an empty location') : t('hub.setup_step_clone', 'Import')}</button>`,
-  };
-}
-
-// ---- Screen 4: done ----
-function screenDone() {
-  return {
-    html: `<h1>${t('hub.setup_done_title', 'Ready to go')}</h1>
-      <p class="lead">${t('hub.setup_done_lead', 'Well done. Your working copy and the building data import are complete.')}</p>
-      <div class="safe">${t('hub.setup_done_next',
-        '<b>On the next screen, first press "Launch" on the Attribute Editor.</b><br> The editing screen opens in a new tab. The Texture Editor is for fixing facade photos of buildings.')}</div>
-      <div class="safe">${t('hub.setup_done_reuse',
-        '<b>From next time, just open the same launcher file</b> to use the tools without this preparation.')}</div>
-      <div class="safe" id="shortcutBox"><button type="button" onclick="makeShortcut()">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</button>
-        <div id="shortcutResult"></div></div>`,
-    nav: `<button onclick="location.href='/?welcome=1'">${t('hub.setup_btn_start', 'Start')}</button>`,
-  };
-}
-
-function render() {
-  const i = stepOf(st);
-  const c = (st && st.clone) || {};
-  if (i === 2 && c.error && st.dest && st.dest !== c.dest) dest = st.dest;
-  document.title = (i === 0 && st && st.waiting) ||
-      (returnTabTitle && document.visibilityState === 'hidden')
-    ? t('hub.setup_return_tab_title', '← Return here — Building Data Editing Tools')
-    : t('hub.setup_doc_title', 'Initial setup — Building Data Editing Tools');
-  renderProg(i);
-  const v = [screenConnect, screenFork, screenClone, screenDone][i](st || {});
-  $('screen').innerHTML = v.html + (pollError
-    ? `<div class="err">${esc(pollError)}</div>` : '');
-  $('nav').innerHTML = v.nav;
-}
-
-// ---- Actions ----
-async function doConnect() {
-  const b = $('go'); if (b) { b.disabled = true;
-    b.innerHTML = '<span class="spin"></span>' + t('hub.setup_preparing', 'Preparing…'); }
-  const r = await api('/api/auth/start', {});
-  if (r.ok === false) { st = {...st, error: r.error}; render(); return; }
-  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null};
-  render();
-  await poll();
-}
-function copyCode() {
-  const t = $('uc'); if (!t) return;
-  navigator.clipboard && navigator.clipboard.writeText(t.textContent.trim());
-}
-function openVerification() {
-  copyCode();
-  returnTabTitle = true;
-  if (st && st.verifyUrl) window.open(st.verifyUrl, '_blank', 'noopener');
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') returnTabTitle = false;
-  render();
-});
-async function doFork() {
-  busy = true; render();
-  try {
-    const r = await api('/api/setup/fork', {});
-    busy = false;
-    st = {...(r.status || st), forkError: r.ok === false ? r.error : null};
-    render();
-  } catch (e) {
-    busy = false;
-    st = {...st, forkError: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')};
-    render();
-  }
-}
-async function makeShortcut() {
-  const out = $('shortcutResult'); if (out) out.textContent = '…';
-  try {
-    const r = await api('/api/shortcut', {});
-    if (out) out.textContent = r.ok === false ? r.error
-      : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', {name: r.name});
-  } catch (e) {
-    if (out) out.textContent = t('hub.shortcut_failed', 'Could not create the icon: {reason}', {reason: String(e)});
-  }
-}
-
-async function doClone() {
-  const el = $('dest'); if (el && el.value.trim()) dest = el.value.trim();
-  try {
-    const r = await api('/api/setup/clone', {dest});
-    if (r.ok === false) { st = {...st, clone: {...(st.clone || {}), error: r.error}}; render(); return; }
-    await poll();
-  } catch (e) {
-    st = {...st, clone: {...(st.clone || {}), error: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')}};
-    render();
-  }
-}
-async function recheck() { await poll(); }
-
-// ---- State polling (always on; auto-detects approval and clone completion and advances the screen) ----
-let timer = null;
-async function poll() {
-  try {
-    const s = await api('/api/setup/status');
-    if (s.ok === false) throw new Error(s.error || t('hub.setup_status_unknown', 'Could not check the status'));
-    const before = stepOf(st);
-    st = {...s, forkError: st && st.forkError};
-    pollError = '';
-    if (stepOf(st) !== before) busy = false;
-    render();
-    if (st.active) { clearTimeout(timer); timer = null; return; }
-  } catch (e) {
-    pollError = t('hub.setup_poll_error',
-      'Checking the status is temporarily delayed. Check your internet connection and wait on this screen.');
-    if (st) {
-      render();
-    } else {
-      $('prog').innerHTML = '';
-      $('screen').innerHTML = `<h1>${t('hub.setup_checking_title', 'Checking the connection status')}</h1>
-        <p class="lead">${t('hub.setup_checking_lead', 'Please wait without closing the screen. It checks again automatically.')}</p>
-        <div class="err">${esc(pollError)}</div>`;
-      $('nav').innerHTML = `<span class="hint"><span class="spin"></span>${t('hub.setup_rechecking', 'Checking again')}</span>`;
-    }
-  }
-  clearTimeout(timer);
-  timer = setTimeout(poll, 2000);
-}
-poll();
-</script></main></body></html>"""
+# Settings screen (hub-v1.2.1): the effective values of THIS city, item by item.
+# There is no free-form editing of the settings file on purpose (each item has
+# invariants: the clone must belong to the city, the account must have a stored
+# connection); every change goes through an action that keeps them. The file's
+# location is shown for people who want to look at it.
 
 
 # --------------------------------------------------------------------------
 # HTTP server
 # --------------------------------------------------------------------------
+
+
 def next_available_dest(base: Path) -> Path:
     """Return the next candidate that avoids non-empty destinations and never overwrites partial data."""
     cand = base
@@ -3443,165 +2640,52 @@ def next_available_dest(base: Path) -> Path:
     return cand
 
 
-class Handler(BaseHTTPRequestHandler):
-    hub: "Hub | None" = None
-    setup_mgr = SetupManager()
-    auth_mgr = AUTH
+_CLONE_TEXTS = {
+    "running": ("hub.err_clone_running", "A clone is already running"),
+    "no_git": ("hub.err_git_missing_setup", "git was not found. Prepare git by following the setup guide"),
+    "bad_url": ("hub.err_bad_repo_url", "The repository URL format is invalid"),
+    "not_empty": ("hub.err_dest_not_empty", "The destination is not empty: {dest}"),
+    "start": ("hub.clone_start", "Clone started: {url}"),
+    "size_note": ("hub.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)"),
+    "done": ("hub.clone_done", "Clone finished"),
+    "failed": ("hub.err_clone_failed", "git clone failed (exit {code})"),
+}
 
-    @staticmethod
-    def default_dest() -> str:
-        """Clone destination (decided without asking). Named after the city so several
-        cities' folders are told apart in the file manager; only steps aside with a
-        sequence number when it already exists and is not empty."""
-        city = requested_city()
-        name = f"CityGML Data ({city.split('/')[-1]})" if city else "CityGML Data"
-        return str(next_available_dest(Path.home() / "Documents" / name))
 
-    _fork_cache: "tuple[float, str | None]" = (0.0, None)
-    _access_cache: "tuple[float, bool]" = (0.0, False)
+def clone_text(event: str, **params) -> str:
+    """The hub's wording for the clone job's events (git_sync.CloneJob)."""
+    key, default = _CLONE_TEXTS[event]
+    return tr(key, default, **params)
 
-    @classmethod
-    def upstream_ok(cls, login: "str | None") -> "bool | None":
-        """Whether upstream is reachable (None when not connected).
 
-        Called from the 2-second polling, so throttled with a 5-second TTL. Once
-        reachable, never asks again (an operation where access disappears is not expected)."""
-        if not login:
-            return None
-        at, val = cls._access_cache
-        if val:
-            return True
-        if at > time.time() - 5:
-            return False
-        token = cls.auth_mgr.token()
-        ok = upstream_access(token)
-        cls._access_cache = (time.time(), ok)
-        return ok
+class Handler(runtime.LocalHandler):
+    APP_ID = "hub"
 
-    @classmethod
-    def fork_nwo(cls, login: "str | None", *, fresh: bool = False) -> "str | None":
-        """login's fork (TTL cache; re-fetch with fresh=True right after creation)."""
-        if not login:
-            return None
-        at, val = cls._fork_cache
-        if not fresh and at > time.time() - (60 if val else 10):
-            return val
-        val = find_fork(cls.auth_mgr.token(), login)
-        cls._fork_cache = (time.time(), val)
-        return val
+    @property
+    def root(self) -> "Path | None":
+        return SESSION.hub.root if SESSION.hub is not None else None
 
-    @classmethod
-    def setup_state(cls) -> dict:
-        """Return the whole setup-screen state (auth, fork, clone) as one payload."""
-        auth = cls.auth_mgr.state()
-        fork = cls.fork_nwo(auth["login"])
-        # If the fork already exists, upstream is reachable too (avoid extra API calls)
-        access = True if fork else cls.upstream_ok(auth["login"])
-        return {
-            "ok": True,
-            **auth,
-            "fork": fork,
-            "access": access,
-            "clone": cls.setup_mgr.state(),
-            "dest": cls.default_dest(),
-            "active": cls.hub is not None,
-        }
-
-    @classmethod
-    def _try_activate(cls) -> None:
-        """Activate the hub after the clone finishes and remember the clone destination in the config."""
-        st = cls.setup_mgr
-        if cls.hub is not None or not st.done or st.dest is None:
-            return
-        if has_building_data(Path(st.dest)):
-            cls.hub = Hub(Path(st.dest))
-            remember_city_clone(clone_city(st.dest) or requested_city(), st.dest)
-        else:
-            st.done = False
-            st.error = tr("hub.err_clone_no_bldg",
-                          "No building data (udx/bldg) was found in the cloned destination")
-
-    def _json(self, obj, status: int = 200) -> None:
-        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _error(self, msg: str, status: int = 400) -> None:
-        self._json({"ok": False, "error": msg}, status)
-
-    def _file(self, name: str) -> None:
-        path = RES_DIR / name
-        if not path.is_file() and self.hub is not None:
-            path = self.hub.root / "tools" / "hub" / name
-        if not path.is_file():
-            self._error("not found", 404)
-            return
-        data = path.read_bytes()
-        if path.suffix.lower() == ".html":
-            data = themed_html(data, self.hub.root if self.hub is not None else None)
-            data = localized_html(data)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _city_logo(self) -> None:
-        """Municipal logo (the logo in the clone's 4dcitygml.json). Resolution is fail-closed.
-
-        Validation (relative path, raster extension, under the root, at most 1 MiB)
-        is done by theme_loader's resolve_logo(); when not satisfied, 404 (the
-        screen side stays hidden via onerror).
-        """
-        mod = theme_module()
-        got = None
-        if mod is not None and self.hub is not None and hasattr(mod, "resolve_logo"):
-            try:
-                got = mod.resolve_logo(self.hub.root)
-            except Exception:  # Any resolution failure is a 404 (the logo is decoration, not functionality)
-                got = None
-        if got is None:
-            self._error("not found", 404)
-            return
-        path, ctype = got
-        self._bytes(path.read_bytes(), ctype)  # Content-Type is fixed from the extension
-
-    def _bytes(self, data: bytes, content_type: str) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "private, max-age=300")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, fmt, *args):
-        pass
+    def _file(self, name: str, values: "dict | None" = None) -> None:
+        """One of the hub's screens (a file next to hub.py)."""
+        self.serve_file(APP_DIR / name, values)
 
     def do_GET(self) -> None:
         try:
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
-            if self.hub is None:
-                self._try_activate()
+            s = SESSION
+            if s.hub is None:
+                s.try_activate()
             if path == "/api/setup/status":
-                self._json(self.setup_state())
+                self._json(s.setup_state())
                 return
-            if self.hub is None:
-                # While there is no clone, return the setup screen for every GET.
-                html = (SETUP_HTML
-                        .replace("%%UPSTREAM%%", UPSTREAM_URL)
-                        .replace("%%DEST%%", self.default_dest()))
-                data = localized_html(html.encode("utf-8"))
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+            if s.hub is None or (path in ("/", "/index.html") and (not s.login or s.copy_missing())):
+                # While there is no clone, return the setup screen for every GET. With a clone
+                # but no account chosen for this city — or an account without its copy yet —
+                # the same page shows the account screen (and its "create your copy" step).
+                self._file("setup.html", {"UPSTREAM": runtime.DEFAULT_CITY_URL, "DEFAULT_DEST": s.default_dest(),
+                                          "MODE": "setup" if s.hub is None else "account"})
                 return
             if path in ("/", "/index.html"):
                 self._file("index.html")
@@ -3610,7 +2694,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/city-logo":
                 self._city_logo()
             elif path == "/review-viewer.html":
-                viewer = self.hub.root / "tools" / "attr_editor" / "viewer.html"
+                viewer = runtime.SHARED_DIR / "attr_editor" / "viewer.html"
                 if not viewer.is_file():
                     self._error(tr("hub.err_viewer_missing",
                                    "The 3D view component was not found"), 404)
@@ -3619,96 +2703,160 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/status":
                 # Merge in the authentication progress (userCode / waiting / login)
                 # so the dashboard can also show "Connect" (the device flow).
-                self._json({**self.hub.status(), "github": self.auth_mgr.state()})
+                self._json({**s.hub.status(), "github": s.account.state()})
             elif path == "/api/update":
-                self._json({"ok": True, **UPDATES.snapshot()})
+                self._json({"ok": True, **s.updates.snapshot()})
+            elif path == "/settings.html":
+                self._file("settings.html")
+            elif path == "/api/settings":
+                self._json(s.settings_payload())
             elif path == "/api/tools":
-                self._json({"ok": True, "tools": self.hub.tools()})
+                self._json({"ok": True, "tools": s.hub.tools()})
             elif path == "/api/feedback":
-                self._json(self.hub.feedback_defaults())
+                self._json(s.hub.feedback_defaults())
             elif path == "/api/contributions":
-                self._json({"ok": True, **self.hub.contributions()})
+                self._json({"ok": True, **s.hub.contributions()})
             elif path == "/api/reviews":
-                self._json(self.hub.review_queue(include_examples=query.get("demo") == ["1"]))
+                self._json(s.hub.review_queue(include_examples=query.get("demo") == ["1"]))
             elif re.fullmatch(r"/api/reviews/\d+/asset", path):
                 number = int(path.split("/")[3])
                 side = (query.get("side") or [""])[0]
                 asset_path = (query.get("path") or [""])[0]
-                data, mime = self.hub.review_asset(number, side, asset_path)
+                data, mime = s.hub.review_asset(number, side, asset_path)
                 self._bytes(data, mime)
             elif re.fullmatch(r"/api/building/\d{8,9}/[^/]+", path):
                 parts = path.split("/")
                 self._json({
                     "ok": True,
-                    "building": self.hub.review_building_model(parts[3], unquote(parts[4])),
+                    "building": s.hub.review_building_model(parts[3], unquote(parts[4])),
                 })
             elif path.startswith("/textures/"):
-                data, mime = self.hub.review_texture(unquote(path[len("/textures/"):]))
+                data, mime = s.hub.review_texture(unquote(path[len("/textures/"):]))
                 self._bytes(data, mime)
             elif re.fullmatch(r"/api/reviews/\d+", path):
-                self._json(self.hub.review_detail(int(path.rsplit("/", 1)[1])))
+                self._json(s.hub.review_detail(int(path.rsplit("/", 1)[1])))
             else:
                 self._error("not found", 404)
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
 
     def do_POST(self) -> None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
+            s = SESSION
             # Setup (pre-clone) button actions. Everything advances with just a press.
             if path == "/api/auth/start":
-                self._json({"ok": True, **self.auth_mgr.start()})
+                try:
+                    self._json({"ok": True, **s.account.start()})
+                except RuntimeError as e:
+                    self._error(str(e))
+                return
+            # Account screen (hub-v1.2.1): every choice is an explicit click.
+            if path == "/api/auth/use":
+                err = s.account.use_saved(str(body.get("login") or ""))
+                self._json({"ok": err is None, "error": err, "status": s.setup_state()})
+                return
+            if path == "/api/auth/machine":
+                err = s.account.use_machine()
+                self._json({"ok": err is None, "error": err, "status": s.setup_state()})
+                return
+            if path == "/api/auth/legacy":
+                removed = s.account.review_legacy(bool(body.get("remove")))
+                self._json({"ok": True, "removed": removed, "status": s.setup_state()})
+                return
+            if path == "/api/auth/disconnect":
+                s.account.disconnect(delete=bool(body.get("delete")))
+                self._json({"ok": True})
+                return
+            if path == "/api/accounts/delete":
+                login = str(body.get("login") or "")
+                if not login:
+                    self._error(tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen."))
+                    return
+                if login == s.account.login:
+                    s.account.disconnect(delete=True)
+                else:
+                    accounts.delete_account(login)
+                self._json({"ok": True})
+                return
+            if path == "/api/settings/forget":
+                # Forget this city's binding (account and clone registration). The clone folder stays.
+                city = s.city
+                s.account.disconnect(delete=False)
+                clone = str(s.hub.root) if s.hub is not None else None
+
+                def same_path(a, b) -> bool:
+                    try:
+                        return bool(a) and bool(b) and Path(a).expanduser().resolve() == Path(b).resolve()
+                    except OSError:
+                        return False
+
+                def forget(cfg: dict) -> None:
+                    cities = cfg.get("cities")
+                    if isinstance(cities, dict):
+                        cities.pop(city, None)
+                    if same_path(cfg.get("repo"), clone):
+                        cfg.pop("repo", None)   # the legacy "last used" pointer would re-adopt the clone
+                if city:
+                    runtime.update_config(forget)
+                self._json({"ok": True})
                 return
             if path == "/api/setup/fork":
-                nwo, err = create_fork(self.auth_mgr.token())
+                try:
+                    nwo, err = create_fork(s.account.token())
+                except (urllib.error.URLError, OSError):
+                    nwo, err = None, tr("hub.err_github_offline",
+                                        "GitHub could not be reached. Check the internet connection and try again.")
                 if nwo:
-                    Handler._fork_cache = (time.time(), nwo)
-                self._json({"ok": err is None, "error": err, "nwo": nwo,
-                            "status": self.setup_state()})
+                    s.fork.set(nwo, 60)
+                    if s.hub is not None:
+                        # account mode: the copy was just made for the chosen account — uploads go there
+                        s.hub.ensure_origin(nwo)
+                self._json({"ok": err is None, "error": err, "nwo": nwo, "status": s.setup_state()})
                 return
             if path == "/api/setup/clone":
-                if self.hub is not None:
+                if s.hub is not None:
                     self._error(tr("hub.err_setup_done", "Setup is already complete"), 409)
                     return
-                nwo = self.fork_nwo(self.auth_mgr.state().get("login"))
+                nwo = s.fork_nwo() if s.account.state().get("login") else None
                 if not nwo:
                     self._error(tr("hub.err_fork_first", "Create your own copy first"))
                     return
-                dest = (body.get("dest") or "").strip() or self.default_dest()
-                self.setup_mgr.start(f"https://github.com/{nwo}.git", dest)
+                dest = (body.get("dest") or "").strip() or s.default_dest()
+                s.setup.start(f"https://github.com/{nwo}.git", dest)
                 self._json({"ok": True})
                 return
-            if self.hub is None:
+            if s.hub is None:
                 self._error(tr("hub.err_setup_incomplete", "Setup is not complete"), 409)
                 return
             if path == "/api/launch":
-                self._json(self.hub.launch(body["tool"]))
+                self._json(s.hub.launch(body["tool"]))
             elif path == "/api/feedback":
-                self._json(self.hub.submit_feedback(body))
+                self._json(s.hub.submit_feedback(body))
             elif path == "/api/update/fetch":
-                self._json({"ok": True, "fetch": UPDATES.fetch_async()})
+                self._json({"ok": True, "fetch": s.updates.fetch_async()})
             elif path == "/api/shortcut":
                 try:
-                    self._json(create_city_shortcut(self.hub.root))
+                    self._json(create_city_shortcut(s.hub.root))
                 except Exception as e:
                     self._error(tr("hub.shortcut_failed", "Could not create the icon: {reason}", reason=str(e)))
             elif path == "/api/refresh":
-                self._json({"ok": True, **self.hub.contributions(force=True)})
+                self._json({"ok": True, **s.hub.contributions(force=True)})
             elif re.fullmatch(r"/api/reviews/\d+/decision", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.submit_review(number, demo=bool(body.get("demo"))))
+                self._json(s.hub.submit_review(number, demo=bool(body.get("demo"))))
             elif re.fullmatch(r"/api/reviews/\d+/feedback", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.submit_review_feedback(
+                self._json(s.hub.submit_review_feedback(
                     number, str(body.get("message") or ""), demo=bool(body.get("demo")),
                 ))
             elif re.fullmatch(r"/api/reviews/\d+/retry", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.request_ci_retry(
+                self._json(s.hub.request_ci_retry(
                     number, demo=bool(body.get("demo")),
                 ))
             else:
@@ -3718,7 +2866,11 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
+
+
+# One session per process (the setup screen, the dashboard and the editors it launches share it).
+SESSION = Session()
 
 
 def setup_console_messages(saved_auth: bool) -> list[str]:
@@ -3731,8 +2883,8 @@ def setup_console_messages(saved_auth: bool) -> list[str]:
     if saved_auth:
         lines.append("  " + tr(
             "hub.console_saved_auth",
-            "The previous GitHub connection is reused. "
-            "The 8-digit code screen may be skipped"))
+            "The account recorded for this city is used. "
+            "The account screen may be skipped"))
     lines += [
         "  " + tr("hub.console_follow_browser", "Follow the instructions in the browser"),
         "  " + tr("hub.console_terminal_waiting",
@@ -3743,94 +2895,60 @@ def setup_console_messages(saved_auth: bool) -> list[str]:
     return lines
 
 
-def _make_console_safe() -> None:
-    """Never let console output crash the app on a narrow code page.
-
-    On Windows a redirected stdout/stderr uses the legacy code page (cp1252,
-    cp932, ...), and the embeddable Python ignores PYTHONUTF8/PYTHONIOENCODING
-    (._pth isolated mode). Help text and log lines contain characters such as
-    "→", so unencodable characters are escaped instead of raising.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(errors="backslashreplace")
-            except (ValueError, OSError):
-                pass
-
-
 def main() -> None:
-    _make_console_safe()
+    runtime.console_safe()
+    # Nothing from the person's shell may steer git (identity overrides, askpass programs,
+    # repository routing): the clone's config and the city's account are the only sources.
+    accounts.scrub_git_env()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (auto-detected if omitted)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--serve-tool", dest="serve_tool", metavar="KEY",
-                        help="internal: launch specified tool (attr_editor/tex_editor) in this process")
     args = parser.parse_args()
 
     # Clone location: explicit → ancestor detection → the remembered clone OF THIS CITY.
     # A remembered clone of another city is never adopted (the start script's city
     # selects the clone; the clone's 4dcitygml.json defines the city).
-    city = requested_city()
-    repo_root = args.repo or detect_repo()
-    if repo_root is not None and args.repo is None and city and clone_city(repo_root) != city:
+    city = runtime.requested_city()
+    repo_root = args.repo or runtime.detect_repo()
+    if repo_root is not None and args.repo is None and city and runtime.clone_city(repo_root) != city:
         repo_root = None
     if repo_root is None:
         if city:
-            repo_root = saved_clone_for(city)
+            repo_root = runtime.saved_clone_for(city)
         else:
-            saved = load_config().get("repo")
-            if saved and has_building_data(Path(saved)):
+            saved = runtime.read_config().get("repo")
+            if saved and runtime.has_building_data(Path(saved)):
                 repo_root = Path(saved)
 
-    # Internal dispatch: the path where the hub exe itself launches a child tool in the frozen distribution
-    if args.serve_tool:
-        if repo_root is None:
-            sys.exit("Error: --serve-tool requires --repo")
-        serve_tool(Path(repo_root), args.serve_tool, args.port)
-        return
-
-    if repo_root is not None and has_building_data(Path(repo_root)):
-        # Already running for this clone (the same starter double-clicked twice)? Open it instead.
+    if repo_root is not None and runtime.has_building_data(Path(repo_root)):
+        # Already running for this clone (the same starter double-clicked twice)? Open it instead —
+        # but only the same version: an older hub left running (an update, or hub-v1.0.x without a
+        # tag) must not swallow the start, or the person never sees the new version.
         running = running_hub_for(repo_root, args.port)
-        if running:
-            print(f"citygml-hub already running for this city: {running}")
+        if running and running[1] == runtime.running_hub_tag():
+            print(f"citygml-hub already running for this city: {running[0]}")
             if not args.no_browser:
-                webbrowser.open(running)
+                webbrowser.open(running[0])
             return
-        Handler.hub = Hub(Path(repo_root))
-        remember_city_clone(clone_city(repo_root), repo_root)
-        print(f"  Repository: {Handler.hub.root}")
-        # Data sync runs in the background (no wall-clock cut-off; stalled transfers abort);
-        # the screen opens at once and shows the sync state.
-        mod = git_sync_module()
-        if mod is not None and git_cmd()[0]:
-            root_path = Path(repo_root).resolve()
-            global SYNC
-            SYNC = mod.BackgroundSync(root_path, lambda: upstream_url(root_path, ignore_env=True),
-                                      lambda: git_base_args(net=True), log=print).start()
-        # Tool update: one small API call, announced in the screen; nothing is downloaded unasked.
-        UPDATES.check_async(min_hub=min_hub_of(repo_root))
-    # Without a clone, start in initial-setup mode (the clone runs from the browser)
+        if running:
+            print(f"Another version of the hub ({running[1] or 'before hub-v1.2.0'}) is still serving this city at "
+                  f"{running[0]}. Close it when you are done there; this version starts on another port.")
+    else:
+        repo_root = None   # start in initial-setup mode (the clone runs from the browser)
+
+    # One session: the clone (data sync in the background, one version check) and the
+    # account recorded for the city — chosen on the account screen when none is recorded.
+    SESSION.start(repo_root, city)
+    if SESSION.hub is not None:
+        print(f"  Repository: {SESSION.hub.root}")
 
     # Another city's hub may hold the default port: step to a free one (+2, like the child tools).
-    port = free_port(args.port)
+    port = runtime.free_port(args.port)
     if port != args.port:
         print(f"Port {args.port} is in use (another city?); using {port}")
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://localhost:{port}/"
-    print(f"citygml-hub: {url}")
-    if Handler.hub is None:
-        for line in setup_console_messages(bool(AUTH.token())):
-            print(line)
-    if not args.no_browser:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nExiting")
+    banner = ["citygml-hub: {url}"] + (setup_console_messages(bool(SESSION.token())) if SESSION.hub is None else [])
+    runtime.serve(Handler, port, banner, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

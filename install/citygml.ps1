@@ -9,10 +9,14 @@
 #   the desktop shortcut the hub creates runs it. Running it again is always safe.
 #
 # Steps mirror citygml.sh: decide the city → keep a copy of this script → start the newest
-# installed hub, downloading and digest-verifying the latest release when none is installed →
-# hand over to the hub (bundled Python and Git travel inside the download).
+# installed hub of this generation (hub-v1.2.0 or newer), downloading and digest-verifying the
+# latest release when there is none → hand over to the hub (bundled Python and Git travel inside
+# the download). Older installations (hub-v1.0.x) are left in place, untouched, never started.
+# `citygml.ps1 -FetchLatest` is the hub's "Get it now": it installs the newest release next to
+# the running one (same download and digest check) and prints its tag. This file is the one
+# place that downloads, verifies and unpacks a release on Windows.
 # Test overrides: CITYGML_TOOLS_DIR, CITYGML_RELEASES_JSON, CITYGML_ASSET_FILE, CITYGML_NO_EXEC=1.
-param([string]$City = "")
+param([string]$City = "", [switch]$FetchLatest)
 $ErrorActionPreference = "Stop"
 
 $installTag = if ($env:CITYGML_INSTALL_TAG) { $env:CITYGML_INSTALL_TAG } else { "install-v1" }
@@ -22,12 +26,12 @@ $hubs = Join-Path $toolsDir "citygml-hub"
 $releasesApi = if ($env:CITYGML_RELEASES_API) { $env:CITYGML_RELEASES_API } else { "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30" }
 
 # 1. City: argument, else a practice city by language.
-if (-not $City) {
+if (-not $City -and -not $FetchLatest) {
   $lang = (Get-Culture).TwoLetterISOLanguageName
   $City = switch ($lang) { "ja" { "4dcitygml/sample-tokyo-station" } "de" { "4dcitygml/sample-munich-station" } default { "4dcitygml/sample-newyork-station" } }
   Write-Host "No city given: connecting to the practice city $City (nothing you do there can break anything)."
 }
-if ($City -notmatch "^[^/]+/[^/]+$") { throw "The city must be given as owner/repo (for example 4dcitygml/sample-tokyo-station)." }
+if (-not $FetchLatest -and $City -notmatch "^[^/]+/[^/]+$") { throw "The city must be given as owner/repo (for example 4dcitygml/sample-tokyo-station)." }
 
 # 2. Keep a copy of this launcher in the tools folder.
 New-Item -ItemType Directory -Force $toolsDir | Out-Null
@@ -38,18 +42,7 @@ if ($PSCommandPath -and (Test-Path $PSCommandPath) -and ((Resolve-Path $PSComman
   Invoke-WebRequest -UseBasicParsing $selfUrl -OutFile $selfPath
 }
 
-# Migrate the earlier flat layout into a versioned folder.
-$flatApp = Join-Path $hubs "program\hub.py"; $mark = Join-Path $hubs ".release-tag"
-if ((Test-Path $flatApp) -and (Test-Path $mark)) {
-  $oldTag = (Get-Content $mark -Raw).Trim()
-  if ($oldTag -match "^hub-v" -and -not (Test-Path (Join-Path $hubs $oldTag))) {
-    New-Item -ItemType Directory -Force (Join-Path $hubs $oldTag) | Out-Null
-    Move-Item (Join-Path $hubs "program") (Join-Path $hubs "$oldTag\program")
-    foreach ($f in "READ-ME-FIRST.html", "start-windows.bat") { if (Test-Path (Join-Path $hubs $f)) { Move-Item (Join-Path $hubs $f) (Join-Path $hubs "$oldTag\$f") } }
-    Remove-Item $mark
-    Write-Host "Moved the existing tools into $hubs\$oldTag"
-  }
-}
+$generation = [version]::new(1, 2, 0)   # hub-v1.2.0: the first version with its own update screen
 
 function Get-VersionKey([string]$tag) {
   if ($tag -match "^hub-v(\d+)\.(\d+)\.(\d+)") { return [version]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3]) }
@@ -58,7 +51,7 @@ function Get-VersionKey([string]$tag) {
 
 function Get-NewestInstalled {
   if (-not (Test-Path $hubs)) { return "" }
-  $best = Get-ChildItem $hubs -Directory | Where-Object { (Get-VersionKey $_.Name) -and (Test-Path (Join-Path $_.FullName "program\hub.py")) } |
+  $best = Get-ChildItem $hubs -Directory | Where-Object { (Get-VersionKey $_.Name) -and ((Get-VersionKey $_.Name) -ge $generation) -and (Test-Path (Join-Path $_.FullName "program\hub.py")) } |
     Sort-Object { Get-VersionKey $_.Name } -Descending | Select-Object -First 1
   if ($best) { return $best.Name } else { return "" }
 }
@@ -68,6 +61,7 @@ function Install-Latest {
   $best = $rels | Where-Object { (Get-VersionKey $_.tag_name) -and -not $_.draft -and -not $_.prerelease } | Sort-Object { Get-VersionKey $_.tag_name } -Descending | Select-Object -First 1
   if (-not $best) { throw "No hub-v release found." }
   $tag = $best.tag_name
+  if (Test-Path (Join-Path $hubs "$tag\program\hub.py")) { return $tag }   # already installed: nothing to download
   $want = "citygml-hub-" + $tag.Substring(4) + "-windows-full.zip"
   $asset = $best.assets | Where-Object { $_.name -eq $want } | Select-Object -First 1
   if (-not $asset) { throw "Asset $want is missing in $tag." }
@@ -90,11 +84,20 @@ function Install-Latest {
   return $tag
 }
 
+if ($FetchLatest) {
+  try { $tag = Install-Latest } catch { throw "The latest version could not be installed ($($_.Exception.Message)). Check the internet connection and try again." }
+  if (-not (Test-Path (Join-Path $hubs "$tag\program\hub.py"))) { throw "The latest version could not be installed. Check the internet connection and try again." }
+  Write-Output $tag
+  exit 0
+}
+
 $tag = Get-NewestInstalled
-if (-not $tag) { $tag = Install-Latest }
+if (-not $tag) {
+  try { $tag = Install-Latest } catch { throw "The latest version could not be installed ($($_.Exception.Message)). Check the internet connection and try again." }
+}
 $app = Join-Path $hubs "$tag\program\hub.py"
 $py = Join-Path $hubs "$tag\program\PythonPortable\python.exe"
-if (-not (Test-Path $app)) { throw "The editing tools are not installed ($app)." }
+if (-not $tag -or -not (Test-Path $app)) { throw "The latest version could not be installed. Check the internet connection and try again." }
 if (-not (Test-Path $py)) { throw "Bundled Python not found: $py. Delete $hubs\$tag and run this again." }
 
 # 4. Hand over to the hub.

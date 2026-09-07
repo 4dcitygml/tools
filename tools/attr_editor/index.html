@@ -168,6 +168,9 @@
              border-top-color: var(--accent); border-radius: 50%;
              animation: spin .8s linear infinite; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .confirmTable { border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+  .confirmTable th { text-align: left; padding: 3px 10px 3px 0; white-space: nowrap; vertical-align: top; }
+  .confirmTable td { padding: 3px 0; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -232,10 +235,12 @@
     <label style="font-weight:600; font-size:12px;" data-i18n="editor.reason_label">Notes / supporting document URL (optional)</label>
     <textarea id="prReason" data-i18n-placeholder="editor.reason_placeholder" placeholder="e.g. survey date, URLs of documents you checked, anything the maintainer should know"></textarea>
     <div id="pretestResult"><div class="pretestNote" data-i18n="editor.pretest_note_initial">Before sending, your changes are checked on this computer.</div></div>
+    <div id="submitConfirm" style="display:none"></div>
     <div id="modalBtns">
       <button id="btnCancel" data-i18n="editor.btn_cancel">Cancel</button>
       <button id="btnPretest" data-i18n="editor.btn_pretest">Pre-submission check</button>
-      <button id="btnSubmit" class="primary" disabled data-i18n="editor.btn_send">Send these changes</button>
+      <button id="btnReview" class="primary" disabled data-i18n="editor.btn_review">Review before sending</button>
+      <button id="btnSubmit" class="primary" disabled style="display:none" data-i18n="editor.btn_send_confirmed">Send as shown</button>
       <button id="btnDoneClose" class="primary" style="display:none;" data-i18n="editor.btn_done_close">Close and return to the attribute editor</button>
     </div>
     <div id="modalResult"></div>
@@ -922,15 +927,62 @@ $('btnPr').onclick = () => {
   $('modalResult').innerHTML = '';
   $('btnCancel').style.display = '';
   $('btnPretest').style.display = '';
-  $('btnSubmit').style.display = '';
   $('btnDoneClose').style.display = 'none';
   $('pretestResult').innerHTML = '<div class="pretestNote">' +
     t('editor.pretest_note_initial', 'Before sending, your changes are checked on this computer.') + '</div>';
   pretestPassed = false;
   $('btnPretest').disabled = false;
-  $('btnSubmit').disabled = true;
+  resetConfirm();
   $('modalBack').style.display = 'flex';
 };
+
+// ---- Confirmation before commit / push / PR (hub-v1.2.1) ----
+// The send is one action (commit → push → proposal). Before it runs, the person sees
+// with which account and name it will be made, where it goes, and confirms explicitly.
+function resetConfirm() {
+  $('submitConfirm').style.display = 'none';
+  $('submitConfirm').innerHTML = '';
+  $('btnReview').style.display = '';
+  $('btnReview').disabled = !pretestPassed;
+  $('btnSubmit').style.display = 'none';
+  $('btnSubmit').disabled = true;
+}
+async function showConfirm() {
+  const box = $('submitConfirm');
+  box.style.display = '';
+  box.innerHTML = '<div class="pretestNote"><span class="spinner"></span> ' +
+    t('editor.confirm_loading', 'Collecting what this send will do…') + '</div>';
+  let s;
+  try { s = await api('/api/submission'); } catch (e) {
+    box.innerHTML = `<div class="pretestLead fail">❌ ${esc(e.message)}</div>`;
+    return;
+  }
+  const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
+  const idn = s.identity || {};
+  const n = changes.size + srcChanges.size;
+  let rows = row(t('editor.confirm_account', 'GitHub account'),
+                 s.account ? `<b>@${esc(s.account)}</b>` : `<span style="color:var(--danger)">${t('editor.confirm_no_account', 'none connected for this city')}</span>`)
+           + row(t('editor.confirm_identity', 'Name recorded with the change'),
+                 (idn.name || idn.email) ? `${esc(idn.name)} &lt;${esc(idn.email)}&gt;` : t('editor.confirm_identity_unset', '(not set — choose the account in the hub first)'))
+           + row(t('editor.confirm_origin', 'Uploaded to (your own copy)'), s.origin ? esc(s.origin) : '—')
+           + row(t('editor.confirm_upstream', 'Proposed to (the city)'), esc(s.upstream || ''))
+           + row(t('editor.confirm_branch', 'Branch'), `<code>${esc(s.branchPattern || '')}</code>`)
+           + row(t('editor.confirm_changes', 'Changes'), t('editor.confirm_changes_n', '{n} item(s) of one building', {n}))
+           + row(t('editor.confirm_proposal', 'Proposal'), s.autoPr
+                 ? t('editor.confirm_pr_auto', 'opened automatically after the upload')
+                 : t('editor.confirm_pr_manual', 'GitHub opens for the final step (one green button)'));
+  const blocked = !s.account || !(idn.name || idn.email) || s.originOk === false;
+  const why = (s.account && (idn.name || idn.email) && s.originOk === false)
+    ? t('editor.confirm_origin_bad', 'Nothing can be sent yet: the upload target of this data folder is not your copy under this account. Open the hub and choose the account again (Settings → Change); the hub sets the upload target.')
+    : t('editor.confirm_blocked', 'Nothing can be sent yet. Open the hub, choose the GitHub account for this city (Settings → GitHub account), then come back and press "Review before sending" again.');
+  box.innerHTML = `<div class="pretestLead ${blocked ? 'fail' : 'pass'}">${blocked ? why
+      : t('editor.confirm_lead', 'This is what will happen when you press "Send as shown":')}</div>` +
+    `<table class="confirmTable">${rows}</table>`;
+  $('btnReview').style.display = 'none';
+  $('btnSubmit').style.display = '';
+  $('btnSubmit').disabled = blocked;
+}
+$('btnReview').onclick = showConfirm;
 
 function closePrModal() {
   $('modalBack').style.display = 'none';
@@ -940,7 +992,7 @@ $('btnCancel').onclick = closePrModal;
 $('btnDoneClose').onclick = closePrModal;
 $('prReason').oninput = () => {
   pretestPassed = false;
-  $('btnSubmit').disabled = true;
+  resetConfirm();
   $('pretestResult').innerHTML = '<div class="pretestNote">' +
     t('editor.pretest_note_rerun', 'Because the description changed, the pre-submission check runs again.') + '</div>';
 };
@@ -948,7 +1000,7 @@ $('prReason').oninput = () => {
 $('btnPretest').onclick = async () => {
   const btn = $('btnPretest');
   btn.disabled = true;
-  $('btnSubmit').disabled = true;
+  resetConfirm();
   $('pretestResult').innerHTML = '<div class="pretestNote"><span class="spinner"></span> ' +
     t('editor.pretest_running', 'Checking on this computer…') + '</div>';
   try {
@@ -968,10 +1020,11 @@ $('btnPretest').onclick = async () => {
     $('pretestResult').innerHTML = `<div class="pretestLead ${pretestPassed ? 'pass' : 'fail'}">${lead}</div>` +
       `<div class="pretestItems">${items}</div>` +
       (res.note ? `<div class="pretestNote">${esc(res.note)}</div>` : '');
-    $('btnSubmit').disabled = !pretestPassed;
+    resetConfirm();
   } catch (e) {
     pretestPassed = false;
     $('pretestResult').innerHTML = `<div class="pretestLead fail">❌ ${esc(e.message)}</div>`;
+    resetConfirm();
   } finally {
     btn.disabled = false;
   }
@@ -1005,6 +1058,7 @@ $('btnSubmit').onclick = async () => {
     if (res.prUrl) {
       $('btnCancel').style.display = 'none';
       $('btnPretest').style.display = 'none';
+      $('btnReview').style.display = 'none';
       $('btnSubmit').style.display = 'none';
       $('btnDoneClose').style.display = '';
       $('btnDoneClose').focus();
@@ -1024,7 +1078,7 @@ $('btnSubmit').onclick = async () => {
     if (b) selectBuilding(b, true);
   } catch (e) {
     $('modalResult').innerHTML = `<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`;
-    $('btnSubmit').disabled = !pretestPassed;
+    resetConfirm();
     $('btnPretest').disabled = false;
     refreshGitStatus();
   }

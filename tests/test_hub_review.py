@@ -4,17 +4,15 @@
 """Lightweight tests for the integrated frontend's admin-facing PR review screen."""
 from __future__ import annotations
 
-import importlib.util
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("hub_review_app", REPO_ROOT / "tools" / "hub" / "app.py")
-hub = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(hub)
+from tests.support import REPO_ROOT, load_app, runtime
+
+hub = load_app("hub_review_app", "tools/hub/app.py")
 
 
 class _EnglishEnv(unittest.TestCase):
@@ -40,6 +38,8 @@ class _EnglishEnv(unittest.TestCase):
 
 
 class FakeAuth:
+    login = "reviewer"
+
     def token(self):
         return "test-token"
 
@@ -122,7 +122,7 @@ class TestReviewParsers(_EnglishEnv):
         self.assertFalse(hub.review_ready_reason("(please fill in)"))
 
     def test_attribute_labels_are_human_readable(self):
-        labels = hub.load_attribute_labels(REPO_ROOT)
+        labels = hub.attribute_labels()
         self.assertEqual(hub.attribute_label("/storeysAboveGround", labels), "Storeys Above Ground")
         self.assertEqual(hub.attribute_label("/uro:buildingFootprintArea", labels), "Building Footprint Area")
 
@@ -274,8 +274,7 @@ class TestReviewApiModel(_EnglishEnv):
         super().tearDown()
 
     def test_queue_and_detail_are_human_readable(self):
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=fake_github_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=fake_github_api
         ):
             queue = self.repo.review_queue()
             self.assertTrue(queue["canReview"])
@@ -304,8 +303,7 @@ class TestReviewApiModel(_EnglishEnv):
                 calls.append(payload)
             return result
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review(123)
         self.assertTrue(result["ok"])
@@ -321,8 +319,7 @@ class TestReviewApiModel(_EnglishEnv):
                 calls.append(payload)
             return result
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review_feedback(
                 123, "The photo orientation looks incorrect. Please verify."
@@ -338,8 +335,7 @@ class TestReviewApiModel(_EnglishEnv):
                 return 200, [{"state": "CHANGES_REQUESTED", "commit_id": "abc123"}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=reviewer_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=reviewer_api
         ):
             queue = self.repo.review_queue()
             detail = self.repo.review_detail(123)
@@ -357,8 +353,7 @@ class TestReviewApiModel(_EnglishEnv):
                 )}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=freshness_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=freshness_api
         ):
             queue = self.repo.review_queue()
         self.assertEqual(queue["items"][0]["queueStatus"], "proposer_waiting")
@@ -374,8 +369,7 @@ class TestReviewApiModel(_EnglishEnv):
                 calls.append(payload)
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review_feedback(123, "Please verify the target photo.", demo=True)
         self.assertTrue(result["demo"])
@@ -394,8 +388,7 @@ class TestReviewApiModel(_EnglishEnv):
                 return 201, {"id": 1}
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=retry_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=retry_api
         ):
             result = self.repo.request_ci_retry(123)
         self.assertTrue(result["ok"])
@@ -414,17 +407,15 @@ class TestReviewApiModel(_EnglishEnv):
                 )}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=retry_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=retry_api
         ):
             with self.assertRaisesRegex(RuntimeError, "re-runs the checks automatically"):
                 self.repo.request_ci_retry(123)
 
     def test_texture_asset_is_restricted_and_proxied(self):
         path = "city/udx/bldg/mesh_appearance/photo.jpg"
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=fake_github_api
-        ), patch.object(hub, "gh_raw", return_value=(200, b"jpeg-data", "image/jpeg")) as raw:
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=fake_github_api
+        ), patch.object(runtime, "github_raw", return_value=(200, b"jpeg-data", "image/jpeg")) as raw:
             data, mime = self.repo.review_asset(123, "base", path)
         self.assertEqual(data, b"jpeg-data")
         self.assertEqual(mime, "image/jpeg")

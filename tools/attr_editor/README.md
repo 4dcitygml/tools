@@ -15,29 +15,18 @@ Tools):
 python3 tools/attr_editor/app.py        # → opens http://localhost:8765
 ```
 
-> **If you are not familiar with Python or git**: see the [setup guide](setup-guide.md).
-> - **macOS**: a **zip version** (app.py + explanatory text; no binaries = no Gatekeeper
->   warning) is distributed on [Releases](https://github.com/4dcitygml/tools/releases).
->   Extract it and launch with the single line "drag app.py onto `python3 ` in the
->   terminal" (works with the CLT-bundled python3 3.9). If there is no clone, a
->   **first-time setup screen** opens where you just paste your fork URL, and on
->   completion it **automatically generates a double-click launcher (.command) on the
->   desktop**.
-> - **Windows**: an **all-in-one zip** (app.py + bundled Python "PythonPortable" +
->   bundled MinGit as `PortableGit/`; no install needed) is distributed on
->   [Releases](https://github.com/4dcitygml/tools/releases).
->   Just extract it and double-click `start-windows.bat`. If a Git on PATH has `user.name` /
->   `user.email` configured globally, the existing Git and its credential setup take
->   priority; otherwise the adjacent `PortableGit/` is used for clone / push. Builds
->   are in `packaging/` and `.github/workflows/release-attr-editor.yml`
->   (auto-build and attach on the `attr-editor-v*` tag; bundle versions and
->   SHA-256 pins are recorded in the repository-root `THIRD_PARTY_NOTICES.md`).
+> **For residents and city staff**: the editor is started from the hub, which the
+> one-line command in your city's README installs (see the hub's README). The hub
+> holds the GitHub account the city uses, keeps the data current and launches this
+> editor with it. There is no separate download of the editor any more (the earlier
+> standalone zips were retired with hub-v1.2).
 
 - The UI loads Leaflet / Cesium from CDNs (everything except map tiles works offline).
-- If you have connected to GitHub via the hub, that connection is reused to send the
-  change proposal (PR) automatically. No extra `gh` install or confirmation on the
-  GitHub site is normally needed. In standalone use without the hub, it falls back to
-  `gh`, then to a compare URL, in that order.
+- The change proposal (PR) is opened with the account the hub recorded for the city
+  (`~/.citygml/auth/<login>.json`); the computer's own GitHub sign-ins are never used.
+  Without an account the send stops before anything happens and the screen points to
+  the hub's settings; without the hub the send ends at a compare URL on GitHub's own
+  screen.
 - If there are multiple data packages, the largest is selected automatically
   (`--data 13101` to specify explicitly).
 

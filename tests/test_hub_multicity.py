@@ -15,11 +15,12 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest.mock import patch
+
+from tests.support import TempHome, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_multicity_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -41,83 +42,82 @@ def make_clone(root: Path, repo: str) -> Path:
 
 class _ConfigSandbox(unittest.TestCase):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self._cfg = hub.CONFIG_PATH
-        hub.CONFIG_PATH = self.tmp / "config.json"
-        self._env = os.environ.pop("CITYGML_UPSTREAM", None)
+        self._home = TempHome()
+        self.tmp = self._home.__enter__()
 
     def tearDown(self):
-        hub.CONFIG_PATH = self._cfg
-        if self._env is not None:
-            os.environ["CITYGML_UPSTREAM"] = self._env
-        else:
-            os.environ.pop("CITYGML_UPSTREAM", None)
-        self._tmp.cleanup()
+        self._home.__exit__(None, None, None)
 
 
 class TestConfigPerCity(_ConfigSandbox):
     def test_city_key_normalizes_every_form(self):
         for form in (TOKYO, "https://github.com/" + TOKYO, "git@github.com:" + TOKYO + ".git", TOKYO.upper()):
-            self.assertEqual(hub.city_key(form), TOKYO)
-        self.assertIsNone(hub.city_key("/Users/someone/clone"))
-        self.assertIsNone(hub.city_key(""))
+            self.assertEqual(runtime.city_key(form), TOKYO)
+        self.assertIsNone(runtime.city_key("/Users/someone/clone"))
+        self.assertIsNone(runtime.city_key(""))
 
     def test_save_config_merges_instead_of_overwriting(self):
-        hub.save_config({"lang": "ja"})
-        hub.save_config({"repo": "/x"})
-        self.assertEqual(hub.load_config(), {"lang": "ja", "repo": "/x"})
+        runtime.save_config({"lang": "ja"})
+        runtime.save_config({"repo": "/x"})
+        self.assertEqual(runtime.read_config(), {"lang": "ja", "repo": "/x"})
 
     def test_remember_and_find_clone_per_city(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
         munich = make_clone(self.tmp / "munich", MUNICH)
-        hub.remember_city_clone(TOKYO, tokyo)
-        hub.remember_city_clone(MUNICH, munich)
-        cfg = hub.load_config()
+        runtime.remember_clone(TOKYO, tokyo)
+        runtime.remember_clone(MUNICH, munich)
+        cfg = runtime.read_config()
         self.assertEqual(cfg["repo"], str(munich))                    # last used, for the standalone editor
         self.assertEqual(set(cfg["cities"]), {TOKYO, MUNICH})
-        self.assertEqual(hub.saved_clone_for(TOKYO), tokyo)
-        self.assertEqual(hub.saved_clone_for(MUNICH), munich)
+        self.assertEqual(runtime.saved_clone_for(TOKYO), tokyo)
+        self.assertEqual(runtime.saved_clone_for(MUNICH), munich)
 
     def test_another_citys_clone_is_never_adopted(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
-        hub.save_config({"repo": str(tokyo)})                          # legacy single slot, tokyo
-        self.assertIsNone(hub.saved_clone_for(MUNICH))                 # munich must go to setup, not reuse tokyo
-        hub.save_config({"cities": {MUNICH: {"repo": str(tokyo)}}})    # even a wrong per-city entry is verified
-        self.assertIsNone(hub.saved_clone_for(MUNICH))
+        runtime.save_config({"repo": str(tokyo)})                          # legacy single slot, tokyo
+        self.assertIsNone(runtime.saved_clone_for(MUNICH))                 # munich must go to setup, not reuse tokyo
+        runtime.save_config({"cities": {MUNICH: {"repo": str(tokyo)}}})    # even a wrong per-city entry is verified
+        self.assertIsNone(runtime.saved_clone_for(MUNICH))
 
     def test_legacy_entry_is_migrated_when_it_is_this_city(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
-        hub.save_config({"repo": str(tokyo), "lang": "de"})
-        self.assertEqual(hub.saved_clone_for(TOKYO), tokyo)
-        cfg = hub.load_config()
+        runtime.save_config({"repo": str(tokyo), "lang": "de"})
+        self.assertEqual(runtime.saved_clone_for(TOKYO), tokyo)
+        cfg = runtime.read_config()
         self.assertEqual(cfg["cities"][TOKYO]["repo"], str(tokyo))
         self.assertEqual(cfg["lang"], "de")                            # nothing dropped
 
     def test_clone_city_reads_the_clone_not_the_environment(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
         os.environ["CITYGML_UPSTREAM"] = MUNICH
-        self.assertEqual(hub.clone_city(tokyo), TOKYO)
-        self.assertEqual(hub.requested_city(), MUNICH)
+        self.assertEqual(runtime.clone_city(tokyo), TOKYO)
+        self.assertEqual(runtime.requested_city(), MUNICH)
         # The sync target is the clone's own city, whatever the start script asked for.
-        self.assertEqual(hub.upstream_url(tokyo, ignore_env=True), "https://github.com/" + TOKYO)
-        self.assertEqual(hub.upstream_url(tokyo), "https://github.com/" + MUNICH)
+        self.assertEqual(runtime.upstream_url(tokyo, ignore_env=True), "https://github.com/" + TOKYO)
+        self.assertEqual(runtime.upstream_url(tokyo), "https://github.com/" + MUNICH)
 
     def test_default_dest_is_named_after_the_city(self):
-        with patch.object(hub.Path, "home", return_value=self.tmp):   # an empty Documents folder
-            os.environ["CITYGML_UPSTREAM"] = MUNICH
-            self.assertTrue(hub.Handler.default_dest().endswith("CityGML Data (sample-munich-station)"))
-            os.environ.pop("CITYGML_UPSTREAM")
-            self.assertTrue(hub.Handler.default_dest().endswith("CityGML Data"))
+        session = hub.Session()                                    # HOME is the empty temp folder
+        session.city = MUNICH
+        self.assertTrue(session.default_dest().endswith("CityGML Data (sample-munich-station)"))
+        session.city = None
+        self.assertTrue(session.default_dest().endswith("CityGML Data"))
 
 
 class TestPortsAndReuse(unittest.TestCase):
+    def setUp(self):
+        self._home = TempHome()
+        self.tmp = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
+
     def test_free_port_steps_past_a_listener(self):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             s.listen(1)
             busy = s.getsockname()[1]
-            self.assertEqual(hub.free_port(busy), busy + 2)
+            self.assertEqual(runtime.free_port(busy), busy + 2)
 
     def test_running_hub_for_matches_only_the_same_clone(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,7 +125,7 @@ class TestPortsAndReuse(unittest.TestCase):
 
             class H(BaseHTTPRequestHandler):
                 def do_GET(self):
-                    body = json.dumps({"ok": True, "repo": str(root)}).encode()
+                    body = json.dumps({"ok": True, "repo": str(root), "hubTag": "hub-v1.0.2"}).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
@@ -140,7 +140,7 @@ class TestPortsAndReuse(unittest.TestCase):
             t = threading.Thread(target=srv.serve_forever, daemon=True)
             t.start()
             try:
-                self.assertEqual(hub.running_hub_for(root, port, tries=1), f"http://localhost:{port}/")
+                self.assertEqual(hub.running_hub_for(root, port, tries=1), (f"http://localhost:{port}/", "hub-v1.0.2"))
                 self.assertIsNone(hub.running_hub_for(root / "other", port, tries=1))
             finally:
                 srv.shutdown()
@@ -172,7 +172,7 @@ class TestStartupSelectsTheRightClone(_ConfigSandbox):
     def test_munich_start_does_not_touch_the_tokyo_clone(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
         before = sorted(p.name for p in tokyo.iterdir())
-        hub.CONFIG_PATH.write_text(json.dumps({"repo": str(tokyo)}), encoding="utf-8")
+        (self.tmp / ".citygml_hub.json").write_text(json.dumps({"repo": str(tokyo)}), encoding="utf-8")
         # The subprocess reads ~/.citygml_attr_editor.json under HOME=self.tmp
         (self.tmp / ".citygml_attr_editor.json").write_text(json.dumps({"repo": str(tokyo)}), encoding="utf-8")
         with socket.socket() as s:
@@ -186,6 +186,13 @@ class TestStartupSelectsTheRightClone(_ConfigSandbox):
 
 
 class TestReviewFollowsTheContract(unittest.TestCase):
+    def setUp(self):
+        self._home = TempHome()
+        self.tmp = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
+
     def test_review_kind_uses_the_shared_table_and_keeps_other(self):
         self.assertEqual(hub.review_kind({"title": "x", "head": {"ref": "geom/13101-bldg-1"}}), "geometry")
         self.assertEqual(hub.review_kind({"title": "Attributkorrektur: Geschosse", "head": {"ref": "feature/x"}}), "attribute")
@@ -210,7 +217,7 @@ class TestReviewFollowsTheContract(unittest.TestCase):
 
         pr = {"number": 7, "title": "Fix storeys", "body": "## Summary of changes <!--sec:reason-->\n\nsurvey sheet\n",
               "head": {"ref": "feature/x", "sha": "abc"}, "base": {"ref": "main"}, "user": {"login": "p"}, "state": "open"}
-        with patch.object(hub, "gh_api", side_effect=fake_api):
+        with patch.object(runtime, "github_api", fake_api):
             item = hub.Hub._review_queue_item(h, "t", "o/r", pr)
         self.assertIsNotNone(item)
         self.assertEqual(item["kind"], "other")
@@ -236,7 +243,7 @@ class TestReviewFollowsTheContract(unittest.TestCase):
 
         pr = {"number": 8, "title": "Update attributes (Usage)", "body": "## Summary of changes <!--sec:reason-->\n\nlooks fine locally\n",
               "head": {"ref": "edit/13101-bldg-1", "sha": "abc"}, "base": {"ref": "main"}, "user": {"login": "p"}, "state": "open"}
-        with patch.object(hub, "gh_api", side_effect=fake_api):
+        with patch.object(runtime, "github_api", fake_api):
             item = hub.Hub._review_queue_item(h, "t", "o/r", pr)
         self.assertIn("Reason and evidence not filled in", " ".join(item["adjustmentReasons"]))
 

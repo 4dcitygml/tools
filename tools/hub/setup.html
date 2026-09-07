@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="hub.setup_doc_title">Initial setup — Building Data Editing Tools</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg:#eef1f5; --card:#fff; --border:#dde1e6; --text:#1c2733; --muted:#6b7785;
+    --ok:#1f883d; --okbg:#eaf6ec; --okborder:#a9dfbb; --link:#0969da; --figbg:#f6f8fa; --err:#b32020;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#9aa5b1;
+      --ok:#3fb950; --okbg:#12261a; --okborder:#2ea04326; --link:#58a6ff; --figbg:#0d1117; --err:#ff7b72; }
+  }
+  * { box-sizing:border-box; }
+  html { height:100%; }
+  body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-size:16px;
+    font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+    display:flex; align-items:flex-start; justify-content:center; padding:12px 16px; }
+  main { background:var(--card); border:1px solid var(--border); border-radius:16px;
+    width:100%; max-width:600px; padding:24px 30px 20px; margin:auto 0; }
+  .prog { display:flex; align-items:center; gap:8px; margin-bottom:14px; min-height:8px; }
+  .prog i { flex:1; height:6px; border-radius:3px; background:var(--border); }
+  .prog i.on { background:var(--ok); }
+  .prog span { font-size:13px; color:var(--muted); margin-left:4px; white-space:nowrap; }
+  h1 { font-size:23px; line-height:1.45; margin:0 0 8px; }
+  p.lead { font-size:15.5px; line-height:1.75; color:var(--muted); margin:0 0 4px; }
+  /* 8-digit code */
+  .code { font-family:ui-monospace,Menlo,monospace; font-size:38px; font-weight:700;
+    letter-spacing:.14em; text-align:center; background:var(--figbg); border:1px solid var(--border);
+    border-radius:12px; padding:16px 10px; margin:14px 0 10px; user-select:all; }
+  .safe { background:var(--okbg); border:1px solid var(--okborder); border-radius:10px;
+    padding:11px 14px; font-size:14.5px; line-height:1.7; }
+  .safe b { color:var(--ok); }
+  .safe + .safe, .log + .safe { margin-top:10px; }
+  .steps { margin:14px 0 12px; padding:10px 12px 10px 38px; background:var(--figbg);
+    border:1px solid var(--border); border-radius:10px; font-size:14.5px; line-height:1.7; }
+  .steps li + li { margin-top:6px; }
+  .err { color:var(--err); font-size:14px; line-height:1.7; margin-top:10px; }
+  /* progress log */
+  .log { background:var(--figbg); border:1px solid var(--border); border-radius:10px;
+    padding:10px 12px; font-size:12.5px; line-height:1.6; color:var(--muted);
+    font-family:ui-monospace,Menlo,monospace; height:104px; overflow:hidden; margin-top:12px; }
+  .bar { height:8px; background:var(--border); border-radius:5px; overflow:hidden; margin-top:12px; }
+  .bar > i { display:block; height:100%; background:var(--ok); width:30%;
+    animation:slide 1.6s ease-in-out infinite; }
+  @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
+  details { margin-top:14px; font-size:14px; line-height:1.8; color:var(--muted); }
+  details summary { cursor:pointer; color:var(--link); font-size:14px; }
+  details .in { padding:10px 2px 0; }
+  input { font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--border);
+    border-radius:8px; width:100%; margin-top:6px; background:var(--card); color:var(--text); }
+  code { background:var(--figbg); border:1px solid var(--border); padding:1px 6px;
+    border-radius:4px; font-size:13px; }
+  .nav { display:flex; align-items:center; gap:12px; margin-top:18px; }
+  button { font:inherit; font-weight:700; cursor:pointer; border-radius:10px; border:none;
+    background:var(--ok); color:#fff; padding:11px 24px; font-size:16px; }
+  button:disabled { background:#b7bdc4; cursor:default; }
+  button.ghost { background:transparent; color:var(--muted); font-weight:500;
+    border:1px solid var(--border); padding:10px 16px; font-size:14px; }
+  .hint { font-size:13px; color:var(--muted); margin-left:auto; text-align:right; }
+  a { color:var(--link); }
+  .spin { display:inline-block; width:14px; height:14px; border:2px solid var(--border);
+    border-top-color:var(--ok); border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:-2px; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .choices button { display: block; width: 100%; margin: 8px 0; text-align: left; }
+  table.kv { border-collapse: collapse; margin: 10px 0; }
+  .kv th { text-align: left; padding: 4px 12px 4px 0; font-weight: 600; white-space: nowrap; vertical-align: top; }
+  .kv td { padding: 4px 0; }
+  label.safe { display: block; cursor: pointer; }
+</style></head><body><main>
+  <div class="prog" id="prog"></div>
+  <div id="screen"></div>
+  <div class="nav" id="nav"></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+// Fallback so the English originals work even without an injected language pack (no i18n module)
+const t = window.t || ((k, d, p) => {
+  let s = d;
+  if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]);
+  return s;
+});
+// Values the hub hands over (see runtime.page): MODE is "setup" (no clone yet) or
+// "account" (the clone exists, only the account is missing).
+const { UPSTREAM, DEFAULT_DEST, MODE } = window.CITYGML;
+const STEPS = [t('hub.setup_step_connect', 'Connect'),
+  t('hub.setup_step_fork', 'Create a copy'),
+  t('hub.setup_step_clone', 'Import')];
+
+let st = null;        // state coming from the server
+let busy = false;     // a button action is running
+let dest = DEFAULT_DEST;
+let returnTabTitle = false; // do not change the return-tab title even while the GitHub tab is being used
+let pollError = '';
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? undefined : {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)});
+  return r.json();
+}
+
+// Which screen we are on (0=connect / 1=copy / 2=import / 3=done)
+function stepOf(s) {
+  if (!s) return 0;
+  if (MODE === 'account') return (s.login && !s.fork && s.forkChecked !== false) ? 1 : 0;   // account, then the copy if missing; the dashboard follows
+  if (s.active || (s.clone && s.clone.done)) return 3;
+  if (!s.login) return 0;
+  if (!s.fork) return 1;
+  return 2;
+}
+
+function renderProg(i) {
+  $('prog').innerHTML = (i >= 3 || MODE === 'account') ? '' :
+    STEPS.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('') +
+    `<span>${i + 1} / ${STEPS.length}</span>`;
+}
+
+// ---- Screen 1: connect to GitHub ----
+function screenConnect(s) {
+  if (!s.clientId) {
+    return {
+      html: `<h1>${t('hub.setup_noclient_title', 'Connect to GitHub')}</h1>
+        <p class="lead">${t('hub.setup_noclient_lead',
+          "This tool's GitHub connection settings are not configured yet. Please contact the distributor.")}</p>
+        <details open><summary>${t('hub.setup_noclient_diy_summary', 'If you configure it yourself')}</summary><div class="in">
+          ${t('hub.setup_noclient_diy_body',
+            'Place <code>preset.json</code> next to the launcher file (in the Program folder) and write <code>{"oauthClientId": "…"}</code>. On a machine already signed in with the GitHub CLI (<code>gh</code>), you can continue as is.')}
+        </div></details>`,
+      nav: `<button onclick="recheck()">${t('hub.setup_recheck', 'Check again')}</button>`,
+    };
+  }
+  if (s.waiting && s.userCode) {
+    return {
+      html: `<h1>${t('hub.setup_device_title', 'Connect to GitHub in another tab')}</h1>
+        <p class="lead">${t('hub.setup_device_lead',
+          'First check the number below. Pressing the next button opens <b>a new GitHub tab</b>.')}</p>
+        <div class="code" id="uc">${esc(s.userCode)}</div>
+        <ol class="steps">
+          <li>${t('hub.setup_device_step1', 'Enter the number on GitHub and press <b>Continue</b>.')}</li>
+          <li>${t('hub.setup_device_step2', 'On the next screen, press <b>Authorize</b>.')}</li>
+          <li>${t('hub.setup_device_step3',
+            'When finished, <b>close the GitHub tab</b>. Return to the "← Return here" tab on the left.')}</li>
+        </ol>
+        <div class="safe"><span class="spin"></span>${t('hub.setup_device_return',
+          '<b>This screen is where you return.</b> When you finish on GitHub, it advances automatically.')}</div>
+        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
+      nav: `<button onclick="openVerification()">${t('hub.setup_btn_open_github', 'Copy the number and open GitHub')}</button>
+        <button class="ghost" onclick="copyCode()">${t('hub.setup_btn_copy_code', 'Copy the number only')}</button>`,
+    };
+  }
+  // The account screen (hub-v1.2.1): every way in is one explicit click. Nothing is
+  // used silently — not a connection saved earlier, not the GitHub CLI of this computer.
+  // The scope of what will be authorized is stated on this screen, before any choice.
+  const scope = t('hub.setup_connect_scope',
+    '<b>What you will authorize:</b> this tool asks GitHub for the <b>public_repo</b> permission — read and write access to the <b>public</b> repositories of your account. It is used only to create your own copy of the city data, upload your edits, and open change proposals (pull requests); private repositories are not covered. The connection key is stored only on this computer (in a file readable by your account alone) and you can revoke it anytime under GitHub → Settings → Applications.');
+  const choices = [];
+  const saved = new Set((s.accounts || []).map(a => a.toLowerCase()));
+  // The computer's CLI sign-in is offered only when that account is not already saved
+  // (otherwise the same account would appear twice; the saved way never touches gh).
+  if (s.machine && s.machine.login && !saved.has(s.machine.login.toLowerCase())) {
+    choices.push(`<button onclick="doMachine()">${t('hub.account_use_machine',
+      "Use this computer's GitHub sign-in (@{login})", {login: esc(s.machine.login)})}</button>`);
+  } else if (s.machineChecking) {
+    choices.push(`<span class="hint"><span class="spin"></span>${t('hub.account_machine_checking',
+      "Checking whether this computer has a GitHub CLI sign-in …")}</span>`);
+  }
+  for (const a of (s.accounts || [])) {
+    choices.push(`<button onclick="doUse('${esc(a)}')">${t('hub.account_use_saved',
+      'Use the account connected before (@{login})', {login: esc(a)})}</button>`);
+  }
+  choices.push(`<button class="ghost" id="go" onclick="doConnect()">${t('hub.account_use_new',
+    'Connect another GitHub account (8-digit code)')}</button>`);
+  const unreachable = (s.bound && !s.login)
+    ? `<div class="err">${t('hub.account_unreachable',
+        'This city already uses @{login}, but GitHub could not be reached to confirm it (offline?). With the connection back, this screen continues by itself; you can also choose again below.', {login: esc(s.bound)})}</div>`
+    : '';
+  return {
+    html: `<h1>${t('hub.account_title', 'Which GitHub account should this city use?')}</h1>
+      ${unreachable}
+      <p class="lead">${t('hub.account_lead',
+        'Each city uses one GitHub account: your own copy of the data, your uploads and your change proposals are made with it. The choice is remembered for this city on this computer; you can change it later under Settings.')}</p>
+      <div class="choices">${choices.join('')}</div>
+      <div class="safe">${scope}</div>
+      <div class="safe">${t('hub.setup_connect_note',
+        'If you do not have an account, you can <b>create one for free</b> from the page that opens (just an email address and a password). After finishing on GitHub, <b>return to this "Initial setup" tab</b>.')}</div>
+      ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
+    nav: `<span class="hint">${t('hub.account_hint', 'Press one of the choices above.')}</span>`,
+  };
+}
+
+// ---- Screen 0 (once per computer): hand-over from an earlier version ----
+function screenLegacy(s) {
+  const l = s.legacy || {};
+  const mi = l.machineIdentity || {};
+  const rows = [[t('hub.legacy_row_machine_identity', 'Git identity of this computer'),
+    (mi.name || mi.email) ? `${esc(mi.name)} &lt;${esc(mi.email)}&gt;` : t('hub.legacy_none', '(not set)')]];
+  if (s.machine && s.machine.login) rows.push([t('hub.legacy_row_machine_login', 'GitHub CLI sign-in of this computer'), '@' + esc(s.machine.login)]);
+  if ((s.accounts || []).length) rows.push([t('hub.legacy_row_saved', 'Connections saved by earlier versions'), s.accounts.map(a => '@' + esc(a)).join(', ')]);
+  const wrote = [];
+  if (l.globalHelper) wrote.push(t('hub.legacy_global_helper', 'a global credential helper pointing at a plain-text file'));
+  if (l.plainStore) wrote.push(t('hub.legacy_plain_store', 'a plain-text credential file'));
+  if (wrote.length) rows.push([t('hub.legacy_row_wrote', 'Written into Git by an earlier version'), wrote.join(', ')]);
+  return {
+    html: `<h1>${t('hub.legacy_title', 'Hand-over from the earlier version')}</h1>
+      <p class="lead">${t('hub.legacy_lead',
+        'From this version on, each city chooses its own GitHub account, and the name used in your edits is written inside the city data folder. The Git settings of this computer are not changed. The next screen asks which account this city should use.')}</p>
+      <table class="kv">${rows.map(r => `<tr><th>${r[0]}</th><td>${r[1]}</td></tr>`).join('')}</table>
+      ${wrote.length ? `<label class="safe"><input type="checkbox" id="legacyRemove" checked> ${t('hub.legacy_remove',
+        'Remove what the earlier version wrote into Git (only that; your own Git identity and sign-ins stay).')}</label>` : ''}
+      ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
+    nav: `<button onclick="doLegacy()">${t('hub.legacy_continue', 'Continue')}</button>`,
+  };
+}
+
+// ---- Screen 2: create your own copy ----
+function screenFork(s) {
+  const reusedNotice = '';   // hub-v1.2.1: the account is always an explicit choice (no silent reuse)
+  const authNotice = `<div class="safe">${t('hub.setup_auth_notice',
+    '<b>The GitHub connection is complete.</b><br> An email with the subject "[GitHub] A third-party OAuth application has been added to your account" is a normal notification of this connection. It is unrelated to any Mac prompt; no reply or action inside the email is needed.')}</div>`;
+  // Guided support when invite-only and the source data is not reachable yet (#96).
+  // The server auto-accepts pending invitations, so the only thing the user does is "tell the administrator their username".
+  if (s.access === false) {
+    return {
+      html: `<h1>${t('hub.setup_noaccess_title', 'The source data cannot be reached')}</h1>
+        <p class="lead">${t('hub.setup_noaccess_lead',
+          'The GitHub connection is done, but the data repository <b>{url}</b> could not be reached. It may not be published yet, or the network may be down. Contact the data maintainer, or try again later.',
+          {url: esc(UPSTREAM)})}</p>
+        ${reusedNotice}
+        ${authNotice}
+        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
+      nav: `<button onclick="poll()">${t('hub.setup_btn_recheck', 'Check again')}</button>`,
+    };
+  }
+  return {
+    html: `<h1>${t('hub.setup_fork_title', 'Create your own copy')}</h1>
+      <p class="lead">${t('hub.setup_fork_lead',
+        'The source data stays as is; <b>your own working copy</b> is created on GitHub. You will use it later when proposing "I fixed this".<br> Just press the button (usually a few seconds, up to about a minute).')}</p>
+      ${reusedNotice}
+      ${authNotice}
+      <div class="safe">${t('hub.setup_fork_connected', 'Connected to GitHub as <b>{login}</b>.', {login: esc(s.login)})}</div>
+      ${s.forkError ? `<div class="err">${t('hub.setup_fork_error',
+        '<b>Could not create the copy.</b><br>{error}<br> Check your internet connection and try again with the button below.',
+        {error: esc(s.forkError)})}</div>` : ''}
+      `,
+    nav: busy
+      ? `<button disabled><span class="spin"></span>${t('hub.setup_btn_forking', 'Creating (up to 1 minute)…')}</button>`
+      : `<button onclick="doFork()">${s.forkError ? t('hub.setup_btn_fork_retry', 'Create the copy again') : t('hub.setup_step_fork', 'Create a copy')}</button>`,
+  };
+}
+
+// ---- Screen 3: import the data ----
+function screenClone(s) {
+  const c = s.clone || {};
+  if (c.gitAvailable === false) {
+    return {
+      html: `<h1>${t('hub.setup_git_missing_title', 'A component needed for the import was not found')}</h1>
+        <p class="lead">${t('hub.setup_git_missing_lead',
+          'Close the browser and the terminal for now, check the guide in "READ-ME-FIRST.html" on installing the component, and then open the same launcher file again.')}</p>
+        <div class="err">${t('hub.setup_git_missing_win',
+          'If this screen appears on the Windows edition, the distributed files are incomplete; please contact the distributor.')}</div>`,
+      nav: `<span class="hint">${t('hub.setup_git_missing_hint', 'After preparing, setup resumes where you left off')}</span>`,
+    };
+  }
+  if (c.running) {
+    return {
+      html: `<h1>${t('hub.setup_cloning_title', 'Importing the data')}</h1>
+        <p class="lead">${t('hub.setup_cloning_lead',
+          'The building data is large, so this takes <b>minutes to tens of minutes</b>. Please keep this screen open and wait.')}</p>
+        <div class="bar"><i></i></div>
+        <div class="log">${(c.log || []).map(esc).join('<br>')}</div>
+        <div class="safe">${t('hub.setup_cloning_note',
+          'The progress text may not change for several minutes. This is not abnormal. Keep your internet connection and wait <b>without closing this screen or the terminal</b>.')}</div>`,
+      nav: `<span class="hint">${t('hub.setup_cloning_hint', 'When it finishes, this advances to "Ready to go"')}</span>`,
+    };
+  }
+  const retry = Boolean(c.error);
+  const lastLog = (c.log || []).length
+    ? `<details><summary>${t('hub.setup_last_log_summary', 'Check the last progress')}</summary><div class="in log">${c.log.map(esc).join('<br>')}</div></details>`
+    : '';
+  return {
+    html: `<h1>${retry ? t('hub.setup_clone_retry_title', 'Try importing the data again')
+        : t('hub.setup_clone_title', 'Import the data to this computer')}</h1>
+      <p class="lead">${t('hub.setup_clone_lead_head',
+        'Your working copy on GitHub was confirmed (<b>{fork}</b>).', {fork: esc(s.fork)})}<br>
+        ${retry
+          ? t('hub.setup_clone_lead_retry', 'The previous attempt stopped partway. Next time, the tool automatically uses an empty save location.')
+          : t('hub.setup_clone_lead_first', 'Finally, the data is imported to this computer. The save location is decided automatically, so there is no need to change it.')}<br>
+        ${t('hub.setup_clone_takes', 'It takes <b>minutes to tens of minutes</b>.')}</p>
+      ${retry ? `<div class="err">${t('hub.setup_clone_error',
+        '<b>The previous import could not be completed.</b><br>{error}<br> The partial data is kept, not deleted, and the import safely restarts in an empty location.',
+        {error: esc(c.error)})}</div>` : ''}
+      <div class="safe">${t('hub.setup_clone_keep_open',
+        'While importing, keep your internet connection and do not close the browser or the terminal.')}</div>
+      ${lastLog}
+      <details><summary>${t('hub.setup_change_dest_summary', 'Change the save location')}</summary><div class="in">
+        <input id="dest" value="${esc(dest)}">
+      </div></details>`,
+    nav: `<button onclick="doClone()">${retry ? t('hub.setup_btn_clone_retry', 'Import again to an empty location') : t('hub.setup_step_clone', 'Import')}</button>`,
+  };
+}
+
+// ---- Screen 4: done ----
+function screenDone() {
+  return {
+    html: `<h1>${t('hub.setup_done_title', 'Ready to go')}</h1>
+      <p class="lead">${t('hub.setup_done_lead', 'Well done. Your working copy and the building data import are complete.')}</p>
+      <div class="safe">${t('hub.setup_done_next',
+        '<b>On the next screen, first press "Launch" on the Attribute Editor.</b><br> The editing screen opens in a new tab. The Texture Editor is for fixing facade photos of buildings.')}</div>
+      <div class="safe">${t('hub.setup_done_reuse',
+        '<b>From next time, just open the same launcher file</b> to use the tools without this preparation.')}</div>
+      <div class="safe" id="shortcutBox"><button type="button" onclick="makeShortcut()">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</button>
+        <div id="shortcutResult"></div></div>`,
+    nav: `<button onclick="location.href='/?welcome=1'">${t('hub.setup_btn_start', 'Start')}</button>`,
+  };
+}
+
+function render() {
+  const i = stepOf(st);
+  const c = (st && st.clone) || {};
+  if (i === 2 && c.error && st.dest && st.dest !== c.dest) dest = st.dest;
+  document.title = (i === 0 && st && st.waiting) ||
+      (returnTabTitle && document.visibilityState === 'hidden')
+    ? t('hub.setup_return_tab_title', '← Return here — Building Data Editing Tools')
+    : t('hub.setup_doc_title', 'Initial setup — Building Data Editing Tools');
+  // Account mode: to the dashboard once the account has its copy — or when GitHub could not
+  // be asked (offline): the dashboard works offline, the copy is checked again at send time.
+  if (MODE === 'account' && st && st.login && (st.fork || st.forkChecked === false)) { location.replace('/'); return; }
+  renderProg(i);
+  const legacyPending = st && st.legacy && !st.legacyReviewed && !st.login && !st.waiting;
+  const v = (legacyPending ? screenLegacy : [screenConnect, screenFork, screenClone, screenDone][i])(st || {});
+  $('screen').innerHTML = v.html + (pollError
+    ? `<div class="err">${esc(pollError)}</div>` : '');
+  $('nav').innerHTML = v.nav;
+}
+
+// ---- Actions ----
+async function doConnect() {
+  const b = $('go'); if (b) { b.disabled = true;
+    b.innerHTML = '<span class="spin"></span>' + t('hub.setup_preparing', 'Preparing…'); }
+  const r = await api('/api/auth/start', {});
+  if (r.ok === false) { st = {...st, error: r.error}; render(); return; }
+  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null};
+  render();
+  await poll();
+}
+async function choose(path, body) {
+  busy = true; render();
+  try {
+    const r = await api(path, body || {});
+    busy = false;
+    st = {...(r.status || st), error: r.ok === false ? r.error : null};
+    render();
+  } catch (e) {
+    busy = false;
+    st = {...st, error: t('hub.setup_conn_lost',
+      'The connection to the tool was lost. Open the same launcher file again.')};
+    render();
+  }
+}
+async function doUse(login) { await choose('/api/auth/use', {login}); }
+async function doMachine() { await choose('/api/auth/machine', {}); }
+async function doLegacy() {
+  const cb = $('legacyRemove');
+  await choose('/api/auth/legacy', {remove: !!(cb && cb.checked)});
+}
+function copyCode() {
+  const t = $('uc'); if (!t) return;
+  navigator.clipboard && navigator.clipboard.writeText(t.textContent.trim());
+}
+function openVerification() {
+  copyCode();
+  returnTabTitle = true;
+  if (st && st.verifyUrl) window.open(st.verifyUrl, '_blank', 'noopener');
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') returnTabTitle = false;
+  render();
+});
+async function doFork() {
+  busy = true; render();
+  try {
+    const r = await api('/api/setup/fork', {});
+    busy = false;
+    st = {...(r.status || st), forkError: r.ok === false ? r.error : null};
+    render();
+  } catch (e) {
+    busy = false;
+    st = {...st, forkError: t('hub.setup_conn_lost',
+      'The connection to the tool was lost. Open the same launcher file again.')};
+    render();
+  }
+}
+async function makeShortcut() {
+  const out = $('shortcutResult'); if (out) out.textContent = '…';
+  try {
+    const r = await api('/api/shortcut', {});
+    if (out) out.textContent = r.ok === false ? r.error
+      : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', {name: r.name});
+  } catch (e) {
+    if (out) out.textContent = t('hub.shortcut_failed', 'Could not create the icon: {reason}', {reason: String(e)});
+  }
+}
+
+async function doClone() {
+  const el = $('dest'); if (el && el.value.trim()) dest = el.value.trim();
+  try {
+    const r = await api('/api/setup/clone', {dest});
+    if (r.ok === false) { st = {...st, clone: {...(st.clone || {}), error: r.error}}; render(); return; }
+    await poll();
+  } catch (e) {
+    st = {...st, clone: {...(st.clone || {}), error: t('hub.setup_conn_lost',
+      'The connection to the tool was lost. Open the same launcher file again.')}};
+    render();
+  }
+}
+async function recheck() { await poll(); }
+
+// ---- State polling (always on; auto-detects approval and clone completion and advances the screen) ----
+let timer = null;
+async function poll() {
+  try {
+    const s = await api('/api/setup/status');
+    if (s.ok === false) throw new Error(s.error || t('hub.setup_status_unknown', 'Could not check the status'));
+    const before = stepOf(st);
+    st = {...s, forkError: st && st.forkError};
+    pollError = '';
+    if (stepOf(st) !== before) busy = false;
+    render();
+    if (st.active && MODE !== 'account') { clearTimeout(timer); timer = null; return; }
+  } catch (e) {
+    pollError = t('hub.setup_poll_error',
+      'Checking the status is temporarily delayed. Check your internet connection and wait on this screen.');
+    if (st) {
+      render();
+    } else {
+      $('prog').innerHTML = '';
+      $('screen').innerHTML = `<h1>${t('hub.setup_checking_title', 'Checking the connection status')}</h1>
+        <p class="lead">${t('hub.setup_checking_lead', 'Please wait without closing the screen. It checks again automatically.')}</p>
+        <div class="err">${esc(pollError)}</div>`;
+      $('nav').innerHTML = `<span class="hint"><span class="spin"></span>${t('hub.setup_rechecking', 'Checking again')}</span>`;
+    }
+  }
+  clearTimeout(timer);
+  timer = setTimeout(poll, 2000);
+}
+poll();
+</script></main></body></html>

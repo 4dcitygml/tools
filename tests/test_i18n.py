@@ -16,6 +16,8 @@ import os
 import unittest
 from pathlib import Path
 
+from tests.support import TempHome, runtime
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location(
     "i18n_loader", REPO_ROOT / "tools" / "i18n" / "i18n_loader.py")
@@ -27,6 +29,8 @@ class _EnvGuard(unittest.TestCase):
     KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
 
     def setUp(self):
+        self._home = TempHome(lang=None)  # Let tests set their own language
+        self._home.__enter__()
         self._saved = {k: os.environ.get(k) for k in self.KEYS}
         for k in self.KEYS:
             os.environ.pop(k, None)
@@ -37,6 +41,7 @@ class _EnvGuard(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        self._home.__exit__(None, None, None)
 
 
 class TestResolveLang(_EnvGuard):
@@ -119,8 +124,8 @@ class TestConvertedScreens(unittest.TestCase):
 
     # app → converted screens (paths relative to tools/)
     SCREENS = {
-        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html"],
-        "hub": ["hub/index.html", "hub/review.html", "hub/getting-started.html"],
+        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html", "attr_editor/setup.html"],
+        "hub": ["hub/index.html", "hub/review.html", "hub/setup.html", "hub/settings.html"],
         "tex_editor": ["tex_editor/index.html"],
     }
     # app → Python sources containing server-generated messages (tr()/translate())
@@ -140,8 +145,13 @@ class TestConvertedScreens(unittest.TestCase):
         import re
         keys = set(re.findall(r'data-i18n(?:-title|-placeholder)?="([^"]+)"', src))
         keys |= set(re.findall(r"\bt\('([^']+)'", src))       # JS t()
-        keys |= set(re.findall(r"\btr\(\s*['\"]([^'\"]+)['\"]", src))  # Python tr()
+        # Skip app names (hub, attr_editor, tex_editor) which appear as first arg to runtime.tr()
+        app_names = {"hub", "attr_editor", "tex_editor"}
+        all_tr = re.findall(r"\btr\(\s*['\"]([^'\"]+)['\"]", src)
+        keys |= {k for k in all_tr if k not in app_names}  # Skip runtime.tr(app_name, ...)
         keys |= set(re.findall(r"\btr_lang\(\s*[^,()]+,\s*['\"]([^'\"]+)['\"]", src))  # Python tr_lang()
+        # (key, default) pairs kept in a table and translated later (e.g. the clone job's wording)
+        keys |= set(re.findall(r"\(\s*['\"]([a-z][A-Za-z0-9_]*\.[A-Za-z0-9_.]+)['\"]\s*,\s*['\"]", src))
         # 'lang.' + expr style concatenations capture the bare prefix — not a real key
         return {k for k in keys if not k.endswith(".")}
 
@@ -222,7 +232,7 @@ class TestAppIntegration(_EnvGuard):
         attr = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(attr)
         os.environ["CITYGML_LANG"] = "de"
-        out = attr.localized_html(b"<html><head></head><body></body></html>")
+        out = runtime.localized_html(b"<html><head></head><body></body></html>", "attr_editor")
         self.assertIn("Textur".encode(), out)
         self.assertIn(b'window.LANG = "de";', out)
 

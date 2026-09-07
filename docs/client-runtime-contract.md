@@ -38,11 +38,19 @@ migration in the launcher.
 | `--port <n>` | Preferred port. If taken by another city's process, the next free port (+2 steps) is used. |
 | `--no-browser` | Do not open the browser. |
 | `CITYGML_LANG` | UI language of the process (repository-facing text follows the clone's `lang`). |
+| `CITYGML_ACCOUNT` | Set by the hub for the editors it launches: the login the city is bound to. The editors re-read the city's binding from the settings file on every use and fall back to this value only for a clone without `4dcitygml.json`. |
+| `CITYGML_HUB_NO_GH` | `1` hides the "use this computer's GitHub" choice (the GitHub CLI's sign-in) on the account screen. The label of that choice is read from the CLI's own config file; the CLI's token is read only when the choice is pressed. |
+
+Every client scrubs the shell's git overrides from its own environment at start
+(`GIT_AUTHOR_*`, `GIT_COMMITTER_*`, `EMAIL`, `GIT_ASKPASS`, `SSH_ASKPASS`, `GIT_SSH*`,
+`GIT_PROXY_COMMAND`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG*`) and sets
+`GIT_TERMINAL_PROMPT=0`, so a commit or push can only use the clone's config and
+the account's store. Proposals are opened with the account's token or on GitHub's
+own screen — never through the GitHub CLI.
 
 Test hooks (never set by launchers in normal use): `CITYGML_TOOLS_DIR`,
 `CITYGML_RELEASES_JSON`, `CITYGML_RELEASES_API`, `CITYGML_ASSET_FILE`,
-`CITYGML_NO_EXEC`, `CITYGML_INSTALL_TAG`; `CITYGML_HUB_NO_GH`,
-`CITYGML_OAUTH_CLIENT_ID` (development).
+`CITYGML_NO_EXEC`, `CITYGML_INSTALL_TAG`; `CITYGML_OAUTH_CLIENT_ID` (development).
 
 ## 3. Files on the computer
 
@@ -51,10 +59,12 @@ Test hooks (never set by launchers in normal use): `CITYGML_TOOLS_DIR`,
   citygml.sh | citygml.ps1                     per-user launcher (copied from the bundle / install-v1)
   <City name>.app | <City name>.lnk            desktop launcher, embeds the city id only
   citygml-hub/<hub-vX.Y.Z>/program/hub.py      one folder per installed version; the newest is started
-  citygml-hub/citygml-hub-stage.*              transient, while a download is verified
+  <temp>/citygml-hub-stage.*                   transient, while the launcher verifies a download
 ~/Documents/CityGML Data (<repo name>)/        the city clone (one per city)
 ~/.citygml_attr_editor.json                    shared settings (below)
-~/.citygml_auth.json, ~/.citygml_git_credentials   sign-in token / bundled-git credentials
+~/.citygml/auth/<login>.json                   one GitHub connection per account (token, id; 0600)
+~/.citygml/auth/<login>.git-credentials        the same token in git-credential-store format (0600)
+~/.citygml_auth.json, ~/.citygml_git_credentials   earlier versions only; migrated / offered for removal
 ```
 
 Shared settings file (`~/.citygml_attr_editor.json`):
@@ -64,13 +74,26 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   "repo": "/…/CityGML Data (sample-tokyo-station)",
   "lang": "ja",
   "cities": {
-    "4dcitygml/sample-tokyo-station": {"repo": "/…/CityGML Data (sample-tokyo-station)", "last_used": "2026-09-06T…"}
-  }
+    "4dcitygml/sample-tokyo-station": {"repo": "/…/CityGML Data (sample-tokyo-station)", "last_used": "2026-09-06T…", "login": "citydatawalker"}
+  },
+  "legacyReviewed": "2026-09-07"
 }
 ```
 
 - `cities[<owner/repo>].repo` is the clone of that city; `repo` is the last
   used clone (kept for tools that know only one clone); `lang` is the UI language.
+- `cities[<owner/repo>].login` is the GitHub account that city uses (hub-v1.2.1):
+  its token comes from `~/.citygml/auth/<login>.json`, its fork is `<login>/<repo>`,
+  and its noreply address is written into the clone's **local** git config. A
+  client never reads the computer's global git identity, credential helpers or
+  the GitHub CLI on its own; `login` is set only by an explicit choice on the
+  account screen and is never inherited by another city. A `login` without an
+  account file is treated as unset.
+- Network git commands pass `-c credential.helper=` and
+  `-c credential.https://github.com.helper=store --file=<the account's .git-credentials>`;
+  the token is never placed in the command line.
+- `legacyReviewed` records that the one-time hand-over screen (what earlier
+  versions left on the computer) was shown.
 - **Writers merge; they never replace the file.** Keys they do not own must survive.
   Writes are atomic (temporary file in the same folder, then rename), so a
   concurrent writer never sees a torn file. Two writers racing on the *same*
@@ -87,7 +110,9 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   editors `GET /api/repo` → `{"root": "<clone path>"}`. These two responses
   are part of the contract.
 - Starting a second process for the same clone is avoided (the existing
-  page is opened instead).
+  page is opened instead) — for the same version only. A hub of another version
+  left running for the clone (an update, or hub-v1.0.x reporting no `hubTag`) is
+  named on the console and the new version starts on the next free port.
 
 ## 5. Installed code and updates
 
@@ -95,14 +120,23 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   assets `citygml-hub-<ver>-macos.zip` and `citygml-hub-<ver>-windows-full.zip`,
   each with the SHA-256 digest GitHub publishes for it. The zip contains one
   top-level folder `citygml-hub/program/` with the hub, the editors, the
-  language and theme packs, the shared modules (`git_sync.py`, `shortcuts.py`,
-  `pr_classification.py`) and the launchers (`citygml.sh`, `citygml.ps1`).
+  language and theme packs, the shared modules (`runtime.py`, `accounts.py`,
+  `git_sync.py`, `shortcuts.py`, `pr_classification.py`) and the launchers
+  (`citygml.sh`, `citygml.ps1`). `runtime.py` is the one place that knows the
+  files, folders, executables, settings file, city resolution and GitHub access
+  described here; the hub and the editors import it and the other shared modules
+  by name (the program's own folder is put on `sys.path`). What the zip contains is
+  listed in one place, `scripts/build_bundle.py`, and checked by
+  `scripts/verify_bundle.py`; the release workflow and the tests run those two.
 - Installation = unpack into `citygml-hub/<tag>/` after the digest matched;
   staging first, rename last; an existing `<tag>` folder is never touched.
 - The launcher always starts the newest installed version. Nothing is
   downloaded unless the user asks: the first install by the one-line command,
   later versions by the hub's *Get it now* (`POST /api/update/fetch`) after the
   automatic check (`GET /api/update`). A new version is used from the next start.
+  The launcher is the one place that downloads, verifies and unpacks a release:
+  *Get it now* runs its fetch mode (`citygml.sh --fetch-latest` /
+  `citygml.ps1 -FetchLatest`), which prints the installed tag.
 - City repositories carry no code and no client pin (Exchange Contract A11).
   A city may declare `min_hub` in `4dcitygml.json`; tools treat it as advice.
 - The city clone's `main` is kept in line with the city repository by the
