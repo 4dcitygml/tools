@@ -9,13 +9,15 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import tempfile
 import time
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+from tests.support import TempHome, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_update_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -43,62 +45,70 @@ def releases(*entries):
 
 
 class TestVersions(unittest.TestCase):
+    def setUp(self):
+        self._home = TempHome()
+        self.tmp = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
+
     def test_version_tuple(self):
-        self.assertEqual(hub.version_tuple("hub-v1.10.2"), (1, 10, 2))
-        self.assertIsNone(hub.version_tuple("tools-v1.1.0"))
-        self.assertIsNone(hub.version_tuple(""))
+        self.assertEqual(runtime.version_tuple("hub-v1.10.2"), (1, 10, 2))
+        self.assertIsNone(runtime.version_tuple("tools-v1.1.0"))
+        self.assertIsNone(runtime.version_tuple(""))
 
     def test_latest_release_skips_prerelease_and_orders_numerically(self):
         best = hub.latest_hub_release(releases(("hub-v1.2.0", "a", False), ("hub-v1.10.0", "b", True), ("hub-v1.9.0", "c", False)))
         self.assertEqual(best["tag"], "hub-v1.9.0")
-        self.assertIn("citygml-hub-v1.9.0-macos.zip", best["assets"])
-        self.assertEqual(best["assets"]["citygml-hub-v1.9.0-macos.zip"]["digest"], "sha256:c")
+        self.assertEqual(best["notesUrl"], "https://example/hub-v1.9.0")
         self.assertIsNone(hub.latest_hub_release([]))
 
     def test_running_tag_from_env_or_folder(self):
         with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}):
-            self.assertEqual(hub.running_hub_tag(), "hub-v1.2.0")
+            runtime.reset_caches()
+            self.assertEqual(runtime.running_hub_tag(), "hub-v1.2.0")
         with patch.dict(os.environ, {"CITYGML_HUB_TAG": ""}):
-            self.assertIsNone(hub.running_hub_tag())   # source tree: tools/hub/.. is not a version folder
+            runtime.reset_caches()
+            self.assertIsNone(runtime.running_hub_tag())   # source tree: tools/hub/.. is not a version folder
 
 
-class TestInstall(unittest.TestCase):
+class TestFetchLatestHub(unittest.TestCase):
+    """The hub's "Get it now" is the launcher's fetch mode, run from the copy shipped with
+    the running version (the person's copy in the tools folder may be older)."""
+
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.asset = self.tmp / "asset.zip"
-        self.sha = make_asset(self.asset)
-        self.root = self.tmp / "citygml-hub"
-        self.download = lambda url, dest: shutil.copyfile(self.asset, dest)
+        self._home = TempHome()
+        self._home.__enter__()
 
     def tearDown(self):
-        self._tmp.cleanup()
+        self._home.__exit__(None, None, None)
 
-    def test_install_verifies_digest_and_keeps_exec_bit(self):
-        target = hub.install_release("hub-v1.3.0", "https://example/x.zip", "sha256:" + self.sha, self.root, self.download)
-        self.assertTrue((target / "program" / "hub.py").is_file())
-        self.assertTrue(os.access(target / "start-mac.command", os.X_OK))
-        self.assertEqual([p.name for p in self.root.iterdir()], ["hub-v1.3.0"])   # no staging leftovers
+    def _run(self, calls, returncode=0, stdout="Downloading the editing tools (hub-v1.3.0) …\nhub-v1.3.0\n", stderr=""):
+        def run(cmd, **kw):
+            calls.append((cmd, kw))
+            return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+        return run
 
-    def test_digest_mismatch_installs_nothing(self):
+    def test_runs_the_bundled_launcher_and_returns_the_last_line(self):
+        calls = []
+        self.assertEqual(runtime.fetch_latest_hub(run=self._run(calls)), "hub-v1.3.0")
+        cmd, kw = calls[0]
+        self.assertEqual(Path(cmd[1]), runtime.launcher_source())                 # never the person's copy
+        self.assertIn("--fetch-latest" if not runtime.WINDOWS else "-FetchLatest", cmd)
+        self.assertEqual(kw["env"]["CITYGML_TOOLS_DIR"], str(runtime.tools_dir()))
+
+    def test_failure_names_the_launchers_last_line(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            runtime.fetch_latest_hub(run=self._run([], returncode=1, stdout="", stderr="curl: (6) no host\nThe download failed."))
+        self.assertEqual(str(ctx.exception), "The download failed.")
         with self.assertRaises(RuntimeError):
-            hub.install_release("hub-v1.3.0", "u", "sha256:deadbeef", self.root, self.download)
-        self.assertFalse((self.root / "hub-v1.3.0").exists())
-        self.assertEqual([p for p in self.root.iterdir() if p.name.startswith("hub-v")], [])
-
-    def test_missing_digest_is_refused(self):
-        with self.assertRaises(RuntimeError):
-            hub.install_release("hub-v1.3.0", "u", "", self.root, self.download)
-
-    def test_already_installed_is_left_alone(self):
-        (self.root / "hub-v1.3.0" / "program").mkdir(parents=True)
-        (self.root / "hub-v1.3.0" / "program" / "hub.py").write_text("keep")
-        hub.install_release("hub-v1.3.0", "u", "sha256:deadbeef", self.root, self.download)   # digest never consulted
-        self.assertEqual((self.root / "hub-v1.3.0" / "program" / "hub.py").read_text(), "keep")
+            runtime.fetch_latest_hub(run=self._run([], stdout="not a tag\n"))   # a tag is required
 
 
 class TestUpdateManager(unittest.TestCase):
     def setUp(self):
+        self._home = TempHome()
+        self._home.__enter__()
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.asset = self.tmp / "asset.zip"
@@ -107,6 +117,7 @@ class TestUpdateManager(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+        self._home.__exit__(None, None, None)
 
     def _wait(self, um, key, want, timeout=10):
         deadline = time.time() + timeout
@@ -121,26 +132,30 @@ class TestUpdateManager(unittest.TestCase):
         self.fail(f"{key} never became {want!r}: {um.snapshot()}")
 
     def test_announce_only_then_fetch_on_request(self):
-        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}), patch.object(hub, "hub_install_root", return_value=self.root):
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}), patch.object(runtime, "hubs_dir", return_value=self.root):
+            runtime.reset_caches()
             um = hub.UpdateManager()
             um.check_async(fetch_json=lambda: releases(("hub-v1.3.0", self.sha, False)))
             snap = self._wait(um, "checked", True)
             self.assertTrue(snap["available"]); self.assertEqual(snap["latest"], "hub-v1.3.0")
             self.assertEqual(snap["fetch"]["state"], "idle")
             self.assertFalse((self.root / "hub-v1.3.0").exists())          # nothing downloaded unasked
-            um.fetch_async(download=lambda url, dest: shutil.copyfile(self.asset, dest))
+            fetched = []
+            um.fetch_async(fetch=lambda: fetched.append(1) or "hub-v1.3.0")   # the launcher's fetch mode
             snap = self._wait(um, "fetch.state", "done")
-            self.assertTrue((self.root / "hub-v1.3.0" / "program" / "hub.py").is_file())
+            self.assertEqual((snap["fetch"]["tag"], fetched), ("hub-v1.3.0", [1]))
 
     def test_no_update_when_running_is_newest(self):
-        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.3.0"}), patch.object(hub, "hub_install_root", return_value=self.root):
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.3.0"}), patch.object(runtime, "hubs_dir", return_value=self.root):
+            runtime.reset_caches()
             um = hub.UpdateManager()
             um.check_async(fetch_json=lambda: releases(("hub-v1.3.0", self.sha, False)))
             snap = self._wait(um, "checked", True)
             self.assertFalse(snap["available"])
 
     def test_min_hub_is_advisory_and_explains(self):
-        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}), patch.object(hub, "hub_install_root", return_value=self.root):
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}), patch.object(runtime, "hubs_dir", return_value=self.root):
+            runtime.reset_caches()
             um = hub.UpdateManager()
             um.check_async(min_hub="hub-v1.3.0", fetch_json=lambda: releases(("hub-v1.3.0", self.sha, False)))
             snap = self._wait(um, "checked", True)
@@ -148,6 +163,7 @@ class TestUpdateManager(unittest.TestCase):
 
     def test_offline_check_is_silent(self):
         with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}):
+            runtime.reset_caches()
             um = hub.UpdateManager()
             def boom():
                 raise OSError("no network")

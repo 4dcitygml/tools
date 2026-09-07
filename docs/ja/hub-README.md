@@ -14,9 +14,9 @@ python3 tools/hub/app.py        # → http://localhost:8760 が開く
 ```
 
 依存は Python 3.9+ 標準ライブラリのみ。`gh`（GitHub CLI）は**不要**です。
-PR / Issue の一覧には GitHub 接続が必要で、未接続ならダッシュボードの
-「GitHub につなぐ」からデバイスフロー（下記）で接続できます
-（開発者の端末に gh があればそのトークンを自動流用します）。
+PR / Issue の一覧には GitHub 接続が必要で、未接続なら下記のアカウント画面で
+都市のアカウントを選ぶだけ。その場のオプションとして、このパソコンの `gh` 登録も
+選択肢に入りますが、独立して使われることはありません。
 
 ## 初回セットアップ（#59 / #86）
 
@@ -69,18 +69,37 @@ PR / Issue の一覧には GitHub 接続が必要で、未接続ならダッシ�
 
 - `client_id` は**公開情報**（デバイスフローに client_secret は不要）。`preset.json` の
   `oauthClientId`、または環境変数 `CITYGML_OAUTH_CLIENT_ID` で与えます。
-- 未設定なら `gh auth token` に退避します（開発者の端末はこれで素通りできます）。
-  **初心者と同じ「つなぐ」画面を自分の端末で確認したいときは `CITYGML_HUB_NO_GH=1`** を付けて起動します。
-- 取得したトークンは `~/.citygml_auth.json`（0600）に保存。同梱Gitを使う場合だけ、git へ
-  **`credential.helper store` を専用ファイル `~/.citygml_git_credentials`（0600）で**渡します。
-  設定済みの既存Gitを選んだ場合は、そのcredential helperを変更しません。どちらも `origin` の
-  URLは素のままなので、画面共有や `git remote -v` でトークンは見えません。
+- **都市ごとに1つのアカウント、明示的に選択（hub-v1.2.1）。** アカウント画面では3通りの
+  選択肢が1クリックずつで提示される: このパソコンの `gh` 登録（`gh` で既に登録済みなら
+  ログイン名を表示）、このパソコンで以前につないだアカウント、または新たに8桁コードで
+  登録。何も自動で使われず、選択は都市ごとに記録され
+  （共有設定の `cities[<owner/repo>].login`）、別の都市へ引き継がれることはありません。
+- 各アカウントは `~/.citygml/auth/<login>.json`（0600）に、git-credential-store 形式の
+  `<login>.git-credentials` と一緒に保存されます。ハブとエディタのネットワーク git コマンドは
+  すべてのプラットフォームで `-c credential.helper=` と
+  `-c credential.https://github.com.helper=store --file=<そのファイル>` を渡すため、
+  パソコンのキーチェーン・マネージャー・グローバルストアは使われず、トークンは
+  コマンドラインに現れません。コミットの名義（`<id>+<login>@users.noreply.github.com`）は
+  クローンの**ローカル** git 設定に書き込まれます。パソコンのグローバル設定は
+  「設定」に表示されますが使われず、変更されません。
+- アカウントが無いときも、ネットワーク git コマンドには `-c credential.helper=` を渡します。パソコンの資格情報は決して使われず、push は「アカウントがつながっていません」という平易なメッセージで失敗し、エディタはハブの「設定」へ案内します。既存の複製でアカウントを変えると、`origin` はそのアカウントの fork に付け替えられます（fork が無ければ「コピーを作る」ステップが走ります）。都市リポジトリ側には触れません。
+- GitHub が拒否したトークン（401）はアカウントを外し「取り消されました」と表示します。
+  「設定」の「接続を解除」/「削除」でこのパソコンのファイルを削除できます（GitHub での取り消しは
+  「設定」→「アプリケーション」→「認可済みの OAuth Apps」）。
+- 以前のバージョンは `~/.citygml_auth.json` に1つのトークンを置き、コンピューターによって
+  は平文の `~/.citygml_git_credentials` を指すグローバル credential helper を書きました。
+  hub-v1.2.1 の初回起動時に一度だけ引き継ぎ画面が見つかった内容を一覧表示し、
+  トークンをアカウントファイルに移行して、以前のバージョンが書いたもののみ削除を提示します。
+- 「このパソコンの GitHub ログイン」の表示名は GitHub CLI 自身の設定ファイルから読むだけで、そのトークンは選択肢を押したときにのみ読みます（`CITYGML_HUB_NO_GH=1` で選択肢を隠せます）。提案は都市のアカウントか GitHub の画面で開き、エディタが `gh pr create` を呼ぶことはありません。各プロセスは起動時にシェルの git 上書き（`GIT_AUTHOR_*`、`GIT_ASKPASS`、`GIT_SSH*` など）を取り除きます。
+- 都市が**OAuth App アクセス制限**のある組織でホストされている場合（新しい組織では既定で有効）、
+  組織のオーナーが app にアクセス権を与えるまで、フォーク作成と PR 作成は 403 で答えます。
+  ハブはそのメッセージを翻訳し、app の設定ページにある「Organization access」を指します。
 - 必要スコープは `public_repo`: **アカウントの公開リポジトリへの読み書き** — 公開都市リポへの
   fork / push / プルリクエストに必要十分。非公開リポジトリは対象外。同じ書込み範囲を
   **認可前**の画面（`hub.setup_connect_scope`）にも明記しており、ユーザーは Authorize を
   押す前に許可内容を確認できる。（都市リポを private 化する場合のみ `repo` に戻す。）
-- 保存済みトークンで GitHub ユーザを確認できた再起動時は8桁コード画面を省略します。
-  その場合は「前回の GitHub 接続を引き継ぎました」と画面に表示し、意図しない自動進行に見せません。
+- 再起動時、都市に記録されたアカウントは画面なしで使われます。記録されたアカウントがない
+  都市は必ずアカウント画面を最初に表示します。
 
 > **OAuth App の登録が必要です**（無料・1回だけ）: GitHub の Settings → Developer settings →
 > OAuth Apps → New OAuth App → **Enable Device Flow にチェック** → 発行された Client ID を
@@ -110,71 +129,42 @@ PR / Issue の一覧には GitHub 接続が必要で、未接続ならダッシ�
 - squash マージでは PR タイトルが履歴の題行に入る（練習リポは定期リセット。
   `Building:` トレーラ契約は commit 本文側にあり影響なし）。
 
-## 配布 zip のレイアウト
+## インストールされるプログラムの配置
 
-解凍したフォルダの**直下に見えるのは3つだけ**にする。`index.html` や `.py` のような
-「利用者にとって意味の分からないもの」は **`program/` に隠す**（#86）。
+配布 zip は一行コマンドのインストーラが取り込む payload で、人が開くダウンロードでは
+ありません。最上位は `program/` だけで、`citygml-tools/citygml-hub/<tag>/` に展開されます。
 
 ```
-citygml-hub/
-├─ READ-ME-FIRST.html   ← 唯一の入口（= tools/hub/getting-started.html）
-├─ start-mac.command             ← Windows は start-windows.bat
-└─ program/                    index.html・hub.py・.bat・ライセンス表示・
-                                  PortableGit・PythonPortable（Windows のみ）
+citygml-tools/
+├─ citygml.sh | citygml.ps1        利用者ごとの起動スクリプト（program/ から複製。デスクトップのアイコンが実行）
+└─ citygml-hub/<hub-vX.Y.Z>/program/
+      hub.py, index.html, review.html, setup.html, settings.html
+      runtime.py, accounts.py, git_sync.py, shortcuts.py, pr_classification.py
+      attr_editor/, tex_editor/, i18n/, themes/, ライセンス,
+      PortableGit/ と PythonPortable/（Windows のみ）
 ```
 
-Windows 版は python.org の **embeddable package** を `PythonPortable/` として同梱する
-（バージョンと SHA-256 を pin し、ビルド時に検証）。Python のインストールは不要で、
-`start-windows.bat` が同梱 Python を優先し、無ければ手元の `py`/`python` に切り替える
-（2026-08-28 決定: 凍結 exe は廃止し、起動経路をこの1本に統一）。
-Windows版の `PortableGit/` は既存の探索パスとの互換名で、中身にはGit for Windows公式の
-アプリ同梱向け最小構成 **MinGit** を収録する。WindowsですでにPATH上のGitへ
-`user.name` と `user.email` をグローバル設定済みなら、そのGitと既存の認証設定を優先する。
-どちらかが未設定、Gitが起動できない、またはGit自体が無い場合は同梱MinGitを使う。
-
-- ファイル名の①②で**開く順番**を示す。説明テキスト（`READ-ME-FIRST.txt`）は
-  **入口が2つになって迷いの原因になる**ため置かない（内容は ① の HTML に畳んである）。
-- 起動ファイルは**フォルダの中に入れない**。「フォルダを開く」の1操作が脱落点になるため。
-- `app.py` の `BUNDLE_DIRS` が `PortableGit` / `PythonPortable` / `preset.json` を
-  自分の隣と `program/` の両方で探す。`start-mac.command` も同様（開発時の直置きでも動く）。
-
-## 玄関ページ（getting-started.html）
-
-**利用者にはまずこれを開いてもらう**（ダブルクリックでブラウザが開く・サーバ不要）。役割は
-**「起動のしかた」だけを分かりやすく案内する**ことに絞る（ボタン・プローブ・診断は持たない）。
-多くの人が脱落する**「起動ファイルのダブルクリック → OS のセキュリティ警告」の瞬間**を、
-正常・安全だと安心させて確実に通すことに専念する。
-
-設計原則（#86 ゼロベース再構築）:
-
-- **1画面1アクション**。「次へ」で送り、進捗で終わりを見せる。
-  Mac 6ステップ（ブロック→許可→開く→フォルダアクセス許可→部品）/ Windows 3ステップ
-  （起動→詳細情報→実行）＋完了画面。
-- **画面には「いまやること」だけ**。安全性の詳細・トラブル対応は［うまくいかないとき］に畳む
-  （情報は捨てず隠す）。
-- **専門用語を出さない**。フォーク→「自分用のコピー」、クローン→「データを取り込む」、
-  Command Line Tools→「Apple 純正の部品」、署名/Gatekeeper→「初回だけ出る確認画面」。
-- **絵で示す**。SVG の模式図を使い、Windows SmartScreen は実機画像に合わせて
-  「詳細情報」を押す前と「実行」を押す画面を別々に再現する。
-- 起動ファイルをダブルクリックすると**ハブが自動でブラウザを開く**ので、玄関に「開く」ボタンは持たせない。
-- **アカウント作成・ログイン・（private の）招待申請・フォーク・データ取得は、起動後のハブ側
-  「はじめかた」（#59）**が状況表示つきで案内する（`file://` の静的 HTML は `gh`/`git` を実行できないため）。
+`runtime.py` が、この配置、利用者のファイル（設定・アカウント・ツールフォルダ。すべて
+HOME から導く）、使う git と python、複製が都市を名乗る方法、GitHub への到達を知る唯一の
+場所です。ハブとエディタはこれと他の共有モジュールを名前で import します。利用者自身の
+Git 設定はどの git が動くかを左右しません。名義は複製に書き込み、資格情報はコマンドごとに
+渡します（`docs/client-runtime-contract.md`）。
 
 ## 起動経路（Windows は同梱 Python。2026-08-28 決定）
 
-ハブ `app.py` は**兄弟ファイルに依存しない単一ファイル**で、全 OS で素の `.py` の
+ハブとエディタは共有モジュールと同じフォルダに置かれた素の `.py` で、全 OS でソースの
 まま配布します。**起動経路は1本だけで、frozen 実行ファイルはありません** —
-動くものは常にソースとして中身を確認できます。Windows zip には必要なものを同梱します:
+動くものは常に中身を確認できます。Windows zip には必要なものを同梱します:
 
 - **Python**: python.org の **embeddable package** を `PythonPortable/` として同梱
   （版と SHA-256 は pin。正本はリポジトリ直下の `THIRD_PARTY_NOTICES.md`）。
   ランチャー（`start-windows.bat` = `packaging/start-windows.bat`）が
   **`PythonPortable/` → 手元の `py`/`python`** の順で解決するので、
   Python のインストールは不要です。
-- **Git**: MinGit を互換名 `PortableGit/` で同梱。PATH 上の設定済み既存 Git を優先し、
-  無ければ同梱 MinGit を自動検出 — **git のインストールも不要**です。
-- ハブ本体も `python_cmd()` で `PythonPortable/` を検出し、クローンした各エディタ
-  （`tools/*/app.py`）を同じ Python で起動します（`sys.executable` 伝播＋念のための明示検出）。
+- **Git**: MinGit を互換名 `PortableGit/` で同梱。あればそれを使い（`runtime.git_exe()`）、
+  無ければ PATH 上の git — **git のインストールも不要**です。
+- ハブは同梱のエディタ（`program/attr_editor/app.py`、`program/tex_editor/app.py`）を
+  同じ Python（`runtime.python_exe()`）で起動します。都市の複製からコードを動かすことはありません。
 - 検出結果は `/api/status` の `runtime`（git/python の path・bundled）で確認できます。
 - macOS はバイナリ非同梱（M1）: `start-mac.command` が CLT の `python3` を使います
   （`PythonPortable/` を置いた場合はそちらを優先）。
@@ -188,7 +178,7 @@ Windows版の `PortableGit/` は既存の探索パスとの互換名で、中身
 |---|---|
 | **ツール起動** | 属性エディタ（:8765）/ テクスチャエディタ（:8766）を子プロセスで起動し、ブラウザで開く。起動済みなら「開く」。 |
 | **初回セットアップ** | 未クローン時に、GitHub 認証（`/api/auth/start`）→ フォーク作成（`/api/setup/fork`）→ クローン（`/api/setup/clone`）を**ボタンだけ**で進める。状態は `/api/setup/status` に集約し、画面は2秒ごとに取得して自動で進む。 |
-| **アカウント / リポジトリ** | git ブランチ・ユーザ・GitHub 接続状態を表示。未接続なら「GitHub につなぐ」（デバイスフロー）をその場で実行。 |
+| **アカウント / リポジトリ** | git ブランチ・ユーザ・GitHub 接続状態を表示。アカウントがなければアカウント画面へのリンク。「設定」で都市別の設定ページを開く（アカウント、GitHub コピー作成、データフォルダ、バージョン、デスクトップアイコン、保存済みアカウント、やり直す、ツールの削除方法）。 |
 | **自分の PR / Issue 一覧** | 自分が作成した PR・Issue を状態（オープン/クローズ/マージ済）と**反応の有無**（レビュー/コメント）つきで一覧。データ側の確認事項が無い一時的なCI失敗だけは「自動検査を再実行」できる。データ不備は修正後の自動再検査、最新版遅れは取り込み直しとして出し分ける。 |
 | **管理者の承認画面** | 属性/テクスチャエディタから届いた変更案を建物IDごとにまとめ、次に作業する人に合わせて「承認者の確認待ち」「提案者の対応待ち」の2状態で表示。対応待ちにはCI・承認者・最新版取り込み・自動検査中などの理由ラベルを添える。説明・変更単位・最新版との整合・CityGML形式・幾何・属性・位相など全11検査を、合格＝緑、対象外＝グレー、未通過＝赤で確認できる。位相検査は建物ごとの初回（および幾何変更）に実行し、形状を変えない2回目以降は対象外。CIはPRを機械的に拒否せず、確認事項をコメントして提案者と調整する。承認者も5つの定型文または自由入力で確認コメントを送り、変更依頼を記録できる。過去の履歴、日本語の属性名、変更前後、根拠資料、常設3DモデルとGoogleマップも同じ画面で確認し、承認を記録。選択中の建物IDはURLに保持し、再読み込み後も同じ建物を表示する。`/review.html?demo=1` では実データや変更履歴を書き換えず操作を体験可。 |
 | **達成バッジ** | マージ済み PR 数に応じてランク（✨→🌱→🌿→🌳→🏛️）と次ランクまでの残数を表示。 |
@@ -203,12 +193,14 @@ Windows版の `PortableGit/` は既存の探索パスとの互換名で、中身
 |---|---|
 | `app.py` | ローカル HTTP サーバ（状態・貢献 API・子プロセス起動）。ポート 8760。zip では `program/hub.py`。 |
 | `index.html` | ダッシュボード UI。zip では `program/index.html`。 |
+| `setup.html` | 初期設定とアカウント画面（複製が無い間、または都市にアカウントが無い間に表示）。 |
+| `settings.html` | 都市別の設定（アカウント、GitHub のコピー、データフォルダ、版、デスクトップアイコン、削除のしかた）。 |
 | `review.html` | 管理者向けの建物別・変更履歴確認と承認 UI。 |
-| `getting-started.html` | 配布 zip の玄関（起動案内ウィザード）。zip では `READ-ME-FIRST.html`。 |
 | `packaging/start-mac.command` / `.bat` | `.py` 版ランチャー。zip では `start-mac.command`（mac）／`program/start-windows.bat`（win）。 |
 
 - 各ツールは既定ポート（attr_editor=8765 / tex_editor=8766）で起動し、既に listen していれば再利用します。
 - GitHub API は REST / GraphQL を標準ライブラリで直接呼びます（`gh` CLI 非依存）。
   貢献データは gh と同じ GraphQL（PR の reviewDecision 含む）を1リクエストで取得し、
   30 秒キャッシュ、「更新」で強制再取得。
-- 認証はデバイスフローのトークン（`~/.citygml_auth.json`）。gh があればそのトークンにも退避します。
+- 認証は都市に記録されたアカウントのトークンを使います
+  （`~/.citygml/auth/<login>.json`）。`gh` は独立して参照されることはありません。

@@ -25,61 +25,33 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import importlib.util
 import re
-import subprocess
 import sys
-import threading
-import webbrowser
 from datetime import datetime
-from http.server import ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
 
 APP_DIR = Path(__file__).resolve().parent
-
-# Load the attribute editor as the shared base (by path, not import, to stay a standalone file)
-_ATTR_PATH = APP_DIR.parent / "attr_editor" / "app.py"
-if not _ATTR_PATH.is_file():
-    sys.exit(f"Error: {_ATTR_PATH} not found (run from tools/tex_editor inside clone)")
-_spec = importlib.util.spec_from_file_location("attr_editor_app", _ATTR_PATH)
-attr = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(attr)
+# The shared runtime (program/runtime.py in the bundle, tools/runtime.py in the source
+# tree) holds every fact the tools share and puts the other shared modules on sys.path.
+_SHARED = next((d for d in (APP_DIR, APP_DIR.parent) if (d / "runtime.py").is_file()), None)
+if _SHARED is None:
+    sys.exit("runtime.py is missing next to the editor: install the tools again with the one-line command")
+sys.path.insert(0, str(_SHARED))
+import runtime  # noqa: E402
+import accounts  # noqa: E402
+from attr_editor import app as attr  # noqa: E402  — the attribute editor is the shared base
 
 
 def tr(key: str, default: str, **params) -> str:
-    """Translate server-side (Python) generated text (fail-open).
-
-    Same scheme as attr.tr() but looks up the tex_editor catalog (attr's
-    version is pinned to the attr_editor catalog and cannot be reused).
-    """
-    mod = attr.i18n_module()
-    if mod is not None:
-        try:
-            return mod.translate("tex_editor", key, default, **params)
-        except Exception:
-            pass
-    s = default
-    for k, v in params.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
+    """Server-generated text of this editor in the display language (fail-open)."""
+    return runtime.tr("tex_editor", key, default, **params)
 
 
 def tr_lang(lang: str, key: str, default: str, **params) -> str:
-    """tr() with an explicit language, for repo-facing text (PR title/body).
-
-    Repo-facing text follows the repository's working language (4dcitygml.json
-    "lang"), not the UI language of the person editing."""
-    mod = attr.i18n_module()
-    if mod is not None:
-        try:
-            return mod.translate("tex_editor", key, default, lang=lang, **params)
-        except Exception:
-            pass
-    s = default
-    for k, v in params.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
+    """tr() in an explicit language: repository-facing text (PR title / body) follows the
+    repository's working language, not the UI language of the person editing."""
+    return runtime.tr("tex_editor", key, default, lang=lang, **params)
 
 _IMAGE_MAX_BYTES = 30 * 1024 * 1024  # cap on the baked atlas size (safety net)
 
@@ -721,6 +693,12 @@ class TexRepo(attr.Repo):
             if push.returncode != 0:
                 _rollback()
                 self._git("branch", "-D", branch, check=False)
+                if not attr.current_login():
+                    raise RuntimeError(tr(
+                        "tex.err_push_no_account",
+                        "No GitHub account is connected for this city, so nothing can be sent."
+                        " Your edits remain on this screen. Open the hub, choose the account"
+                        " (Settings → GitHub account), then press Send again."))
                 raise RuntimeError(tr(
                     "tex.err_push_failed",
                     "Could not send to GitHub. Your edits remain on this screen."
@@ -794,29 +772,11 @@ class TexRepo(attr.Repo):
                           url="../blob/main/docs/data-contribution-policy.md")
                 + "\n"
             )
-            import shutil as _shutil
 
             pr_url, api_note = self._create_pr_api(branch, pr_title, pr_body)
+            # hub-v1.2.1: never through the computer's GitHub CLI (another identity)
             if pr_url:
                 result["prUrl"] = pr_url
-            elif _shutil.which("gh"):
-                gh = subprocess.run(
-                    ["gh", "pr", "create", "--head", branch, "--title", pr_title, "--body", pr_body],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(self.root),
-                )
-                if gh.returncode == 0:
-                    result["prUrl"] = gh.stdout.strip().splitlines()[-1]
-                else:
-                    result["compareUrl"] = self._compare_url(branch)
-                    result["note"] = (
-                        (api_note + "\n" if api_note else "")
-                        + tr("tex.note_confirm_github",
-                             "Complete the submission on the GitHub confirmation screen.")
-                        + "\n"
-                        + gh.stderr.strip()
-                    )
             else:
                 result["compareUrl"] = self._compare_url(branch)
                 if api_note:
@@ -866,7 +826,7 @@ class TexHandler(attr.Handler):
         except BrokenPipeError:
             return
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
             return
         super().do_GET()
 
@@ -895,40 +855,14 @@ class TexHandler(attr.Handler):
             except BrokenPipeError:
                 pass
             except Exception as e:  # noqa: BLE001
-                self._error(f"{type(e).__name__}: {e}", 500)
+                self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
             return
         super().do_POST()
 
 
-def create_server(repo_root, port: int, *, data: "str | None" = None,
-                  textures=None) -> ThreadingHTTPServer:
-    """Entry point for external callers (e.g. the integrated frontend) to assemble this server (for frozen builds)."""
-    attr.sync_upstream_main(repo_root)
-    TexHandler.repo = TexRepo(Path(repo_root), data)
-    if textures:
-        TexHandler.repo.tex_override = Path(textures).resolve()
-    return ThreadingHTTPServer(("127.0.0.1", int(port)), TexHandler)
-
-
-def _make_console_safe() -> None:
-    """Never let console output crash the app on a narrow code page.
-
-    On Windows a redirected stdout/stderr uses the legacy code page (cp1252,
-    cp932, ...), and the embeddable Python ignores PYTHONUTF8/PYTHONIOENCODING
-    (._pth isolated mode). Help text and log lines contain characters such as
-    "→", so unencodable characters are escaped instead of raising.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(errors="backslashreplace")
-            except (ValueError, OSError):
-                pass
-
-
 def main() -> None:
-    _make_console_safe()
+    runtime.console_safe()
+    accounts.scrub_git_env()   # the shell's git overrides never reach the clone
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (can be omitted when run from inside clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
@@ -938,12 +872,7 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    repo_root = args.repo or attr.detect_repo()
-    if repo_root is None:
-        cfg = attr.load_config()
-        saved = cfg.get("repo")
-        if saved and attr.has_building_data(Path(saved)):
-            repo_root = Path(saved)
+    repo_root = args.repo or runtime.detect_repo() or runtime.last_clone()
     if repo_root is None:
         sys.exit(
             "Error: clone not found. Specify with --repo or run first-time setup "
@@ -959,16 +888,8 @@ def main() -> None:
         TexHandler.repo.tex_override = args.textures.resolve()
         print(f"  Texture replacement: {TexHandler.repo.tex_override}")
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), TexHandler)
-    url = f"http://localhost:{args.port}/"
-    print(f"CityGML Texture Editor: {url}")
-    print(f"  Data: {TexHandler.repo.bldg_dir}")
-    if not args.no_browser:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nExiting")
+    runtime.serve(TexHandler, args.port, ["CityGML Texture Editor: {url}", f"  Data: {TexHandler.repo.bldg_dir}"],
+                  open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

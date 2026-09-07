@@ -26,6 +26,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support import TempHome, runtime
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
 hub = importlib.util.module_from_spec(_spec)
@@ -35,6 +37,11 @@ _attr_spec = importlib.util.spec_from_file_location(
     "attr_app", REPO_ROOT / "tools" / "attr_editor" / "app.py")
 attr = importlib.util.module_from_spec(_attr_spec)
 _attr_spec.loader.exec_module(attr)
+
+_i18n_spec = importlib.util.spec_from_file_location(
+    "i18n_loader", REPO_ROOT / "tools" / "i18n" / "i18n_loader.py")
+i18n = importlib.util.module_from_spec(_i18n_spec)
+_i18n_spec.loader.exec_module(i18n)
 
 LANGS = ("en", "ja", "de")
 CHANGES = [{
@@ -61,18 +68,19 @@ def title_for(lang: str, many: bool = False) -> str:
 
 
 def tex_title_for(lang: str, add: bool = False) -> str:
-    mod = attr.i18n_module()
     key = "pr.title_tex_add" if add else "pr.title_tex_update"
     default = ("Add textures ({n} faces): {bid}" if add
                else "Update textures ({n} faces): {bid}")
-    return mod.translate("tex_editor", key, default, lang=lang,
-                         n=3, bid="13101-bldg-1")
+    return i18n.translate("tex_editor", key, default, lang=lang,
+                          n=3, bid="13101-bldg-1")
 
 
 class _EnglishEnv(unittest.TestCase):
     _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
 
     def setUp(self):
+        self._home = TempHome(lang=None)
+        self._home.__enter__()
         self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
         for k in self._ENV_KEYS:
             os.environ.pop(k, None)
@@ -84,6 +92,7 @@ class _EnglishEnv(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        self._home.__exit__(None, None, None)
 
 
 class TestTitlesKeepClassifying(_EnglishEnv):

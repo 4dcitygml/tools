@@ -40,7 +40,9 @@ def job_level_ifs(text: str) -> list[str]:
 
 class WorkflowLintTest(unittest.TestCase):
     def test_workflows_exist(self) -> None:
-        self.assertGreaterEqual(len(workflows()), 2)
+        # the tools repository ships one release workflow (hub-v1.2: the hub zip is the only
+        # distribution); city repositories add theirs when checked out next to it
+        self.assertGreaterEqual(len(workflows()), 1)
 
     def test_every_action_is_pinned_to_a_commit_sha(self) -> None:
         # A5: moving tags (v4, main, latest) are not allowed in any workflow.
@@ -96,11 +98,24 @@ class WorkflowLintTest(unittest.TestCase):
                     break
         self.assertEqual(bad, [], "pull_request_target checkout keeps credentials:\n" + "\n".join(bad))
 
+    def test_step_names_and_run_lines_do_not_break_yaml(self) -> None:
+        # A plain scalar ends at ": " — a step name like "Build (x: y)" makes GitHub refuse the
+        # file. Line-based on purpose (no PyYAML in CI), so it runs everywhere.
+        bad = []
+        for wf in workflows():
+            for line in wf.read_text(encoding="utf-8").splitlines():
+                m = re.match(r"^\s*-?\s*(name|run):\s*(?![|>'\"])(.*)$", line)
+                if m and ": " in m.group(2):
+                    bad.append(f"{wf.parent.parent.parent.name}/{wf.name}: {line.strip()}")
+        self.assertEqual(bad, [], "': ' inside a plain scalar:\n" + "\n".join(bad))
+
     def test_release_workflows_smoke_test_their_archives(self) -> None:
-        # The distribution must be exercised (extracted and imported) before it is uploaded.
-        for name in ("release-hub.yml",):
-            text = (TOOLS / ".github" / "workflows" / name).read_text(encoding="utf-8")
-            self.assertEqual(text.count("Smoke-test the archive"), 2, name)
+        # The distribution must be exercised (extracted and imported) before it is uploaded:
+        # both build jobs run scripts/verify_bundle.py (the Windows job twice, once under the
+        # bundled python.exe), and the same script runs in tests/test_bundle.py.
+        text = (TOOLS / ".github" / "workflows" / "release-hub.yml").read_text(encoding="utf-8")
+        self.assertEqual(text.count("run: python3 scripts/verify_bundle.py") + text.count("run: python scripts/verify_bundle.py"), 2)
+        self.assertIn("verify_bundle.py $zip --flavor windows --git-smoke", text)
 
 
 if __name__ == "__main__":

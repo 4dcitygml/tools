@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support import TempHome, runtime
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -34,26 +36,23 @@ DEFAULT = "4dcitygml/sample-tokyo-station"
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self._saved = os.environ.pop("CITYGML_UPSTREAM", None)
+        self._home = TempHome()
+        self.home = self._home.__enter__()
 
     def tearDown(self):
-        if self._saved is not None:
-            os.environ["CITYGML_UPSTREAM"] = self._saved
-        else:
-            os.environ.pop("CITYGML_UPSTREAM", None)
+        self._home.__exit__(None, None, None)
 
 
 class TestNormalize(Base):
     def test_forms(self):
-        for mod in (attr, hub):
-            n = mod._normalize_upstream
-            self.assertEqual(n("owner/repo"), "https://github.com/owner/repo")
-            self.assertEqual(n("https://github.com/o/r"), "https://github.com/o/r")
-            self.assertEqual(n("https://github.com/o/r.git"), "https://github.com/o/r")
-            self.assertEqual(n("git@github.com:o/r.git"), "https://github.com/o/r")
-            self.assertIsNone(n("https://evil.example/o/r"))
-            self.assertIsNone(n("o/r/extra"))
-            self.assertIsNone(n(""))
+        n = runtime.normalize_upstream
+        self.assertEqual(n("owner/repo"), "https://github.com/owner/repo")
+        self.assertEqual(n("https://github.com/o/r"), "https://github.com/o/r")
+        self.assertEqual(n("https://github.com/o/r.git"), "https://github.com/o/r")
+        self.assertEqual(n("git@github.com:o/r.git"), "https://github.com/o/r")
+        self.assertIsNone(n("https://evil.example/o/r"))
+        self.assertIsNone(n("o/r/extra"))
+        self.assertIsNone(n(""))
 
 
 class TestPriority(Base):
@@ -68,45 +67,45 @@ class TestPriority(Base):
         return d
 
     def test_default_without_context(self):
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(), DEFAULT)
-            self.assertEqual(mod.upstream_nwo(None), DEFAULT)
+        self.assertEqual(runtime.upstream_nwo(), DEFAULT)
+        self.assertEqual(runtime.upstream_nwo(None), DEFAULT)
 
     def test_city_json_wins_over_default(self):
         d = self._repo_with("stadt-muenchen/13100-muenchen", None)
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "stadt-muenchen/13100-muenchen")
+        self.assertEqual(runtime.upstream_nwo(d), "stadt-muenchen/13100-muenchen")
 
     def test_git_remote_upstream_used_when_no_city_json(self):
         d = self._repo_with(None, "git@github.com:city-of-x/13101-cityname.git")
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "city-of-x/13101-cityname")
+        self.assertEqual(runtime.upstream_nwo(d), "city-of-x/13101-cityname")
 
     def test_city_json_wins_over_remote(self):
         d = self._repo_with("a/b", "https://github.com/c/d.git")
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "a/b")
+        self.assertEqual(runtime.upstream_nwo(d), "a/b")
 
     def test_env_wins_over_everything(self):
         os.environ["CITYGML_UPSTREAM"] = "env-owner/env-repo"
         d = self._repo_with("a/b", None)
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "env-owner/env-repo")
+        self.assertEqual(runtime.upstream_nwo(d), "env-owner/env-repo")
 
     def test_broken_city_json_falls_back(self):
         d = Path(tempfile.mkdtemp())
         (d / "4dcitygml.json").write_text("{not json", encoding="utf-8")
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), DEFAULT)
+        self.assertEqual(runtime.upstream_nwo(d), DEFAULT)
 
     def test_invalid_repo_value_falls_back(self):
         d = self._repo_with("https://evil.example/o/r", None)
-        for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), DEFAULT)
+        self.assertEqual(runtime.upstream_nwo(d), DEFAULT)
 
 
 class TestDemoCityJsons(unittest.TestCase):
     """Consistency check that the three demo cities' 4dcitygml.json files are readable by this resolution logic."""
+
+    def setUp(self):
+        self._home = TempHome()
+        self.home = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
 
     def test_demo_city_jsons_resolve(self):
         base = REPO_ROOT.parent
@@ -119,10 +118,17 @@ class TestDemoCityJsons(unittest.TestCase):
             d = base / folder
             if not (d / "4dcitygml.json").is_file():
                 self.skipTest(f"environment does not have {folder}/4dcitygml.json")
-            self.assertEqual(attr.upstream_nwo(d), nwo)
+            self.assertEqual(runtime.upstream_nwo(d), nwo)
 
 
 class TestStableBuildingId(unittest.TestCase):
+    def setUp(self):
+        self._home = TempHome()
+        self.home = self._home.__enter__()
+
+    def tearDown(self):
+        self._home.__exit__(None, None, None)
+
     def test_generic_source_placeholder_falls_back_to_gml_id(self):
         span = (
             b'<bldg:Building gml:id="gml_fallback">'

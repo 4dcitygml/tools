@@ -6,7 +6,7 @@
 #   start-windows.bat → program/PythonPortable/python.exe program/hub.py.
 #   (Decision 2026-08-28: the Windows distribution is the bundled-Python zip only; the
 #   former PyInstaller exe was removed so there is exactly one launch path to maintain.)
-# - macOS: a zip with no bundled binaries (hub.py + .command + index/review.html).
+# - macOS: a zip with no bundled binaries (hub.py, its screens, the editors, the shared modules).
 #   Unsigned binaries are blocked by Gatekeeper, so we use the CLT-bundled python3 + git (M1).
 #
 # Supply-chain rules (A5/A7): everything fetched at build time (MinGit, Python embeddable)
@@ -17,16 +17,16 @@
 # Zip layout (hub-v1.2.0): the zip is the payload of the one-line installer
 # (install/citygml.sh | citygml.ps1), not a user-facing download. The only top-level
 # item is program/; the installer unpacks it into citygml-tools/citygml-hub/<tag>/ and
-# starts program/hub.py. program/ also carries the editors, language and theme packs,
-# the shared modules (git_sync.py, shortcuts.py, pr_classification.py) and the per-user
-# launchers (citygml.sh / citygml.ps1) that the installer copies into place.
+# starts program/hub.py. What travels is listed in ONE place, scripts/build_bundle.py
+# (the manifest), and checked by scripts/verify_bundle.py; this workflow only calls them,
+# and tests/test_bundle.py runs the same two scripts against the source tree, so a
+# rename in the code cannot break the release unnoticed.
 # Cities distribute no code: nothing is ever loaded from a city clone.
-# The data itself is not needed, so only tools/hub is fetched via blob:none + sparse-checkout.
+# The data itself is not needed, so only the bundled folders are fetched via blob:none + sparse-checkout.
 #
 # Note: the embeddable package ships a python314._pth (site disabled, isolated sys.path).
-# The hub and editors are single-file stdlib-only apps, so this is fine; the
-# "Test extracted bundle" step below runs the bundled python.exe against the extracted
-# layout to prove it (this closes the ._pth open item from handover memo §9.2).
+# The "Test extracted bundle" step below runs verify_bundle.py under the bundled python.exe
+# against the extracted layout to prove the hub runs there (handover memo §9.2).
 name: hub release build
 
 on:
@@ -71,6 +71,10 @@ jobs:
             scripts/pr_classification.py
             tools/git_sync.py
             tools/shortcuts.py
+            tools/accounts.py
+            tools/runtime.py
+            scripts/build_bundle.py
+            scripts/verify_bundle.py
             install
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
@@ -139,183 +143,24 @@ jobs:
           # the hub must still parse (single-file, stdlib-only).
           & $py ..\app.py --help *> $null
           if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to run app.py" }
-      - name: Assemble full zip (launcher + .py + PythonPortable + MinGit + licenses)
-        # Build with Python's zipfile to reliably set the UTF-8 flag (EFS) on Japanese file names.
-        shell: python
-        working-directory: tools/hub/dist
+      - name: Assemble the Windows zip with scripts/build_bundle.py (the one manifest)
+        shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          import os
-          import pathlib
-          import zipfile
-
-          ROOT = "citygml-hub"
-          LIB = f"{ROOT}/program"
-          ref = os.environ.get("RELEASE_TAG") or os.environ.get("GITHUB_REF_NAME", "")
-          version = ref.removeprefix("hub-") if ref.startswith("hub-v") else "dev"
-          artifact = pathlib.Path(f"citygml-hub-{version}-windows-full.zip")
-
-          repo_root = pathlib.Path("../../..")
-          with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
-              # hub-v1.2.0: the zip is the installer's payload, not a user-facing download.
-              # The one-line installer (install/citygml.ps1) unpacks it into
-              # citygml-tools/citygml-hub/<tag>/ and starts program/hub.py; nothing is
-              # meant to be double-clicked inside. Only program/ exists at the top level.
-              z.write("../app.py", f"{LIB}/hub.py")
-              z.write("../index.html", f"{LIB}/index.html")
-              z.write("../review.html", f"{LIB}/review.html")
-              z.write("../packaging/start-windows.bat", f"{LIB}/start-windows.bat")
-              z.write("../preset.json", f"{LIB}/preset.json")
-              # The A5 classification table shared with CI (hub-v1.2.0)
-              z.write(repo_root / "scripts" / "pr_classification.py", f"{LIB}/pr_classification.py")
-              # Shared sync/shortcut modules and the per-user launchers (hub-v1.2.0)
-              z.write(repo_root / "tools" / "git_sync.py", f"{LIB}/git_sync.py")
-              z.write(repo_root / "tools" / "shortcuts.py", f"{LIB}/shortcuts.py")
-              z.write(repo_root / "install" / "citygml.sh", f"{LIB}/citygml.sh")
-              z.write(repo_root / "install" / "citygml.ps1", f"{LIB}/citygml.ps1")
-              z.write(repo_root / "LICENSE", f"{LIB}/LICENSE")
-              z.write(repo_root / "NOTICE", f"{LIB}/NOTICE")
-              z.write(repo_root / "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
-              # Editors, the language pack and the theme pack travel with the hub (the city clone
-              # has no tools/; hub.py resolves program/<editor>/app.py, program/i18n/ and
-              # program/themes/ as its fallback).
-              tools_root = repo_root / "tools"
-              for sub in ("attr_editor", "tex_editor", "i18n", "themes"):
-                  for p in sorted((tools_root / sub).rglob("*")):
-                      if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
-                          z.write(p, f"{LIB}/{sub}/{p.relative_to(tools_root / sub).as_posix()}")
-              for bundle in ("PortableGit", "PythonPortable"):
-                  base = pathlib.Path(bundle)
-                  for p in sorted(base.rglob("*")):
-                      if p.is_file():
-                          z.write(p, f"{LIB}/{bundle}/{p.relative_to(base).as_posix()}")
-
-          size_mib = artifact.stat().st_size / (1024 * 1024)
-          print(f"Windows bundle: {size_mib:.2f} MiB")
-          if artifact.stat().st_size > 70 * 1024 * 1024:
-              raise RuntimeError(f"Windows bundle exceeds 70 MiB: {size_mib:.2f} MiB")
-      - name: Verify archive contents (entry points, licenses, layout)
-        shell: python
-        working-directory: tools/hub/dist
-        run: |
-          import hashlib
-          import pathlib
-          import zipfile
-
-          artifacts = list(pathlib.Path().glob("citygml-hub-*-windows-full.zip"))
-          if len(artifacts) != 1:
-              raise RuntimeError(f"Windows distribution zip is not exactly one: {artifacts}")
-          names = set(zipfile.ZipFile(artifacts[0]).namelist())
-          ROOT = "citygml-hub"
-          LIB = f"{ROOT}/program"
-          required = [
-              f"{LIB}/hub.py",
-              f"{LIB}/start-windows.bat",
-              f"{LIB}/citygml.ps1",
-              f"{LIB}/citygml.sh",
-              f"{LIB}/git_sync.py",
-              f"{LIB}/shortcuts.py",
-              f"{LIB}/pr_classification.py",
-              f"{LIB}/index.html",
-              f"{LIB}/review.html",
-              f"{LIB}/preset.json",
-              f"{LIB}/LICENSE",
-              f"{LIB}/NOTICE",
-              f"{LIB}/THIRD_PARTY_NOTICES.md",
-              f"{LIB}/attr_editor/app.py",
-              f"{LIB}/attr_editor/index.html",
-              f"{LIB}/tex_editor/app.py",
-              f"{LIB}/tex_editor/index.html",
-              f"{LIB}/i18n/i18n_loader.py",
-              f"{LIB}/i18n/catalogs/hub/ja.json",
-              f"{LIB}/themes/theme_loader.py",
-              f"{LIB}/PythonPortable/python.exe",
-              f"{LIB}/PythonPortable/LICENSE.txt",
-              f"{LIB}/PortableGit/cmd/git.exe",
-              f"{LIB}/PortableGit/LICENSE.txt",
-          ]
-          missing = [n for n in required if n not in names]
-          if missing:
-              raise RuntimeError(f"Distribution zip missing required files: {missing}")
-          top = {n.split("/", 2)[1] for n in names if n.startswith(f"{ROOT}/")}
-          allowed_top = {"program"}
-          if top - allowed_top:
-              raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - allowed_top}")
-          digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
-          print(f"{artifacts[0].name} sha256={digest}")
-      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
-        shell: python
-        working-directory: tools/hub/dist
-        run: |
-          import importlib.util, inspect, pathlib, tempfile, types, zipfile
-
-          archive = next(pathlib.Path().glob("citygml-hub-*-windows-full.zip"))
-          with tempfile.TemporaryDirectory() as tmp:
-              zipfile.ZipFile(archive).extractall(tmp)
-              program = pathlib.Path(tmp, "citygml-hub", "program").resolve()  # compare resolved paths (macOS /var -> /private/var)
-              spec = importlib.util.spec_from_file_location("hub_smoke", program / "hub.py")
-              hub = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(hub)
-              owner = next(c for _, c in inspect.getmembers(hub, inspect.isclass) if hasattr(c, "_tool_app"))
-              fake = types.SimpleNamespace(root=pathlib.Path(tmp, "no-clone"))
-              for key in ("attr_editor", "tex_editor"):
-                  found = owner._tool_app(fake, hub.TOOLS[key])
-                  if not found or program not in found.parents:
-                      raise RuntimeError(f"{key} does not resolve inside program/: {found}")
-              if hub.i18n_module() is None:
-                  raise RuntimeError("language pack not found next to the hub")
-              if hub.theme_module() is None:
-                  raise RuntimeError("theme pack not found next to the hub")
-              catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
-              if catalogs != ["de.json", "en.json", "ja.json"]:
-                  raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
-          print(f"smoke test passed for {archive.name}")
-      - name: Test extracted bundle launches with bundled Python and finds bundled Git
+        run: python scripts/build_bundle.py --flavor windows --tag "${RELEASE_TAG:-$GITHUB_REF_NAME}" --portable tools/hub/dist --out tools/hub/dist
+      - name: Verify the archive with scripts/verify_bundle.py (layout, required files, smoke test)
+        shell: bash
+        run: python scripts/verify_bundle.py tools/hub/dist/citygml-hub-*-windows-full.zip --flavor windows
+      - name: Test the extracted bundle under the bundled Python (._pth isolated mode) with the bundled Git
         shell: pwsh
-        working-directory: tools/hub/dist
         run: |
-          $extracted = Join-Path $env:RUNNER_TEMP "hub-bundle"
-          $artifact = (Get-ChildItem "citygml-hub-*-windows-full.zip").FullName
-          Expand-Archive -LiteralPath $artifact -DestinationPath $extracted -Force
-          $root = Join-Path $extracted "citygml-hub"
-          $lib = Join-Path $root "program"
-          $py = Join-Path $lib "PythonPortable\python.exe"
-
-          # Verify the fallback path to the bundled Git on an unconfigured PC,
-          # unaffected by the runner's Git settings.
-          $env:GIT_CONFIG_GLOBAL = Join-Path $extracted "empty-gitconfig"
-
-          & $py (Join-Path $lib "hub.py") --help *> $null
-          if ($LASTEXITCODE -ne 0) { throw "Bundled Python failed to run hub.py" }
-
-          $check = Join-Path $env:RUNNER_TEMP "bundle-check.py"
-          @'
-          import importlib.util
-          import os
-          import pathlib
-          import sys
-
-          lib = pathlib.Path(sys.argv[1])
-          smoke_repo = pathlib.Path(sys.argv[2])
-
-          spec = importlib.util.spec_from_file_location("hub_bundle_test", lib / "hub.py")
-          hub = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(hub)
-
-          expected_git = (lib / "PortableGit" / "cmd" / "git.exe").resolve()
-          if pathlib.Path(hub.git_cmd()[0]).resolve() != expected_git:
-              raise SystemExit("hub cannot detect bundled MinGit")
-          py_exe, bundled = hub.python_cmd()
-          if not bundled or pathlib.Path(py_exe).resolve().parent != (lib / "PythonPortable").resolve():
-              raise SystemExit("hub cannot detect bundled PythonPortable")
-          if hub.Hub(smoke_repo)._git("rev-parse", "--is-inside-work-tree") != "true":
-              raise SystemExit("hub cannot get repository status with bundled MinGit")
-          print("bundle check OK")
-          '@ | Set-Content -Encoding UTF8 $check
+          $py = (Resolve-Path "tools\hub\dist\PythonPortable\python.exe").Path
+          $zip = (Get-ChildItem "tools\hub\dist\citygml-hub-*-windows-full.zip").FullName
+          # The fallback path to the bundled Git on an unconfigured PC, unaffected by the runner's Git settings.
+          $env:GIT_CONFIG_GLOBAL = Join-Path $env:RUNNER_TEMP "empty-gitconfig"
           $smoke = Join-Path $env:RUNNER_TEMP "mingit-smoke\work"
-          & $py $check $lib $smoke
-          if ($LASTEXITCODE -ne 0) { throw "Bundled bundle verification failed" }
+          & $py scripts\verify_bundle.py $zip --flavor windows --git-smoke $smoke
+          if ($LASTEXITCODE -ne 0) { throw "verification under the bundled Python failed" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request' && inputs.release_tag == ''
@@ -334,8 +179,9 @@ jobs:
           if (-not $zip) { throw "built zip not found" }
           $ver = $zip.Name -replace '^citygml-hub-(.*)-windows-full\.zip$', '$1'
           # PR builds are versioned "dev"; the installer only accepts hub-vX.Y.Z, so present the
-          # same file under a contract-shaped name (the file on disk is unchanged).
-          if ($ver -notmatch '^v\d+\.\d+\.\d+$') { $ver = "v0.0.0" }
+          # same file under a contract-shaped name (the file on disk is unchanged). The name must
+          # be above the installer's hub-v1.2.0 floor, or the second run would try to fetch a newer one.
+          if ($ver -notmatch '^v\d+\.\d+\.\d+$') { $ver = "v99.0.0" }
           $assetName = "citygml-hub-$ver-windows-full.zip"
           $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $rel = @(@{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
@@ -356,7 +202,13 @@ jobs:
           Remove-Item Env:CITYGML_RELEASES_JSON; Remove-Item Env:CITYGML_ASSET_FILE
           $out2 = & powershell -NoProfile -ExecutionPolicy Bypass -File $script "4dcitygml/sample-newyork-station" 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $out2 -notmatch "EXEC hub-$ver") { Write-Host $out2; throw "installer second run (no network) failed" }
-          Write-Host "installer OK: first run installed hub-$ver, second run started it without network"
+          # the hub's "Get it now" = the launcher's fetch mode (the way runtime.fetch_latest_hub calls it):
+          # with the hooks pointing at this build it installs (already there) and prints the tag
+          $env:CITYGML_RELEASES_JSON = $json; $env:CITYGML_ASSET_FILE = $zip.FullName
+          $out3 = & powershell -NoProfile -ExecutionPolicy Bypass -File $script -FetchLatest 2>&1 | Out-String
+          $tag = ($out3.Trim() -split "`r?`n")[-1]
+          if ($LASTEXITCODE -ne 0 -or $tag -ne "hub-$ver") { Write-Host $out3; throw "fetch mode failed (last line '$tag')" }
+          Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver"
       - name: Upload Windows package directly to requested Release
         if: inputs.release_tag != ''
         shell: bash
@@ -386,144 +238,36 @@ jobs:
             scripts/pr_classification.py
             tools/git_sync.py
             tools/shortcuts.py
+            tools/accounts.py
+            tools/runtime.py
+            scripts/build_bundle.py
+            scripts/verify_bundle.py
             install
-      - name: Assemble macOS zip
-        # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
-        # names, so build with Python's zipfile (non-ASCII names always get EFS).
-        # Store the .command with mode 0o755 so it runs as-is after download.
-        shell: python
+      - name: Assemble the macOS zip with scripts/build_bundle.py (the one manifest)
+        shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          import os
-          import zipfile
-
-          def add(z, src, arc, mode=0o644, sub=None):
-              info = zipfile.ZipInfo(arc)
-              info.external_attr = (mode & 0xFFFF) << 16
-              info.compress_type = zipfile.ZIP_DEFLATED
-              with open(src, "rb") as f:
-                  data = f.read()
-              if sub:  # embed the zip's target-OS marker into the entrance page (#94)
-                  data = data.decode("utf-8").replace(*sub).encode("utf-8")
-              z.writestr(info, data)
-
-          base = "tools/hub"
-          ROOT = "citygml-hub"
-          LIB = f"{ROOT}/program"
-          ref = os.environ.get("RELEASE_TAG") or os.environ.get("GITHUB_REF_NAME", "")
-          version = ref.removeprefix("hub-") if ref.startswith("hub-v") else "dev"
-          artifact = f"citygml-hub-{version}-macos.zip"
-          with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as z:
-              # hub-v1.2.0: installer payload only (see the Windows step); program/ is the
-              # sole top-level item. The per-user launcher program/citygml.sh keeps its
-              # execute bit so the installer can copy it into place as is.
-              add(z, f"{base}/app.py", f"{LIB}/hub.py")
-              add(z, f"{base}/index.html", f"{LIB}/index.html")
-              add(z, f"{base}/review.html", f"{LIB}/review.html")
-              add(z, f"{base}/preset.json", f"{LIB}/preset.json")
-              add(z, "scripts/pr_classification.py", f"{LIB}/pr_classification.py")
-              add(z, "tools/git_sync.py", f"{LIB}/git_sync.py")
-              add(z, "tools/shortcuts.py", f"{LIB}/shortcuts.py")
-              add(z, "install/citygml.sh", f"{LIB}/citygml.sh", 0o755)
-              add(z, "install/citygml.ps1", f"{LIB}/citygml.ps1")
-              add(z, "LICENSE", f"{LIB}/LICENSE")
-              add(z, "NOTICE", f"{LIB}/NOTICE")
-              add(z, "THIRD_PARTY_NOTICES.md", f"{LIB}/THIRD_PARTY_NOTICES.md")
-              # Editors and the language pack travel with the hub (see the Windows step)
-              import pathlib
-              for sub in ("attr_editor", "tex_editor", "i18n", "themes"):
-                  for p in sorted(pathlib.Path("tools", sub).rglob("*")):
-                      if p.is_file() and p.suffix in {".py", ".html", ".json"} and "__pycache__" not in p.parts:
-                          add(z, str(p), f"{LIB}/{sub}/{p.relative_to(pathlib.Path('tools', sub)).as_posix()}")
-      - name: Verify archive contents (entry points, licenses, layout)
-        shell: python
-        run: |
-          import hashlib
-          import pathlib
-          import zipfile
-
-          artifacts = list(pathlib.Path().glob("citygml-hub-*-macos.zip"))
-          if len(artifacts) != 1:
-              raise RuntimeError(f"macOS distribution zip is not exactly one: {artifacts}")
-          zf = zipfile.ZipFile(artifacts[0])
-          names = set(zf.namelist())
-          ROOT = "citygml-hub"
-          LIB = f"{ROOT}/program"
-          required = [
-              f"{LIB}/hub.py",
-              f"{LIB}/citygml.sh",
-              f"{LIB}/citygml.ps1",
-              f"{LIB}/git_sync.py",
-              f"{LIB}/shortcuts.py",
-              f"{LIB}/pr_classification.py",
-              f"{LIB}/index.html",
-              f"{LIB}/review.html",
-              f"{LIB}/preset.json",
-              f"{LIB}/LICENSE",
-              f"{LIB}/NOTICE",
-              f"{LIB}/THIRD_PARTY_NOTICES.md",
-              f"{LIB}/attr_editor/app.py",
-              f"{LIB}/attr_editor/index.html",
-              f"{LIB}/tex_editor/app.py",
-              f"{LIB}/tex_editor/index.html",
-              f"{LIB}/i18n/i18n_loader.py",
-              f"{LIB}/i18n/catalogs/hub/ja.json",
-              f"{LIB}/themes/theme_loader.py",
-          ]
-          missing = [n for n in required if n not in names]
-          if missing:
-              raise RuntimeError(f"Distribution zip missing required files: {missing}")
-          info = zf.getinfo(f"{LIB}/citygml.sh")
-          if not (info.external_attr >> 16) & 0o100:
-              raise RuntimeError("program/citygml.sh does not have execute bit")
-          top = {n.split("/", 2)[1] for n in names if n.startswith(f"{ROOT}/")}
-          if top - {"program"}:
-              raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - {'program'}}")
-          digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
-          print(f"{artifacts[0].name} sha256={digest}")
-      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
-        shell: python
-        run: |
-          import importlib.util, inspect, pathlib, tempfile, types, zipfile
-
-          archive = next(pathlib.Path().glob("citygml-hub-*-macos.zip"))
-          with tempfile.TemporaryDirectory() as tmp:
-              zipfile.ZipFile(archive).extractall(tmp)
-              program = pathlib.Path(tmp, "citygml-hub", "program").resolve()  # compare resolved paths (macOS /var -> /private/var)
-              spec = importlib.util.spec_from_file_location("hub_smoke", program / "hub.py")
-              hub = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(hub)
-              owner = next(c for _, c in inspect.getmembers(hub, inspect.isclass) if hasattr(c, "_tool_app"))
-              fake = types.SimpleNamespace(root=pathlib.Path(tmp, "no-clone"))
-              for key in ("attr_editor", "tex_editor"):
-                  found = owner._tool_app(fake, hub.TOOLS[key])
-                  if not found or program not in found.parents:
-                      raise RuntimeError(f"{key} does not resolve inside program/: {found}")
-              if hub.i18n_module() is None:
-                  raise RuntimeError("language pack not found next to the hub")
-              if hub.theme_module() is None:
-                  raise RuntimeError("theme pack not found next to the hub")
-              catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
-              if catalogs != ["de.json", "en.json", "ja.json"]:
-                  raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
-          print(f"smoke test passed for {archive.name}")
+        run: python3 scripts/build_bundle.py --flavor macos --tag "${RELEASE_TAG:-$GITHUB_REF_NAME}" --out tools/hub/dist
+      - name: Verify the archive with scripts/verify_bundle.py (layout, required files, smoke test)
+        shell: bash
+        run: python3 scripts/verify_bundle.py tools/hub/dist/citygml-hub-*-macos.zip --flavor macos
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request' && inputs.release_tag == ''
         with:
           name: hub-macos
-          path: citygml-hub-*-macos.zip
+          path: tools/hub/dist/citygml-hub-*-macos.zip
       - name: Test the macOS installer (install/citygml.sh) against the built zip
         # Same idea as the Windows step: the per-user launcher with the test hooks
         # (fake releases payload + local asset) — first run installs, second run needs no network.
         shell: bash
         run: |
           set -euo pipefail
-          zip="$(ls citygml-hub-*-macos.zip | head -n 1)"
-          ver="${zip#citygml-hub-}"; ver="${ver%-macos.zip}"
-          # PR builds are versioned "dev"; present the file under a contract-shaped name.
-          [[ "$ver" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || ver="v0.0.0"
+          zip="$(ls tools/hub/dist/citygml-hub-*-macos.zip | head -n 1)"
+          ver="${zip##*/citygml-hub-}"; ver="${ver%-macos.zip}"
+          # PR builds are versioned "dev"; present the file under a contract-shaped name above
+          # the installer's hub-v1.2.0 floor (else the second run would try to fetch a newer one).
+          [[ "$ver" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || ver="v99.0.0"
           sha="$(sha256sum "$zip" | cut -d' ' -f1)"
           python3 - "$ver" "$sha" > "$RUNNER_TEMP/releases.json" <<'PY'
           import json, sys
@@ -540,7 +284,11 @@ jobs:
           unset CITYGML_RELEASES_JSON CITYGML_ASSET_FILE
           out2="$(bash install/citygml.sh 4dcitygml/sample-newyork-station)"
           grep -q "EXEC hub-$ver" <<<"$out2"
-          echo "installer OK: first run installed hub-$ver, second run started it without network"
+          # the hub's "Get it now" = the launcher's fetch mode: the version is already installed, so it
+          # answers with the tag and downloads nothing (no releases / asset hooks are set any more)
+          out3="$(bash install/citygml.sh --fetch-latest 2>&1 || true)"
+          echo "$out3" | tail -n 1 | grep -q "^hub-v" || { echo "$out3"; echo "fetch mode failed"; exit 1; }
+          echo "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers a tag"
       - name: Upload macOS package directly to requested Release
         if: inputs.release_tag != ''
         shell: bash
@@ -550,7 +298,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           version="${RELEASE_TAG#hub-}"
-          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-macos.zip" --clobber
+          gh release upload "$RELEASE_TAG" "tools/hub/dist/citygml-hub-${version}-macos.zip" --clobber
 
   release:
     if: startsWith(github.ref, 'refs/tags/hub-v')

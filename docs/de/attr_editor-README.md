@@ -16,17 +16,14 @@ Starten Sie es einfach innerhalb dieses Klons (`--repo` wird auto-erkannt). Die 
 python3 tools/attr_editor/app.py        # → öffnet http://localhost:8765
 ```
 
-> **Falls Sie mit Python oder Git nicht vertraut sind**: siehe [Einrichtungsleitfaden](attr_editor-setup-guide.md).
-> - **macOS**: eine **ZIP-Version** (app.py + erklärenden Text; keine Binärdateien = keine Gatekeeper-Warnung) wird auf [Releases](https://github.com/4dcitygml/tools/releases) verteilt.
->   Extrahieren Sie sie und starten Sie mit einer Zeile "ziehen Sie app.py auf `python3 ` im Terminal" (funktioniert mit der CLT-gebündelten python3 3.9). Falls es noch keinen Clone gibt, wird ein **Einrichtungsbildschirm** geöffnet, auf dem Sie einfach Ihre Fork-URL einfügen, und nach Abschluss wird automatisch **ein Doppelklick-Launcher (.command) auf dem Desktop erstellt**.
-> - **Windows**: eine **All-in-One-ZIP** (app.py + gebündelt Python "PythonPortable" +
->   gebündelt MinGit als `PortableGit/`; keine Installation erforderlich) wird auf [Releases](https://github.com/4dcitygml/tools/releases) verteilt.
->   Extrahieren Sie sie einfach und doppelklicken Sie auf `start-windows.bat`. Falls ein Git auf PATH bereits `user.name` /
->   `user.email` global konfiguriert hat, hat das bestehende Git und sein Credential-Setup Vorrang; sonst wird das benachbarte `PortableGit/` für Clone / Push verwendet. Builds befinden sich in `packaging/` und `.github/workflows/release-attr-editor.yml`
->   (automatischer Build und Anhängen beim `attr-editor-v*` Tag; Bundle-Versionen und SHA-256-Hashes werden in der Repository-Root `THIRD_PARTY_NOTICES.md` erfasst).
+> **Für Einwohner und Mitarbeitende der Stadt**: der Editor wird aus dem Hub gestartet, den
+> der Einzeilen-Befehl im README Ihrer Stadt installiert (siehe README des Hubs). Der Hub
+> hält das GitHub-Konto, das die Stadt verwendet, hält die Daten aktuell und startet
+> diesen Editor damit. Einen eigenen Download des Editors gibt es nicht mehr (die
+> früheren eigenständigen ZIPs wurden mit hub-v1.2 eingestellt).
 
 - Die Benutzeroberfläche lädt Leaflet / Cesium von CDNs (alles außer Kartenkacheln funktioniert offline).
-- Falls Sie sich über den Hub mit GitHub verbunden haben, wird diese Verbindung wiederverwendet, um den Änderungsvorschlag (PR) automatisch zu senden. Normalerweise ist keine zusätzliche `gh`-Installation oder Bestätigung auf der GitHub-Website erforderlich. Bei eigenständiger Verwendung ohne Hub fällt es auf `gh` zurück und dann auf eine Vergleichs-URL, in dieser Reihenfolge.
+- Der Änderungsvorschlag (PR) wird mit dem Konto geöffnet, das der Hub für die Stadt gespeichert hat (`~/.citygml/auth/<login>.json`); die eigenen GitHub-Anmeldungen des Computers werden nie verwendet. Ohne Konto stoppt das Senden, bevor etwas passiert, und der Bildschirm verweist auf die Einstellungen des Hubs; ohne Hub endet das Senden bei einer Vergleichs-URL auf GitHubs eigener Seite.
 - Falls es mehrere Datenpakete gibt, wird das größte automatisch ausgewählt (`--data 13101` um es explizit anzugeben).
 
 ## Verwendung

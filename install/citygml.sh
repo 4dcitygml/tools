@@ -13,11 +13,18 @@
 #   1. Decides the city: the argument, else a practice city chosen by your language.
 #   2. Copies itself into ~/Documents/citygml-tools/ (locally written files carry no
 #      quarantine attribute, so the icon opens without a Gatekeeper warning).
-#   3. Starts the newest installed hub; when none is installed, downloads the latest
-#      hub release from 4dcitygml/tools and verifies it against the SHA-256 digest
-#      GitHub publishes for the asset. Nothing runs unless the digest matches.
+#   3. Starts the newest installed hub of this generation (hub-v1.2.0 or newer: the
+#      versions that fetch updates from their own screen). When there is none, downloads
+#      the latest hub release from 4dcitygml/tools and verifies it against the SHA-256
+#      digest GitHub publishes for the asset. Nothing runs unless the digest matches.
+#      Older installations (hub-v1.0.x, flat or in a version folder) are not this
+#      file's business: they are left in place, untouched, and never started by it.
 #   4. Hands over to the hub, which keeps your city's data up to date and offers
 #      newer tool versions inside its own screen (applied at the next start).
+#
+# `citygml.sh --fetch-latest` is that "Get it now": it installs the newest release
+# next to the running one (same download and digest check as step 3) and prints its
+# tag. This file is the one place that downloads, verifies and unpacks a release.
 #
 # Cities distribute no code: everything that runs on your computer comes from
 # 4dcitygml/tools releases. Environment overrides used by tests: CITYGML_TOOLS_DIR,
@@ -36,9 +43,12 @@ fail() { printf '%s\n' "$*" >&2; exit 1; }
 
 command -v python3 >/dev/null 2>&1 || fail "python3 was not found. Install Apple's Command Line Tools (xcode-select --install) and run this again."
 
+FETCH_ONLY=0
+if [ "${1:-}" = "--fetch-latest" ]; then FETCH_ONLY=1; shift; fi
+
 # 1. City: argument, else a practice city by language (ja → Tokyo, de → Munich, else New York).
 CITY="${1:-}"
-if [ -z "$CITY" ]; then
+if [ -z "$CITY" ] && [ "$FETCH_ONLY" = 0 ]; then
   lang="${LANG:-}"
   if [ -z "$lang" ] && command -v defaults >/dev/null 2>&1; then
     lang="$(defaults read -g AppleLocale 2>/dev/null || true)"
@@ -52,6 +62,7 @@ if [ -z "$CITY" ]; then
 fi
 case "$CITY" in
   */*) ;;
+  "") [ "$FETCH_ONLY" = 1 ] || fail "The city must be given as owner/repo (for example 4dcitygml/sample-tokyo-station)." ;;
   *) fail "The city must be given as owner/repo (for example 4dcitygml/sample-tokyo-station)." ;;
 esac
 
@@ -67,29 +78,16 @@ if [ "$SELF" != "$TOOLS_DIR/citygml.sh" ]; then
   [ -f "$TOOLS_DIR/citygml.sh" ] && chmod 755 "$TOOLS_DIR/citygml.sh"
 fi
 
-# Migrate the earlier flat layout (citygml-hub/program + .release-tag) into a versioned folder.
-if [ -f "$HUBS/program/hub.py" ] && [ -f "$HUBS/.release-tag" ]; then
-  old_tag="$(tr -d '[:space:]' < "$HUBS/.release-tag")"
-  case "$old_tag" in
-    hub-v*) if [ ! -d "$HUBS/$old_tag" ]; then
-              mkdir -p "$HUBS/$old_tag"
-              mv "$HUBS/program" "$HUBS/$old_tag/program"
-              for f in READ-ME-FIRST.html start-mac.command; do [ -e "$HUBS/$f" ] && mv "$HUBS/$f" "$HUBS/$old_tag/$f"; done
-              rm -f "$HUBS/.release-tag"
-              msg "Moved the existing tools into $HUBS/$old_tag"
-            fi ;;
-  esac
-fi
-
-# 3. Newest installed version (semantic order), or install the latest release.
+# 3. Newest installed version of this generation (semantic order), or install the latest release.
 newest_installed() {
   python3 - "$HUBS" <<'PY'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
+GENERATION = (1, 2, 0)   # hub-v1.2.0: the first version with its own update screen
 def key(p):
     m = re.fullmatch(r"hub-v(\d+)\.(\d+)\.(\d+)(?:-.*)?", p.name)
     return tuple(int(x) for x in m.groups()) if m else None
-found = [p for p in root.glob("hub-v*") if key(p) and (p / "program" / "hub.py").is_file()] if root.is_dir() else []
+found = [p for p in root.glob("hub-v*") if key(p) and key(p) >= GENERATION and (p / "program" / "hub.py").is_file()] if root.is_dir() else []
 print(max(found, key=key).name if found else "")
 PY
 }
@@ -97,12 +95,16 @@ PY
 install_latest() {
   local json tmp
   json="$(mktemp "${TMPDIR:-/tmp}/citygml-releases.XXXXXX")"
-  if [ -n "${CITYGML_RELEASES_JSON:-}" ]; then cp "$CITYGML_RELEASES_JSON" "$json"; else curl -fsSL "$RELEASES_API" -o "$json"; fi
+  if [ -n "${CITYGML_RELEASES_JSON:-}" ]; then cp "$CITYGML_RELEASES_JSON" "$json" 2>/dev/null; else curl -fsSL "$RELEASES_API" -o "$json"; fi \
+    || fail "Could not reach GitHub to look up the latest version. Check the internet connection and try again."
   # tag, download url, expected sha256 of the macOS asset of the newest hub-v release
   read -r TAG URL SHA <<EOF
 $(python3 - "$json" <<'PY'
 import json, re, sys
-rels = json.load(open(sys.argv[1], encoding="utf-8"))
+try:
+    rels = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit("the list of versions could not be read")
 def key(t):
     m = re.fullmatch(r"hub-v(\d+)\.(\d+)\.(\d+)", t or "")
     return tuple(int(x) for x in m.groups()) if m else None
@@ -119,10 +121,12 @@ PY
 )
 EOF
   rm -f "$json"
-  [ -n "${TAG:-}" ] || fail "Could not determine the latest release."
+  [ -n "${TAG:-}" ] || fail "Could not determine the latest version. Check the internet connection and try again."
+  if [ -f "$HUBS/$TAG/program/hub.py" ]; then echo "$TAG"; return 0; fi   # already installed: nothing to download
   msg "Downloading the editing tools ($TAG) …"
   tmp="$(mktemp "${TMPDIR:-/tmp}/citygml-hub.XXXXXX")"
-  if [ -n "${CITYGML_ASSET_FILE:-}" ]; then cp "$CITYGML_ASSET_FILE" "$tmp"; else curl -fL "$URL" -o "$tmp"; fi
+  if [ -n "${CITYGML_ASSET_FILE:-}" ]; then cp "$CITYGML_ASSET_FILE" "$tmp"; else curl -fL "$URL" -o "$tmp"; fi \
+    || { rm -f "$tmp"; fail "The download of $TAG failed. Check the internet connection and try again."; }
   actual="$(shasum -a 256 "$tmp" | cut -d' ' -f1)"
   if [ "$actual" != "$SHA" ]; then rm -f "$tmp"; fail "The download does not match the SHA-256 GitHub published (expected ${SHA} / actual ${actual}). Nothing was installed."; fi
   local stage; stage="$(mktemp -d "${TMPDIR:-/tmp}/citygml-hub-stage.XXXXXX")"
@@ -134,12 +138,17 @@ EOF
   echo "$TAG"
 }
 
-TAG="$(newest_installed)"
-if [ -z "$TAG" ]; then
+if [ "$FETCH_ONLY" = 1 ]; then
   TAG="$(install_latest | tail -n 1)"
+  [ -n "$TAG" ] && [ -f "$HUBS/$TAG/program/hub.py" ] || fail "The latest version could not be installed. Check the internet connection and try again."
+  echo "$TAG"
+  exit 0
 fi
+
+TAG="$(newest_installed)"
+[ -n "$TAG" ] || TAG="$(install_latest | tail -n 1)"
 APP="$HUBS/$TAG/program/hub.py"
-[ -f "$APP" ] || fail "The editing tools are not installed ($APP)."
+[ -n "$TAG" ] && [ -f "$APP" ] || fail "The latest version could not be installed. Check the internet connection and try again."
 
 # 4. Hand over to the hub.
 export CITYGML_UPSTREAM="$CITY" CITYGML_HUB_TAG="$TAG"

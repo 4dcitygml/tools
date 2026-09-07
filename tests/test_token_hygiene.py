@@ -16,25 +16,18 @@ places (the 0600 auth file and the Authorization request header):
 Everything runs with HTTP stubbed out; no network, no real files in $HOME."""
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import os
 import stat
-import tempfile
 import unittest
 import urllib.error
-from pathlib import Path
+from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
-hub = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(hub)
+from tests.support import REPO_ROOT, TempHome, accounts, load_app, runtime
 
-_attr_spec = importlib.util.spec_from_file_location(
-    "attr_app", REPO_ROOT / "tools" / "attr_editor" / "app.py")
-attr = importlib.util.module_from_spec(_attr_spec)
-_attr_spec.loader.exec_module(attr)
+hub = load_app("hub_app", "tools/hub/app.py")
+attr = load_app("attr_app", "tools/attr_editor/app.py")
 
 # Deliberately NOT shaped like a real GitHub token (gh?_...): the public-payload
 # secret scanner must stay able to flag real token literals in the tree.
@@ -45,43 +38,48 @@ class TestExportedStateAndErrors(unittest.TestCase):
     """The auth state machine with HTTP stubbed (same harness as test_hub_onboard)."""
 
     def setUp(self):
-        self.mgr = hub.AuthManager()
-        self._post, self._user = hub._post_form, hub.github_user
-        self._cid = hub.oauth_client_id
-        hub.oauth_client_id = lambda: "test-client-id"
-        hub.github_user = lambda token: {"login": "tester", "id": 1} if token else None
-        self._save, self._cred, self._ident = (
-            hub.save_token, hub.write_git_credentials, hub.apply_git_identity)
-        hub.save_token = lambda t: None
-        hub.write_git_credentials = lambda t: None
-        hub.apply_git_identity = lambda u: None
-        self._load = hub.load_token
-        hub.load_token = lambda: ""
+        # hub-v1.2.1: a real account store under a temporary HOME (no ~/.citygml, no gh, no git)
+        self._home = TempHome()
+        self._home.__enter__()
+        self.acc = accounts
+        self._patches = [
+            patch.object(hub, "oauth_client_id", lambda: "test-client-id"),
+            patch.object(runtime, "github_user_status",
+                         lambda token: (200, {"login": "tester", "id": 1}) if token else (0, None)),
+            patch.object(runtime, "post_form", lambda url, f, timeout=15: {"error": "expired_token"}),
+            patch.object(runtime, "git_exe", lambda: None),
+        ]
+        for p in self._patches:
+            p.start()
+        self.session = hub.Session()
+        self.session.city = "o/r"
+        self.mgr = self.session.account
 
     def tearDown(self):
-        (hub._post_form, hub.github_user, hub.oauth_client_id) = (self._post, self._user, self._cid)
-        (hub.save_token, hub.write_git_credentials, hub.apply_git_identity) = (
-            self._save, self._cred, self._ident)
-        hub.load_token = self._load
+        for p in reversed(self._patches):
+            p.stop()
+        self._home.__exit__(None, None, None)
 
     def test_state_export_never_contains_the_token(self):
         seq = [{"error": "authorization_pending"}, {"access_token": SENTINEL}]
-        hub._post_form = lambda url, f, timeout=15: seq.pop(0) if seq else {"error": "expired_token"}
+        runtime.post_form = lambda url, f, timeout=15: seq.pop(0) if seq else {"error": "expired_token"}
         self.mgr._poll("cid", "dc", 0, 1)
         self.assertEqual(self.mgr.token(), SENTINEL)  # the token did arrive...
         exported = json.dumps(self.mgr.state())       # ...but the exported state hides it
         self.assertNotIn(SENTINEL, exported)
 
-    def test_saved_token_reuse_does_not_export_the_token(self):
-        hub.load_token = lambda: SENTINEL
-        exported = json.dumps(self.mgr.state())
+    def test_saved_account_use_does_not_export_the_token(self):
+        self.acc.save_account("tester", SENTINEL, 1)
+        self.assertIsNone(self.mgr.use_saved("tester"))
+        self.assertEqual(self.mgr.token(), SENTINEL)
+        exported = json.dumps(self.mgr.state()) + json.dumps(self.acc.list_accounts())
         self.assertNotIn(SENTINEL, exported)
 
     def test_auth_error_messages_do_not_embed_secrets(self):
         for final in ({"error": "expired_token"}, {"error": "access_denied"},
                       {"error": "incorrect_device_code"}):
-            mgr = hub.AuthManager()
-            hub._post_form = lambda url, f, timeout=15, r=final: r
+            mgr = hub.Session().account
+            runtime.post_form = lambda url, f, timeout=15, r=final: r
             mgr._poll("cid", "device-code-SECRET", 0, 1)
             state = mgr.state()
             self.assertIsNotNone(state["error"])
@@ -111,7 +109,7 @@ class _CapturedRequest:
             def __exit__(self, *a):
                 return False
 
-            class headers:  # gh_raw asks for the content type
+            class headers:  # github_raw asks for the content type
                 @staticmethod
                 def get_content_type():
                     return "application/json"
@@ -120,52 +118,41 @@ class _CapturedRequest:
 
 
 class TestHeaderOnlyTransport(unittest.TestCase):
-    """The token travels in the Authorization header only, never in the URL."""
+    """The token travels in the Authorization header only, never in the URL — for every
+    GitHub call of every tool, because there is exactly one HTTP function (runtime.request)."""
 
-    def _check(self, module, api):
+    def _check(self, api):
         cap = _CapturedRequest()
-        orig = module.urllib.request.urlopen
-        module.urllib.request.urlopen = cap
-        try:
+        with patch.object(runtime.urllib.request, "urlopen", cap):
             api("/user", SENTINEL)
-        finally:
-            module.urllib.request.urlopen = orig
         self.assertNotIn(SENTINEL, cap.req.full_url)
         self.assertEqual(cap.req.get_header("Authorization"), f"Bearer {SENTINEL}")
 
-    def test_hub_gh_api(self):
-        self._check(hub, hub.gh_api)
+    def test_github_api(self):
+        self._check(runtime.github_api)
 
-    def test_hub_gh_raw(self):
-        self._check(hub, hub.gh_raw)
+    def test_github_raw(self):
+        self._check(runtime.github_raw)
 
-    def test_attr_editor_github_api(self):
-        self._check(attr, attr.github_api)
+    def test_github_user_status(self):
+        self._check(lambda path, token: runtime.github_user_status(token))
 
     def test_http_error_result_carries_no_token(self):
         def boom(req, timeout=0):
             raise urllib.error.HTTPError(
                 req.full_url, 401, "Unauthorized", None,
                 io.BytesIO(b'{"message": "Bad credentials"}'))
-        orig = hub.urllib.request.urlopen
-        hub.urllib.request.urlopen = boom
-        try:
-            code, body = hub.gh_api("/user", SENTINEL)
-        finally:
-            hub.urllib.request.urlopen = orig
+        with patch.object(runtime.urllib.request, "urlopen", boom):
+            code, body = runtime.github_api("/user", SENTINEL)
         self.assertEqual(code, 401)
         self.assertNotIn(SENTINEL, json.dumps(body))
 
     def test_network_error_exception_carries_no_token(self):
         def down(req, timeout=0):
             raise urllib.error.URLError("connection refused")
-        orig = hub.urllib.request.urlopen
-        hub.urllib.request.urlopen = down
-        try:
+        with patch.object(runtime.urllib.request, "urlopen", down):
             with self.assertRaises(urllib.error.URLError) as ctx:
-                hub.gh_api("/user", SENTINEL)
-        finally:
-            hub.urllib.request.urlopen = orig
+                runtime.github_api("/user", SENTINEL)
         self.assertNotIn(SENTINEL, str(ctx.exception) + repr(ctx.exception))
 
 
@@ -183,30 +170,15 @@ class TestRequestLoggingIsSilent(unittest.TestCase):
 
 
 class TestTokenFilesAreOwnerOnly(unittest.TestCase):
-    """The two files that intentionally hold the token are chmod 0600."""
+    """The account files that intentionally hold the token are chmod 0600 (dir 0700)."""
 
-    def test_auth_file_is_0600(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            orig = hub.AUTH_PATH
-            hub.AUTH_PATH = Path(tmp) / "auth.json"
-            try:
-                hub.save_token(SENTINEL)
-                mode = stat.S_IMODE(os.stat(hub.AUTH_PATH).st_mode)
-            finally:
-                hub.AUTH_PATH = orig
-            self.assertEqual(mode, 0o600)
-
-    def test_git_credentials_file_is_0600(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            orig_path, orig_git = hub.GIT_CRED_PATH, hub.git_cmd
-            hub.GIT_CRED_PATH = Path(tmp) / "credentials"
-            hub.git_cmd = lambda: ("/usr/bin/git", True)  # pretend the bundled git is active
-            try:
-                hub.write_git_credentials(SENTINEL)
-                mode = stat.S_IMODE(os.stat(hub.GIT_CRED_PATH).st_mode)
-            finally:
-                hub.GIT_CRED_PATH, hub.git_cmd = orig_path, orig_git
-            self.assertEqual(mode, 0o600)
+    def test_account_files_are_0600(self):
+        with TempHome():
+            accounts.save_account("tester", SENTINEL, 1)
+            for path in (accounts.account_path("tester"), accounts.credentials_path("tester")):
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+                self.assertIn(SENTINEL, path.read_text(encoding="utf-8"))   # the only two places
+            self.assertEqual(stat.S_IMODE(os.stat(runtime.auth_dir()).st_mode), 0o700)
 
 
 class TestScopeIsStatedBeforeAuthorization(unittest.TestCase):
@@ -214,7 +186,7 @@ class TestScopeIsStatedBeforeAuthorization(unittest.TestCase):
     and every shipped language carries the same explanation."""
 
     def test_setup_screen_names_public_repo_before_connect(self):
-        html = hub.SETUP_HTML
+        html = (hub.APP_DIR / "setup.html").read_text(encoding="utf-8")
         self.assertIn("hub.setup_connect_scope", html)
         self.assertIn("public_repo", html)
         # The explanation belongs to the screen shown BEFORE doConnect() starts

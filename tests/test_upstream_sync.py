@@ -14,26 +14,15 @@ Covers, without touching the network or real GitHub (upstreams are local paths):
 """
 from __future__ import annotations
 
-import importlib.util
-import os
-import shutil as real_shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from tests.support import TempHome, load_app, runtime
 
-_attr_spec = importlib.util.spec_from_file_location(
-    "attr_app", REPO_ROOT / "tools" / "attr_editor" / "app.py")
-attr = importlib.util.module_from_spec(_attr_spec)
-_attr_spec.loader.exec_module(attr)
-
-_hub_spec = importlib.util.spec_from_file_location(
-    "hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
-hub = importlib.util.module_from_spec(_hub_spec)
-_hub_spec.loader.exec_module(hub)
+attr = load_app("attr_app", "tools/attr_editor/app.py")
 
 GML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -95,35 +84,38 @@ def advance_upstream(up: Path, relpath: str = "docs/note.txt",
 
 
 class _SyncFixture(unittest.TestCase):
-    """One upstream + one clone; both module copies (attr / hub) point at it."""
-
-    modules = (attr, hub)
+    """One upstream + one clone; the one shared sync implementation points at it.
+    A temporary HOME: no account is bound, the UI is English."""
 
     def setUp(self):
+        self._home = TempHome()
+        self._home.__enter__()
         self.temp = tempfile.TemporaryDirectory()
         base = Path(self.temp.name)
         self.up = make_upstream(base)
         self.clone = clone_of(self.up, base)
-        self._saved = [(m, m.upstream_url) for m in self.modules]
-        for m in self.modules:
-            m.upstream_url = lambda root=None, _u=self.up, **_kw: str(_u)
+        self._upstream = patch.object(runtime, "upstream_url", lambda root=None, _u=self.up, **_kw: str(_u))
+        self._upstream.start()
+
+    def point_upstream_at(self, url: str) -> None:
+        self._upstream.stop()
+        self._upstream = patch.object(runtime, "upstream_url", lambda root=None, **_kw: url)
+        self._upstream.start()
 
     def tearDown(self):
-        for m, fn in self._saved:
-            m.upstream_url = fn
+        self._upstream.stop()
         self.temp.cleanup()
+        self._home.__exit__(None, None, None)
 
 
 class TestStartupSync(_SyncFixture):
     def test_fast_forward(self):
-        for i, m in enumerate(self.modules):
-            with self.subTest(module=m.__name__):
-                new = advance_upstream(self.up, f"docs/note{i}.txt")
-                got = m.sync_upstream_main(self.clone)
-                self.assertEqual(got, new)
-                self.assertEqual(git(self.clone, "rev-parse", "main"), new)
-                # A second run is a silent no-op
-                self.assertIsNone(m.sync_upstream_main(self.clone))
+        new = advance_upstream(self.up, "docs/note.txt")
+        got = attr.sync_upstream_main(self.clone)
+        self.assertEqual(got, new)
+        self.assertEqual(git(self.clone, "rev-parse", "main"), new)
+        # A second run is a silent no-op
+        self.assertIsNone(attr.sync_upstream_main(self.clone))
 
     def test_hard_reset_after_history_rewrite(self):
         old = git(self.clone, "rev-parse", "HEAD")
@@ -162,17 +154,10 @@ class TestStartupSync(_SyncFixture):
         self.assertTrue(marker.is_file())  # the working tree was not touched
 
     def test_unreachable_upstream_is_silent(self):
-        attr_url, hub_url = attr.upstream_url, hub.upstream_url
-        for m in self.modules:
-            m.upstream_url = lambda root=None, **_kw: str(Path(self.temp.name) / "nope")
-        try:
-            before = git(self.clone, "rev-parse", "main")
-            for m in self.modules:
-                with self.subTest(module=m.__name__):
-                    self.assertIsNone(m.sync_upstream_main(self.clone))
-            self.assertEqual(git(self.clone, "rev-parse", "main"), before)
-        finally:
-            attr.upstream_url, hub.upstream_url = attr_url, hub_url
+        self.point_upstream_at(str(Path(self.temp.name) / "nope"))
+        before = git(self.clone, "rev-parse", "main")
+        self.assertIsNone(attr.sync_upstream_main(self.clone))
+        self.assertEqual(git(self.clone, "rev-parse", "main"), before)
 
     def test_plain_folder_is_silent(self):
         plain = Path(self.temp.name) / "plain"
@@ -183,20 +168,9 @@ class TestStartupSync(_SyncFixture):
 class TestPrBranchBase(_SyncFixture):
     """create_pr cuts the edit branch from the freshly fetched upstream main."""
 
-    _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
-
     def setUp(self):
         super().setUp()
-        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
-        for k in self._ENV_KEYS:
-            os.environ.pop(k, None)
-        os.environ["CITYGML_LANG"] = "en"
-        # No hub token and no gh CLI: create_pr must end at the compare-URL fallback
-        self._token = attr.load_hub_token
-        attr.load_hub_token = lambda: ""
-        self._shutil = attr.shutil
-        attr.shutil = SimpleNamespace(
-            which=lambda name: None if name == "gh" else real_shutil.which(name))
+        # No account is bound (temporary HOME): create_pr must end at the compare-URL fallback
         self.repo = attr.Repo(self.clone)
         self.payload = {
             "tile": "53394611", "gid": "gml-bldg-1",
@@ -208,16 +182,6 @@ class TestPrBranchBase(_SyncFixture):
             }],
             "sourceSelections": [{"key": "storeysAboveGround#0", "code": "801"}],
         }
-
-    def tearDown(self):
-        attr.load_hub_token = self._token
-        attr.shutil = self._shutil
-        for k, v in self._saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        super().tearDown()
 
     def test_branch_cut_from_fresh_upstream_main(self):
         new = advance_upstream(self.up)  # unrelated upstream progress
@@ -242,8 +206,7 @@ class TestPrBranchBase(_SyncFixture):
 
     def test_offline_falls_back_to_local_head(self):
         head = git(self.clone, "rev-parse", "HEAD")
-        for m in self.modules:
-            m.upstream_url = lambda root=None, **_kw: str(Path(self.temp.name) / "nope")
+        self.point_upstream_at(str(Path(self.temp.name) / "nope"))
         result = self.repo.create_pr(self.payload)
         self.assertTrue(result["ok"])
         self.assertEqual(git(self.clone, "rev-parse", f"{result['branch']}~1"), head)

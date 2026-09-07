@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n="setup.doc_title">Initial setup — CityGML Attribute Editor</title>
+<style>
+  body { font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f5f6f8;
+         color: #1c2733; display: flex; justify-content: center; padding: 40px 16px; }
+  main { background: #fff; border: 1px solid #dde1e6; border-radius: 12px;
+          padding: 28px 32px; max-width: 640px; width: 100%; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.sub { color: #6b7785; font-size: 13px; margin-top: 0; }
+  ol { font-size: 13px; padding-left: 20px; line-height: 1.8; }
+  label { display: block; font-weight: 600; font-size: 13px; margin: 14px 0 4px; }
+  input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px;
+           border: 1px solid #dde1e6; border-radius: 6px; }
+  button { margin-top: 18px; font: inherit; font-weight: 600; color: #fff;
+            background: #1f883d; border: none; border-radius: 6px;
+            padding: 10px 22px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #log { background: #24292f; color: #c9d1d9; border-radius: 6px; padding: 10px 12px;
+          font: 12px ui-monospace, monospace; white-space: pre-wrap; margin-top: 16px;
+          min-height: 90px; display: none; }
+  .warn { background: #fff8e5; border: 1px solid #eed888; border-radius: 6px;
+           padding: 8px 12px; font-size: 12px; margin-top: 12px; }
+  a { color: #0969da; }
+</style></head><body><main>
+  <h1 data-i18n="setup.title">Initial setup</h1>
+  <p class="sub" data-i18n="setup.lead">There is no clone of the building data (sample-tokyo-station) yet. It will be fetched to this computer.</p>
+  <ol>
+    <li><span data-i18n="setup.step1_pre">Log in with your GitHub account and </span><a href="#" id="forkLink" target="_blank" rel="noopener" data-i18n="setup.step1_link">create a fork from here</a><span data-i18n="setup.step1_post"> (your own copy).</span></li>
+    <li><span data-i18n="setup.step2_pre">Paste the URL of the created fork (</span><code data-i18n="setup.step2_code">https://github.com/YOUR-ID/sample-tokyo-station</code><span data-i18n="setup.step2_post">) below and press [Run clone].</span></li>
+  </ol>
+  <label data-i18n="setup.url_label">Repository URL (your fork)</label>
+  <input id="url" data-i18n-placeholder="setup.url_placeholder" placeholder="https://github.com/<your-id>/sample-tokyo-station.git">
+  <label data-i18n="setup.dest_label">Destination folder</label>
+  <input id="dest" value="">
+  <div class="warn" id="gitWarn" style="display:none" data-i18n="setup.git_warn">⚠ git was not found. First install git by following the steps in the setup guide.</div>
+  <button id="go" data-i18n="setup.btn_clone">Run clone</button>
+  <div id="log"></div>
+<script>
+const $ = id => document.getElementById(id);
+const { UPSTREAM, DEFAULT_DEST } = window.CITYGML;   // handed over by the editor (runtime.page)
+$('forkLink').href = UPSTREAM + '/fork';
+$('dest').value = DEFAULT_DEST;
+async function poll() {
+  const s = await fetch('/api/setup/status').then(r => r.json());
+  if (!s.gitAvailable) $('gitWarn').style.display = 'block';
+  if (s.running || s.done || s.error) {
+    $('log').style.display = 'block';
+    $('log').textContent = s.log.join('\n') + (s.error ? '\n\n❌ ' + s.error : '');
+    $('go').disabled = s.running;
+  }
+  if (s.done) { location.href = '/'; return; }
+  if (s.running) setTimeout(poll, 800);
+}
+$('go').onclick = async () => {
+  $('go').disabled = true;
+  const r = await fetch('/api/setup', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({url: $('url').value, dest: $('dest').value}),
+  }).then(r => r.json());
+  if (r.ok === false) { alert(r.error); $('go').disabled = false; return; }
+  poll();
+};
+poll();
+</script></main></body></html>

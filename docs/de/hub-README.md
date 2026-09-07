@@ -15,8 +15,7 @@ Ein Dashboard, das **den Attributeditor und den Textureditor über Schaltfläche
 python3 tools/hub/app.py        # → öffnet http://localhost:8760
 ```
 
-Die einzige Abhängigkeit ist die Python 3.9+-Standardbibliothek. `gh` (GitHub CLI) ist **nicht erforderlich**. Das Auflisten von PRs / Issues erfordert eine GitHub-Verbindung. Falls nicht verbunden, können Sie sich über die Schaltfläche "Mit GitHub verbinden" auf dem Dashboard mit dem Geräteflow verbinden (siehe unten).
-(Falls der Rechner des Entwicklers gh installiert hat, wird sein Token automatisch wiederverwendet.)
+Die einzige Abhängigkeit ist die Python 3.9+-Standardbibliothek. `gh` (GitHub CLI) ist **nicht erforderlich**. Das Auflisten von PRs / Issues erfordert eine GitHub-Verbindung. Wenn nicht verbunden, wählen Sie einfach das Konto der Stadt auf dem Kontobildes (siehe unten); die `gh`-Anmeldung dieses Computers wird dort als eine Wahlmöglichkeit angeboten, wird aber niemals eigenständig verwendet.
 
 ## Ersteinrichtung (#59 / #86)
 
@@ -49,12 +48,15 @@ Beim Start ohne lokales Klone wird der **Einrichtungsbildschirm** angezeigt. Das
 Ein Anfänger-Mac hat weder `gh` noch Git-Anmeldedaten (`gh` ist nicht einmal in den Befehlszeilentools enthalten). Daher **implementieren wir den OAuth-Geräteflow selbst mit nur der Standardbibliothek**, um die Authentifizierung mit "eine Schaltfläche + ein 8-stelliger Code" ohne Öffnen eines Terminals abzuschließen.
 
 - Die `client_id` ist **öffentliche Information** (der Geräteflow benötigt kein client_secret). Stellen Sie sie über `oauthClientId` in `preset.json` oder die Umgebungsvariable `CITYGML_OAUTH_CLIENT_ID` bereit.
-- Falls nicht gesetzt, nutzen wir `gh auth token` (Entwicklerrechner gehen damit durch).
-  **Um auf Ihrem eigenen Rechner denselben "Verbinden"-Bildschirm wie ein Anfänger zu sehen, starten Sie mit `CITYGML_HUB_NO_GH=1`.**
-- Das erhaltene Token wird in `~/.citygml_auth.json` (0600) gespeichert. Nur wenn das gebündelte Git verwendet wird, wird es über **`credential.helper store` mit der dedizierten Datei `~/.citygml_git_credentials` (0600)** an Git übergeben. Falls ein bereits konfiguriertes Git ausgewählt wird, wird sein Credential Helper nicht geändert. In beiden Fällen bleibt die origin-URL einfach, sodass das Token nicht in Screen Sharing oder `git remote -v` sichtbar ist.
-- Der erforderliche Umfang ist `repo` (Clone und Push privater Repositories).
-- Der benötigte Scope ist `public_repo`: **Lese- und Schreibzugriff auf die öffentlichen Repositories des Kontos** — notwendig und ausreichend für Fork / Push / Pull Request auf die öffentlichen Stadt-Repos. Private Repositories sind nicht umfasst. Derselbe Schreibumfang wird auch auf dem Bildschirm **vor** der Autorisierung (`hub.setup_connect_scope`) genannt, sodass Nutzer vor dem Drücken von Authorize wissen, was sie erlauben. (Nur falls ein Stadt-Repo privat würde, müsste auf `repo` zurückgewechselt werden.)
-- Beim Neustart, wenn der GitHub-Benutzer mit dem gespeicherten Token bestätigt werden kann, wird der 8-stellige Code-Bildschirm übersprungen. In diesem Fall zeigt der Bildschirm "Ihre vorherige GitHub-Verbindung wurde wiederverwendet", sodass es nicht wie unbeabsichtigter automatischer Fortschritt aussieht.
+- **Ein Konto pro Stadt, ausdrücklich ausgewählt (hub-v1.2.1).** Der Kontobildes bietet drei Möglichkeiten, jeweils ein Klick: die `gh`-Anmeldung dieses Computers (angezeigt mit ihrem Login, wenn `gh` angemeldet ist), ein auf diesem Computer zuvor verbundenes Konto oder eine neue Anmeldung mit dem 8-stelligen Code. Nichts wird automatisch verwendet; die Wahl wird pro Stadt aufgezeichnet (`cities[<owner/repo>].login` in den gemeinsamen Einstellungen) und nie an eine andere Stadt vererbt.
+- Jedes Konto wird in `~/.citygml/auth/<login>.json` (0600) zusammen mit `<login>.git-credentials` im git-credential-store-Format gespeichert. Netzwerk-git-Befehle des Hubs und der Editoren übergeben auf jeder Plattform `-c credential.helper=` und `-c credential.https://github.com.helper=store --file=<diese Datei>`, sodass der Schlüsselbund, Manager oder globaler Store des Computers nie abgerufen wird und das Token nie in einer Befehlszeile angezeigt wird. Die Commit-Identität (`<id>+<login>@users.noreply.github.com`) wird in die **lokale** Git-Konfiguration des Klons geschrieben; die globale Identität des Computers wird in den Einstellungen angezeigt, aber nicht verwendet und nicht geändert.
+- Auch ohne Konto übergeben Netzwerk-git-Befehle `-c credential.helper=`: Die Anmeldedaten des Computers werden nie verwendet, ein Push scheitert mit der klaren Meldung „kein Konto verbunden“, und die Editoren verweisen auf die Einstellungen des Hubs. Wechselt das Konto eines bestehenden Klons, wird `origin` auf den Fork dieses Kontos umgestellt (der Schritt „Kopie anlegen“ läuft, falls der Fork noch fehlt); das Stadt-Repository bleibt unberührt.
+- Ein Token, das GitHub ablehnt (401), trennt das Konto ab und sagt dies ("wurde widerrufen"); Einstellungen → "Trennen" / "Löschen" entfernen die Dateien auf diesem Computer (das Widerrufen auf GitHub erfolgt in Einstellungen → Anwendungen → Autorisierte OAuth Apps).
+- Frühere Versionen behielten ein Token in `~/.citygml_auth.json` und schrieben auf einigen Computern einen globalen Credential Helper, der auf die Klartextdatei `~/.citygml_git_credentials` verweist. Der erste Start von hub-v1.2.1 zeigt einen einmaligen Handover-Bildschirm mit den gefundenen Inhalten, migriert das Token in eine Kontodatei und bietet an, nur das zu entfernen, das die frühere Version geschrieben hat.
+- Die Beschriftung „GitHub-Anmeldung dieses Computers“ wird nur aus der Konfigurationsdatei der GitHub CLI gelesen; ihr Token wird erst beim Drücken dieser Wahl gelesen (`CITYGML_HUB_NO_GH=1` blendet die Wahl aus). Vorschläge werden mit dem Konto der Stadt oder auf der GitHub-Seite eröffnet – die Editoren rufen nie `gh pr create` auf. Jeder Prozess entfernt beim Start die git-Überschreibungen der Shell (`GIT_AUTHOR_*`, `GIT_ASKPASS`, `GIT_SSH*`, …).
+- Wenn eine Stadt von einer Organisation mit **OAuth App-Zugriffsbeschränkungen** gehostet wird (bei neuen Organisationen standardmäßig aktiviert), antwortet die Forkerstellung und PR-Erstellung mit 403, bis ein Organisationsinhaber der App Zugriff gewährt; der Hub übersetzt diese Nachricht und weist auf Organization access unter der Einstellungsseite der App hin.
+- Der erforderliche Scope ist `public_repo`: **Lese- und Schreibzugriff auf die öffentlichen Repositories des Kontos** — notwendig und ausreichend für Fork / Push / Pull Request auf die öffentlichen Stadt-Repos. Private Repositories sind nicht umfasst. Derselbe Schreibumfang wird auch auf dem Bildschirm **vor** der Autorisierung (`hub.setup_connect_scope`) genannt, sodass Nutzer vor dem Drücken von Authorize wissen, was sie erlauben. (Nur falls ein Stadt-Repo privat würde, müsste auf `repo` zurückgewechselt werden.)
+- Beim Neustart wird das für die Stadt aufgezeichnete Konto ohne Bildschirm verwendet. Eine Stadt ohne aufgezeichnetes Konto zeigt immer zuerst den Kontobildes.
 
 > **Die Registrierung einer OAuth-App ist erforderlich** (kostenlos, nur einmal): GitHub-Einstellungen → Entwicklereinstellungen → OAuth Apps → Neue OAuth App → **überprüfen Sie "Device Flow aktivieren"** → geben Sie die ausgestellte Client-ID in `preset.json` ein. Das Client Secret wird nicht verwendet.
 
@@ -84,55 +86,38 @@ Wissenswerte Konsequenzen:
   (Übungs-Repos werden periodisch zurückgesetzt; der `Building:`-Trailer-Vertrag
   liegt im Commit-Text und bleibt unberührt).
 
-## Layout der Verteilungs-ZIP
+## Layout des installierten Programms
 
-Nur **drei Elemente sind oben** im extrahierten Ordner sichtbar. Dinge, die "für den Benutzer bedeutungslos" sind, wie `index.html` oder `.py`-Dateien, sind **in `program/` verborgen** (#86).
+Die Release-ZIP ist die Nutzlast des Einzeilen-Installers, kein Download, den jemand öffnet:
+ihr einziger Eintrag auf oberster Ebene ist `program/`, entpackt nach `citygml-tools/citygml-hub/<tag>/`.
 
 ```
-citygml-hub/
-├─ READ-ME-FIRST.html   ← der einzige Einstiegspunkt (= tools/hub/getting-started.html)
-├─ start-mac.command             ← unter Windows: start-windows.bat
-└─ program/                    index.html, hub.py, .bat, Lizenzen,
-                                  PortableGit, PythonPortable (nur Windows)
+citygml-tools/
+├─ citygml.sh | citygml.ps1        Starter pro Benutzer (aus program/ kopiert; das Desktop-Symbol führt ihn aus)
+└─ citygml-hub/<hub-vX.Y.Z>/program/
+      hub.py, index.html, review.html, setup.html, settings.html
+      runtime.py, accounts.py, git_sync.py, shortcuts.py, pr_classification.py
+      attr_editor/, tex_editor/, i18n/, themes/, Lizenzen,
+      PortableGit/ und PythonPortable/ (nur Windows)
 ```
 
-Die Windows-ZIP bündelt das **embeddable package** von python.org als `PythonPortable/`
-(gepinnte Version + SHA-256, zur Build-Zeit verifiziert), sodass keine Python-Installation erforderlich ist;
-`start-windows.bat` bevorzugt es und fällt auf ein System `py`/`python` zurück.
-(Entscheidung 2026-08-28 — kein gefrorenes Executable.)
-Das Windows `PortableGit/` behält seinen Namen aus Kompatibilitätsgründen mit bestehenden Suchpfaden; sein Inhalt ist **MinGit**, die offizielle minimale Git-for-Windows-Konfiguration für App-Bundling. Falls ein Git auf PATH unter Windows bereits `user.name` und `user.email` global konfiguriert hat, hat dieses Git und sein bestehendes Credential-Setup Vorrang. Falls eines nicht gesetzt ist, Git nicht startet oder Git fehlt, wird das gebündelte MinGit verwendet.
-
-- Die ① und ② in den Dateinamen zeigten früher die **Reihenfolge zum Öffnen**. Der erklärende Text (`READ-ME-FIRST.txt`) ist nicht enthalten, da **zwei Einstiege Verwirrung verursachen** (sein Inhalt ist in der HTML-Datei enthalten).
-- Startdateien sind **nicht in einem Ordner** platziert: die einzelne zusätzliche "Ordner öffnen"-Operation würde ein Dropout-Risiko darstellen.
-- `app.py`'s `BUNDLE_DIRS` sucht nach `PortableGit` / `PythonPortable` / `preset.json` sowohl neben sich selbst als auch in `program/`. `start-mac.command` macht dasselbe (funktioniert auch mit einem flachen Layout während der Entwicklung).
-
-## Startseite (getting-started.html)
-
-**Benutzer werden aufgefordert, diese zuerst zu öffnen** (ein Doppelklick öffnet den Browser; kein Server erforderlich).
-Ihre Rolle beschränkt sich auf **klar zu erklären, "wie man startet"** (sie hat keine Schaltflächen, Tests oder Diagnostiken). Sie konzentriert sich darauf, Menschen sicher durch den Punkt zu bringen, an dem viele aufgeben — **"Doppelklick auf die Startdatei → die Sicherheitswarnung des Betriebssystems"** — indem sie versichert, dass dies normal und sicher ist.
-
-Designprinzipien (der #86 Neubau von Grund auf):
-
-- **Ein Bildschirm, eine Aktion.** Mit "Weiter" fortfahren und das Ende mit Fortschrittsanzeige zeigen.
-  Mac: 6 Schritte (blockiert → erlauben → öffnen → Ordnerzugriffsberechtigung → Komponenten) /
-  Windows: 3 Schritte (Start → Weitere Informationen → Ausführen) + ein Abschlussbildschirm.
-- **Der Bildschirm zeigt nur "was jetzt zu tun ist".** Sicherheitsdetails und Fehlerbehebung sind in [wenn etwas schiefgeht] enthalten (Informationen sind verborgen, nicht gelöscht).
-- **Keine Fachbegriffe.** Fork → "Ihre eigene Kopie", Clone → "die Daten importieren",
-  Befehlszeilentools → "echte Apple-Komponenten", Signierung/Gatekeeper → "ein Bestätigungsbildschirm, der nur beim ersten Mal angezeigt wird".
-- **Mit Bildern zeigen.** SVG-Schemadiagramme werden verwendet; für Windows SmartScreen werden die Bildschirme vor dem Klick auf "Weitere Informationen" und mit "Ausführen" separat reproduziert, um echten Screenshots zu entsprechen.
-- Das Doppelklicken der Startdatei führt dazu, dass **der Hub den Browser automatisch öffnet**, sodass die Startseite keine "Öffnen"-Schaltfläche hat.
-- **Kontoverwaltung, Anmeldung, (private) Einladungsanfragen, Forking und Datenabruf werden vom Hub's "Erste Schritte nach dem Start" (#59)** mit Statusanzeige geführt (eine statische `file://` HTML-Seite kann nicht `gh`/`git` ausführen).
+`runtime.py` ist die eine Stelle, die dieses Layout kennt, die Dateien der Person (Einstellungen,
+Konten, Werkzeugordner — alle aus HOME abgeleitet), das zu verwendende git und python, wie ein
+Klon seine Stadt benennt und wie GitHub erreicht wird; der Hub und die Editoren importieren es und
+die anderen gemeinsamen Module über ihren Namen. Die eigene Git-Konfiguration der Person entscheidet
+nie, welches git läuft: die Identität wird in den Klon geschrieben und die Zugangsdaten werden pro
+Befehl übergeben (siehe `docs/client-runtime-contract.md`).
 
 ## Startpfad (Windows: gebündeltes Python; Entscheidung 2026-08-28)
 
-Der Hub `app.py` ist **eine einzelne Datei ohne Abhängigkeiten von Nachbardateien**, auf jedem Betriebssystem als einfaches `.py` verteilt — es gibt **genau einen Startpfad und kein gefrorenes Executable**, sodass das, was läuft, immer inspizierbar ist. Die Windows-ZIP bündelt alles Notwendige:
+Der Hub und die Editoren sind einfache `.py`-Dateien neben den gemeinsamen Modulen, auf jedem Betriebssystem als Quelltext verteilt — es gibt **genau einen Startpfad und kein gefrorenes Executable**, sodass das, was läuft, immer inspizierbar ist. Die Windows-ZIP bündelt alles Notwendige:
 
 - **Python**: das python.org **embeddable package**, als `PythonPortable/` gebündelt
   (Version + SHA-256 gepinnt; siehe `THIRD_PARTY_NOTICES.md` im Repository-Root).
   Der Launcher (`start-windows.bat` = `packaging/start-windows.bat`) versucht
   **`PythonPortable/` → lokales `py`/`python`** in dieser Reihenfolge, sodass keine Python-Installation erforderlich ist.
-- **Git**: MinGit unter dem Kompatibilitätsnamen `PortableGit/`. Ein bestehendes konfiguriertes Git auf PATH hat Vorrang; sonst wird das gebündelte MinGit automatisch erkannt — **keine Git-Installation erforderlich**.
-- Der Hub selbst erkennt auch `PythonPortable/` über `python_cmd()` und startet die geklonten Editoren (`tools/*/app.py`) mit demselben Python (`sys.executable` Ausbreitung plus explizite Erkennung als Sicherheitsmaßnahme).
+- **Git**: MinGit unter dem Kompatibilitätsnamen `PortableGit/`, verwendet, sobald es vorhanden ist (`runtime.git_exe()`); sonst das git auf PATH — **keine Git-Installation erforderlich**.
+- Der Hub startet die gebündelten Editoren (`program/attr_editor/app.py`, `program/tex_editor/app.py`) mit demselben Python (`runtime.python_exe()`); aus einem Stadt-Klon wird nie Code ausgeführt.
 - Das Erkennungsergebnis kann unter `/api/status` unter `runtime` überprüft werden (Git-/Python-Pfad, gebündelt).
 - macOS bündelt keine Binärdateien (M1): `start-mac.command` verwendet die CLT `python3`
   (`PythonPortable/` wird dort auch berücksichtigt, falls jemals gebündelt).
@@ -145,7 +130,7 @@ Der Hub `app.py` ist **eine einzelne Datei ohne Abhängigkeiten von Nachbardatei
 |---|---|
 | **Werkzeugstart** | Startet den Attributeditor (:8765) / Textureditor (:8766) als Unterprozesse und öffnet sie im Browser. Falls bereits laufen, "Öffnen". |
 | **Ersteinrichtung** | Wenn es keinen Clone gibt, wird durch GitHub-Authentifizierung (`/api/auth/start`) → Fork-Erstellung (`/api/setup/fork`) → Clone (`/api/setup/clone`) **mit nur Schaltflächen** fortgesetzt. Der Status ist in `/api/setup/status` konsolidiert; der Bildschirm fragt alle 2 Sekunden ab und wird automatisch weitergeleitet. |
-| **Konto / Repository** | Zeigt den Git-Branch, Benutzer und GitHub-Verbindungsstatus an. Falls nicht verbunden, führt "Mit GitHub verbinden" (Geräteflow) sofort aus. |
+| **Konto / Repository** | Zeigt den Git-Branch, Benutzer und GitHub-Verbindungsstatus an. Ohne Konto verlinkt auf den Kontobildes; "Einstellungen" öffnet die städtischen Einstellungsseite (Konto, Kopie auf GitHub, Datenordner, Version, Desktop-Symbol, gespeicherte Konten, Neustart, wie Sie die Tools entfernen). |
 | **Ihre PRs / Issues** | Listet die PRs und Issues auf, die Sie erstellt haben, mit Status (offen/geschlossen/zusammengeführt) und **ob es eine Antwort gab** (Review/Kommentare). Nur vorübergehende CI-Fehler ohne datenspezifische Punkte zum Bestätigen können über automatische Überprüfung "erneut ausgeführt" werden. Datenfehler werden nach Behebung zur automatischen Überprüfung weitergeleitet; Zurückbleiben gegenüber der neuesten Version wird zum erneuten Importieren weitergeleitet. |
 | **Bildschirm zur Administrator-Genehmigung** | Gruppiert die von Attribut-/Textureditor eingehenden Änderungsvorschläge nach Gebäude-ID und zeigt sie in zwei Zuständen an, je nachdem, wer als Nächstes tätig wird: "warten auf Genehmiger-Bestätigung" und "warten auf Antragsteller-Maßnahme". Der Wartezustand trägt Grund-Labels wie CI, Genehmiger, neueste Version importieren oder automatische Überprüfung läuft. Alle 11 Überprüfungen — Beschreibung, Änderungseinheit, Konsistenz mit neuester Version, CityGML-Format, Geometrie, Attribute, Topologie und so weiter — werden als bestanden = grün, nicht anwendbar = grau, fehlgeschlagen = rot angezeigt. Die Topologie-Überprüfung wird beim ersten Mal jedes Gebäudes (und bei Geometrieänderungen) ausgeführt; spätere Läufe, die die Form nicht ändern, sind nicht anwendbar. CI lehnt einen PR nie mechanisch ab; es kommentiert die zu bestätigenden Punkte und arbeitet sie mit dem Antragsteller aus. Genehmigende können auch Bestätigungskommentare aus 5 Vorlagen oder Freitext senden und Änderungsanfragen erfassen. Vollständiger Verlauf, japanische Attributnamen, Vor-/Nach-Werte, unterstützende Dokumente, das permanente 3D-Modell und Google Maps können alle auf dem gleichen Bildschirm überprüft werden, und die Genehmigung wird erfasst. Die ausgewählte Gebäude-ID wird in der URL beibehalten, sodass das gleiche Gebäude nach einem Neulade angezeigt wird. `/review.html?demo=1` lässt Sie die Operationen üben, ohne echte Daten oder Änderungsverlauf zu berühren. |
 | **Erfolgsabzeichen** | Zeigt einen Rang basierend auf der Anzahl zusammengeführter PRs (✨→🌱→🌿→🌳→🏛️) und die verbleibende Anzahl zum nächsten Rang. |
@@ -160,10 +145,12 @@ Sie werden auch angezeigt, wenn kein Parameter vorhanden ist. `admin=0` und `adm
 |---|---|
 | `app.py` | Lokaler HTTP-Server (Status, Beitrags-API, Unterprozessstart). Port 8760. In der ZIP: `program/hub.py`. |
 | `index.html` | Dashboard-Benutzeroberfläche. In der ZIP: `program/index.html`. |
+| `setup.html` | Ersteinrichtung und Kontobildschirm (solange es keinen Klon oder kein Konto für die Stadt gibt). |
+| `settings.html` | Einstellungen pro Stadt (Konto, Kopie auf GitHub, Datenordner, Version, Desktop-Symbol, Entfernen der Werkzeuge). |
 | `review.html` | Administrator-Benutzeroberfläche für Überprüfung und Genehmigung des Änderungsverlaufs pro Gebäude. |
-| `getting-started.html` | Einstiegspunkt der Verteilungs-ZIP (Startleitfaden-Assistent). In der ZIP: `READ-ME-FIRST.html`. |
 | `packaging/start-mac.command` / `.bat` | Starter für die `.py`-Version. In der ZIP: `start-mac.command` (Mac) / `program/start-windows.bat` (Windows). |
 
 - Jedes Werkzeug wird auf seinem Standard-Port gestartet (attr_editor=8765 / tex_editor=8766); falls bereits lauschend, wird es wiederverwendet.
 - Die GitHub-API wird direkt über REST / GraphQL mit der Standardbibliothek aufgerufen (keine `gh` CLI-Abhängigkeit). Beitragsdaten werden in einer Anfrage mit denselben GraphQL wie gh abgerufen (einschließlich PR reviewDecision), 30 Sekunden lang zwischengespeichert, wobei "Aktualisieren" ein erneutes Abrufen erzwingt.
-- Die Authentifizierung verwendet das Geräteflow-Token (`~/.citygml_auth.json`). Falls gh vorhanden ist, wird sein Token auch als Fallback verwendet.
+- Die Authentifizierung verwendet das Token des für die Stadt aufgezeichneten Kontos
+  (`~/.citygml/auth/<login>.json`); `gh` wird niemals eigenständig herangezogen.

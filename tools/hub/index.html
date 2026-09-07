@@ -262,9 +262,12 @@ let ghPollTimer = null, ghWasConnected = null, feedbackConnected = false;
 async function loadStatus() {
   const s = await api('/api/status');
   const g = s.github || {};
+  const settingsLink = `<a href="/settings.html">${t('hub.settings_link', 'Settings')}</a>`;
   $('who').innerHTML = g.login
-    ? `GitHub: <b>@${esc(g.login)}</b><br>${esc(s.gitUser || '')}`
-    : `<b>${t('hub.gh_not_connected', 'GitHub not connected')}</b>`;
+    ? `GitHub: <b>@${esc(g.login)}</b> · ${settingsLink}<br>${esc(s.gitUser || '')}`
+    : s.account
+      ? `GitHub: <b>@${esc(s.account)}</b> <span class="muted">${t('hub.gh_unreachable_short', '(could not be reached)')}</span> · ${settingsLink}<br>${esc(s.gitUser || '')}`
+      : `<b>${t('hub.gh_not_connected', 'GitHub not connected')}</b> · ${settingsLink}`;
   $('statlines').innerHTML =
     `<div><span class="k">${t('hub.stat_repo', 'Repository')}</span>${esc(s.nwo || s.repo)}</div>` +
     `<div><span class="k">${t('hub.stat_branch', 'Branch')}</span><code>${esc(s.branch)}</code></div>` +
@@ -272,7 +275,7 @@ async function loadStatus() {
     `<div><span class="k">GitHub</span>${g.login ? `✅ ${t('hub.stat_connected_user', 'Connected (@{login})', { login: esc(g.login) })}` : t('hub.stat_disconnected', '⚠ Not connected')}</div>` +
     renderSyncLine(s.sync) +
     (s.hubTag ? `<div><span class="k">${t('hub.stat_version', 'Version')}</span>${esc(s.hubTag)} · <a href="#" onclick="makeShortcut();return false">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</a><span id="shortcutResult"></span></div>` : '');
-  renderGhWarn(g);
+  renderGhWarn(g, s.account);
   if (s.sync && (s.sync.state === 'pending')) setTimeout(loadStatus, 3000);
   clearTimeout(ghPollTimer);
   if (g.waiting) ghPollTimer = setTimeout(loadStatus, 2000);
@@ -329,9 +332,14 @@ async function makeShortcut() {
   } catch (e) { if (out) out.textContent = ' ' + t('hub.shortcut_failed', 'Could not create the icon: {reason}', { reason: String(e) }); }
 }
 
-function renderGhWarn(g) {
+function renderGhWarn(g, account) {
   const el = $('ghWarn');
   if (g.login) { el.innerHTML = ''; return; }
+  if (account) {
+    // The city has its account; GitHub just could not be asked right now (offline?).
+    el.innerHTML = `<div class="warnbox">${t('hub.gh_unreachable', 'GitHub could not be reached (offline?). The connection of @{login} is kept; the PR / issue lists appear when the connection is back.', { login: esc(account) })}${g.error ? `<br>⚠ ${esc(g.error)}` : ''}</div>`;
+    return;
+  }
   if (g.waiting) {
     const link = `<a href="${esc(g.verifyUrl)}" target="_blank" rel="noopener">${esc(g.verifyUrl)}</a>`;
     el.innerHTML = `<div class="warnbox">${t('hub.device_flow_open', 'In your browser, open {link} and enter this code:', { link })}<br>
@@ -345,24 +353,10 @@ function renderGhWarn(g) {
       { gh: '<code>gh auth login</code>', env: '<code>CITYGML_OAUTH_CLIENT_ID</code>' })}</div>`;
     return;
   }
+  // hub-v1.2.1: the account is chosen on its own screen (one click per choice), never here.
   el.innerHTML = `<div class="warnbox">${t('hub.gh_warn_lists', 'GitHub is not connected. The PR / issue lists and the badge require a connection.')}
     ${g.error ? `<br>⚠ ${esc(g.error)}` : ''}<br>
-    <button id="ghConnect" class="primary" style="margin-top:6px">${t('hub.gh_connect', 'Connect to GitHub')}</button></div>`;
-  $('ghConnect').onclick = connectGithub;
-}
-
-async function connectGithub() {
-  const btn = $('ghConnect');
-  if (btn) btn.disabled = true;
-  try {
-    await api('/api/auth/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-    });
-    await loadStatus();
-  } catch (e) {
-    toast(t('hub.connect_error_prefix', 'Connection error: ') + e.message);
-    if (btn) btn.disabled = false;
-  }
+    <a id="ghConnect" class="primary" href="/" style="display:inline-block;margin-top:6px">${t('hub.gh_choose_account', 'Choose the GitHub account for this city')}</a></div>`;
 }
 
 // ---- Tool launch ----
@@ -455,7 +449,7 @@ async function loadContributions(force) {
       ? await api('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       : await api('/api/contributions');
     if (!r.ok || r.login === null) {
-      const msg = `<div class="empty">${esc(r.reason || t('hub.gh_not_connected_hint', 'GitHub is not connected (use "Connect to GitHub" in the account section)'))}</div>`;
+      const msg = `<div class="empty">${esc(r.reason || t('hub.gh_not_connected_hint', 'GitHub is not connected (choose the account for this city via the link in the account section)'))}</div>`;
       $('badge').innerHTML = msg; $('prs').innerHTML = msg; $('issues').innerHTML = msg;
       return;
     }
