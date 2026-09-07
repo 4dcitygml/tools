@@ -83,16 +83,43 @@ class TestLauncher(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("EXEC hub-v1.4.0 o/r", r.stdout)
 
-    def test_flat_layout_is_migrated(self):
-        flat = self.tools / "citygml-hub"
-        (flat / "program").mkdir(parents=True)
-        (flat / "program" / "hub.py").write_text("print('old')")
-        (flat / ".release-tag").write_text("hub-v1.0.2\n")
+    def _older_generation(self):
+        """What a computer with hub-v1.0.x looks like: the flat layout the 1.0 zips used, and the
+        version folder the 1.2.0 launcher made of it. Neither is this launcher's business."""
+        hubs = self.tools / "citygml-hub"
+        (hubs / "program").mkdir(parents=True)
+        (hubs / "program" / "hub.py").write_text("print('old')")
+        (hubs / "start-mac.command").write_text("old starter")
+        (hubs / ".release-tag").write_text("hub-v1.0.2\n")
+        (hubs / "hub-v1.1.0" / "program").mkdir(parents=True)
+        (hubs / "hub-v1.1.0" / "program" / "hub.py").write_text("print('old')")
+        return hubs
+
+    def test_older_generation_is_left_in_place_and_the_latest_is_installed_next_to_it(self):
+        hubs = self._older_generation()
         r = self.run_script("o/r")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue((flat / "hub-v1.0.2" / "program" / "hub.py").is_file())
-        self.assertFalse((flat / ".release-tag").exists())
-        self.assertIn("EXEC hub-v1.0.2 o/r", r.stdout)   # newest installed (no download when something is installed)
+        self.assertIn("EXEC hub-v1.3.0 o/r", r.stdout)                        # not 1.1.0, not the flat 1.0.2
+        self.assertTrue((hubs / "hub-v1.3.0" / "program" / "hub.py").is_file())
+        for untouched in ("program/hub.py", "start-mac.command", ".release-tag", "hub-v1.1.0/program/hub.py"):
+            self.assertTrue((hubs / untouched).is_file(), untouched)
+        self.assertNotIn("Moved", r.stdout)
+
+    def test_older_generation_without_network_fails_and_names_the_next_step(self):
+        hubs = self._older_generation()
+        r = self.run_script("o/r", CITYGML_RELEASES_JSON="/nonexistent")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Check the internet connection", r.stderr)
+        self.assertNotIn("EXEC", r.stdout)
+        self.assertTrue((hubs / "program" / "hub.py").is_file())                # still untouched
+
+    def test_self_updating_version_is_started_without_network(self):
+        cur = self.tools / "citygml-hub" / "hub-v1.2.0" / "program"
+        cur.mkdir(parents=True)
+        (cur / "hub.py").write_text("print('cur')")
+        r = self.run_script("o/r", CITYGML_RELEASES_JSON="/nonexistent")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("EXEC hub-v1.2.0 o/r", r.stdout)
 
     def test_default_city_follows_the_language(self):
         for lang, city in (("ja_JP.UTF-8", "sample-tokyo-station"), ("de_DE.UTF-8", "sample-munich-station"), ("en_US.UTF-8", "sample-newyork-station")):
@@ -100,6 +127,28 @@ class TestLauncher(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn(f"4dcitygml/{city}", r.stdout, lang)
             self.assertIn("practice city", r.stdout)
+
+    def test_fetch_latest_installs_next_to_the_running_version_and_prints_the_tag(self):
+        r = self.run_script("--fetch-latest")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "hub-v1.3.0")
+        self.assertTrue((self.tools / "citygml-hub" / "hub-v1.3.0" / "program" / "hub.py").is_file())
+        self.assertNotIn("EXEC", r.stdout)                                                          # nothing started
+        # already installed: the tag is printed without a download
+        r = self.run_script("--fetch-latest", CITYGML_ASSET_FILE="/nonexistent")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip().splitlines()[-1], "hub-v1.3.0")
+
+    def test_missing_digest_is_refused(self):
+        rels = json.loads(self.rel.read_text(encoding="utf-8"))
+        for r in rels:
+            for a in r["assets"]:
+                a.pop("digest", None)
+        self.rel.write_text(json.dumps(rels), encoding="utf-8")
+        r = self.run_script("o/r")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("digest", r.stderr)
+        self.assertFalse((self.tools / "citygml-hub").exists() and any((self.tools / "citygml-hub").glob("hub-v*")))
 
     def test_bad_city_argument_is_rejected(self):
         r = self.run_script("tokyo")
