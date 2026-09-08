@@ -458,17 +458,19 @@ def request(url: str, *, method: str = "GET", headers=None, body=None,
         return e.code, e.read() or b"", e.headers.get_content_type() if e.headers else ""
 
 
-def _json_body(raw: bytes) -> dict:
+def _json_body(raw: bytes) -> "dict | list":
+    """The JSON of a response: an object or a list (GitHub's list endpoints — pulls,
+    files, comments, reviews, commits — answer with a list). Anything else is {}."""
     try:
         data = json.loads(raw.decode("utf-8") or "{}")
     except ValueError:
         return {}
-    return data if isinstance(data, dict) else {}
+    return data if isinstance(data, (dict, list)) else {}
 
 
 def github_api(path: str, token: str, method: str = "GET", payload=None,
-               timeout: int = 30) -> "tuple[int, dict]":
-    """GitHub REST / GraphQL with a token → (HTTP status, JSON object)."""
+               timeout: int = 30) -> "tuple[int, dict | list]":
+    """GitHub REST / GraphQL with a token → (HTTP status, JSON object or list)."""
     headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"}
     body = None
     if payload is not None:
@@ -502,7 +504,7 @@ def github_user_status(token: str) -> "tuple[int, dict | None]":
         code, user = github_api("/user", token)
     except (urllib.error.URLError, OSError):
         return 0, None
-    return code, (user if code == 200 and user.get("login") else None)
+    return code, (user if code == 200 and isinstance(user, dict) and user.get("login") else None)
 
 
 def download(url: str, dest, timeout: int = 60) -> None:
