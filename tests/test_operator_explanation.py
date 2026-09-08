@@ -108,6 +108,14 @@ class ReportContractTest(unittest.TestCase):
     def test_missing_checks_rejected(self):
         self.inspection['checks']=self.inspection['checks'][:-1]
         with self.assertRaises(ValueError):publisher.build_report(REPO,self.pr,self.run,self.inspection,{},[])
+    def test_newer_analyzer_gates_are_accepted(self):
+        # The trusted side runs from main and is merged before the analysis side (operator
+        # handbook 6.7): a report must accept extra gates, and a failing extra gate counts.
+        self.inspection['checks'].append({'key':'new-gate','label':'new-gate','status':'pass'})
+        r=publisher.build_report(REPO,self.pr,self.run,self.inspection,{'summary.md':'delta'},[])
+        self.assertEqual(r['state'],'pass');self.assertIn('new-gate',r['fields']['checks'])
+        self.inspection['checks'][-1]['status']='fail';self.run['conclusion']='failure'
+        self.assertEqual(publisher.build_report(REPO,self.pr,self.run,self.inspection,{'summary.md':'delta'},[])['state'],'fix')
     def test_report_html_cannot_inject_a_hidden_payload(self):
         self.report['fields']['change']='<script>alert(1)</script>'
         body=gate.report_comment(gate.encode_report(self.report))
