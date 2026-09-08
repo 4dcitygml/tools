@@ -13,25 +13,16 @@ macOS はコマンドラインツール同梱の python3 でそのまま動き�
 python3 tools/attr_editor/app.py        # → http://localhost:8765 が開く
 ```
 
-> **Python や git に馴染みがない方へ**: [セットアップガイド](attr_editor-setup-guide.md) を参照してください。
-> - **macOS**: **zip 版**（app.py＋説明テキスト。バイナリなし＝Gatekeeper 警告なし）を
->   [Releases](https://github.com/4dcitygml/tools/releases) で配布しています。
->   展開して「ターミナルに `python3 `＋app.py をドラッグ」の 1 行で起動（CLT 同梱の
->   python3 3.9 で動作）。クローンが無ければフォーク URL を貼るだけの**初回セットアップ画面**が
->   開き、完了時に**デスクトップへダブルクリック起動用ランチャー（.command）を自動生成**します。
-> - **Windows**: **全部入り zip**（app.py＋同梱 Python「PythonPortable」＋
->   MinGit（`PortableGit/` 名で同梱）。インストール不要）を
->   [Releases](https://github.com/4dcitygml/tools/releases) で配布しています。
->   展開して `start-windows.bat` をダブルクリックするだけです。PATH上のGitに `user.name` / `user.email` が
->   グローバル設定済みなら既存Gitと認証設定を優先し、それ以外は隣の `PortableGit/` を
->   clone / push に使用します。ビルドは `packaging/` と `.github/workflows/release-attr-editor.yml`
->   （タグ `attr-editor-v*` で自動ビルド・添付。同梱物の版と SHA-256 pin は
->   リポジトリ直下の `THIRD_PARTY_NOTICES.md` が正本）。
+> **住民・自治体職員の方へ**: エディタはハブから起動します。ハブは都市の README にある
+> 一行コマンドで入ります（ハブの README を参照）。ハブが都市の使う GitHub アカウントを
+> 保持し、データを最新に保ち、そのアカウントでこのエディタを起動します。エディタ単体の
+> 配布はもうありません（以前の単体 zip は hub-v1.2 で廃止）。
 
 - UI は Leaflet / Cesium を CDN から読みます（地図タイル以外はオフライン動作）。
-- ハブでGitHub接続を済ませていれば、その接続を再利用して変更案（PR）まで自動送信します。
-  `gh` の追加インストールや、GitHub画面での確定操作は通常不要です。ハブを経由しない単体利用では
-  `gh`、compare URLの順に退避します。
+- 変更案（PR）は、ハブがその都市に記録したアカウント（`~/.citygml/auth/<login>.json`）で
+  開きます。パソコン自身の GitHub ログインは決して使いません。アカウントが無ければ送信は
+  何も起きる前に止まり、画面がハブの設定へ案内します。ハブを経由しない場合は GitHub の
+  画面の compare URL で終わります。
 - データパッケージが複数ある場合は最大のものを自動選択（`--data 13101` で明示可）。
 
 ## 使い方

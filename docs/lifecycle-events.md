@@ -3,7 +3,7 @@
 
 # Building lifecycle events: rebuild, split and merge
 
-City tooling is distributed independently as `tools-v1.1.0`.
+City tooling is distributed independently as the `tools-v` series (first `tools-v1.1.0`, currently `tools-v1.2.2`).
 See [distribution status](shared-tooling-release.md) before adopting it.
 
 One real-world event is one PR with one dedicated commit, even when it involves
