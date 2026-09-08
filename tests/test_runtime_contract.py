@@ -113,3 +113,59 @@ class TestStatusShape(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGitHubApiKeepsLists(unittest.TestCase):
+    """GitHub's list endpoints (pulls, files, comments, reviews, commits) answer with a JSON
+    list. The shared helper must hand it through unchanged: hub-v1.3.0 turned every list
+    into {} and the review queue died with "HTTP 200" (found on the real machine, 2026-09-08).
+    The FakeGitHub seam sits above github_api, so this is tested below the seam."""
+
+    def _api(self, body: bytes, status: int = 200):
+        from unittest.mock import patch
+        import runtime
+        with patch.object(runtime, "request", lambda *a, **k: (status, body, "application/json")):
+            return runtime.github_api("/repos/o/r/pulls?state=open", "t")
+
+    def test_a_list_body_is_returned_as_a_list(self):
+        code, data = self._api(b'[{"number": 2}, {"number": 3}]')
+        self.assertEqual((code, data), (200, [{"number": 2}, {"number": 3}]))
+
+    def test_an_object_body_is_returned_as_an_object_and_junk_as_empty(self):
+        self.assertEqual(self._api(b'{"message": "Not Found"}', 404), (404, {"message": "Not Found"}))
+        self.assertEqual(self._api(b'not json')[1], {})
+        self.assertEqual(self._api(b'')[1], {})
+
+    def test_review_queue_reads_open_pulls_through_the_real_helper(self):
+        # The hub's review queue over the real github_api, with GitHub's answers faked one
+        # level down (runtime.request): a list of open PRs; empty lists / objects elsewhere.
+        import json
+        from unittest.mock import patch
+        import runtime
+        from tests.support import TempHome, TOKYO, load_app, make_clone, bind_account, fresh_hub
+        hub = load_app("hub_lists_app", "tools/hub/app.py")
+        pr = {"number": 2, "title": "x", "state": "open", "draft": False, "user": {"login": "p"}, "labels": [],
+              "head": {"sha": "a" * 40, "ref": "edit/b", "repo": {"full_name": "p/sample-tokyo-station"}},
+              "base": {"sha": "b" * 40, "ref": "main"}, "updated_at": "2026-09-08T00:00:00Z", "created_at": "2026-09-08T00:00:00Z",
+              "html_url": "https://github.com/4dcitygml/sample-tokyo-station/pull/2", "body": ""}
+        def fake_request(url, method="GET", headers=None, body=None, timeout=30):
+            if "/pulls?state=open" in url:
+                return 200, json.dumps([pr] if url.endswith("page=1") else []).encode(), "application/json"
+            if "/check-runs" in url:
+                return 200, b'{"check_runs": []}', "application/json"
+            if url.endswith("/pulls/2"):
+                return 200, json.dumps(pr).encode(), "application/json"
+            if url.endswith("/user"):
+                return 200, b'{"login": "reviewer", "id": 1}', "application/json"
+            if any(f"/{part}?" in url for part in ("files", "comments", "reviews", "commits")):
+                return 200, b"[]", "application/json"            # list endpoints answer with lists
+            return 200, b"{}", "application/json"                # everything else is an object
+        with TempHome() as home:
+            root = make_clone(home / "clone", TOKYO)
+            session = fresh_hub(hub)
+            bind_account(TOKYO, "reviewer", "t", 1)
+            with patch.object(runtime, "request", fake_request):
+                session.start(root, TOKYO, sync=False)
+                queue = session.hub.review_queue()
+        self.assertTrue(queue.get("ok"), queue)
+        self.assertEqual([it["number"] for it in queue.get("items", [])], [2])
