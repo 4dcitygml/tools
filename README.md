@@ -30,14 +30,22 @@ request.
 
 ## Quick start
 
-1. Download your city's **starter kit** (linked from the city repository's
-   README) and unzip it. It contains the starters and the city's configuration;
-   the pinned hub release is downloaded and checksum-verified on first start.
-2. Double-click `start-mac.command` (macOS) or `start-windows.bat` (Windows).
-3. The hub opens in your browser, connected to that city. (A hub release
-   downloaded directly from this repository connects to the Tokyo Station demo.)
-4. Sign in with GitHub when prompted (the screen states exactly what you
-   authorize), create your copy of the city, and import it. Viewing the data
+1. Paste the one-line command from your city's README into Terminal (macOS)
+   or PowerShell (Windows):
+
+   ```
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh)" -- <owner>/<repo>
+   ```
+   The script installs the newest `hub-v` release into
+   `~/Documents/citygml-tools/citygml-hub/<version>/` after verifying it against
+   the SHA-256 digest GitHub publishes for the asset, keeps a copy of itself in
+   `~/Documents/citygml-tools/`, and starts the hub. Running it again is always
+   safe: it starts the installed tools.
+2. The hub opens in your browser, connected to that city. Choose the city's
+   GitHub account once (the screen states exactly what you authorize); the hub
+   creates your copy of the city. After setup a desktop icon starts the tools.
+3. Newer versions are announced inside the hub; *Get it now* downloads and
+   verifies them, and they are used from the next start. Viewing the data
    itself needs no account: open the city repository or the portal.
 
 Nothing is ever changed directly: every edit becomes a pull request, reviewed

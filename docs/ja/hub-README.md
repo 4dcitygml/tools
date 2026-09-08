@@ -46,7 +46,7 @@ PR / Issue の一覧には GitHub 接続が必要で、未接続なら下記の�
   利用者が招待メールに気づく必要はありません（届き次第、画面が自動で進む・#96）。待機画面では、
   ターミナルが「初回セットアップ中」としてブラウザ画面を動かすために待機していること、
   管理者対応が後になる場合は
-  画面を閉じても**今回と同じ「start-windows.bat」**（Mac は同じ start-mac.command）を立ち上げるだけで
+  画面を閉じても**ツールをもう一度起動する**（デスクトップのアイコン、または一行コマンド）だけで
   続きへ戻れ、GitHub 接続からやり直す必要がないことも明記します。
   事前招待は不要＝配る時点で相手の GitHub アカウントを知らなくてよい。
 - クローン先は属性エディタと共有（`~/.citygml_attr_editor.json`）。private 配布では
@@ -69,7 +69,7 @@ PR / Issue の一覧には GitHub 接続が必要で、未接続なら下記の�
 
 - `client_id` は**公開情報**（デバイスフローに client_secret は不要）。`preset.json` の
   `oauthClientId`、または環境変数 `CITYGML_OAUTH_CLIENT_ID` で与えます。
-- **都市ごとに1つのアカウント、明示的に選択（hub-v1.2.1）。** アカウント画面では3通りの
+- **都市ごとに1つのアカウント、明示的に選択（hub-v1.3）。** アカウント画面では3通りの
   選択肢が1クリックずつで提示される: このパソコンの `gh` 登録（`gh` で既に登録済みなら
   ログイン名を表示）、このパソコンで以前につないだアカウント、または新たに8桁コードで
   登録。何も自動で使われず、選択は都市ごとに記録され
@@ -88,7 +88,7 @@ PR / Issue の一覧には GitHub 接続が必要で、未接続なら下記の�
   「設定」→「アプリケーション」→「認可済みの OAuth Apps」）。
 - 以前のバージョンは `~/.citygml_auth.json` に1つのトークンを置き、コンピューターによって
   は平文の `~/.citygml_git_credentials` を指すグローバル credential helper を書きました。
-  hub-v1.2.1 の初回起動時に一度だけ引き継ぎ画面が見つかった内容を一覧表示し、
+  hub-v1.3 の初回起動時に一度だけ引き継ぎ画面が見つかった内容を一覧表示し、
   トークンをアカウントファイルに移行して、以前のバージョンが書いたもののみ削除を提示します。
 - 「このパソコンの GitHub ログイン」の表示名は GitHub CLI 自身の設定ファイルから読むだけで、そのトークンは選択肢を押したときにのみ読みます（`CITYGML_HUB_NO_GH=1` で選択肢を隠せます）。提案は都市のアカウントか GitHub の画面で開き、エディタが `gh pr create` を呼ぶことはありません。各プロセスは起動時にシェルの git 上書き（`GIT_AUTHOR_*`、`GIT_ASKPASS`、`GIT_SSH*` など）を取り除きます。
 - 都市が**OAuth App アクセス制限**のある組織でホストされている場合（新しい組織では既定で有効）、
@@ -158,16 +158,19 @@ Git 設定はどの git が動くかを左右しません。名義は複製に�
 
 - **Python**: python.org の **embeddable package** を `PythonPortable/` として同梱
   （版と SHA-256 は pin。正本はリポジトリ直下の `THIRD_PARTY_NOTICES.md`）。
-  ランチャー（`start-windows.bat` = `packaging/start-windows.bat`）が
-  **`PythonPortable/` → 手元の `py`/`python`** の順で解決するので、
+  利用者フォルダの起動スクリプト（`citygml.ps1`）は `program/PythonPortable/python.exe` で
+  `program/hub.py` を起動します。`program/` に同梱の予備の起動ファイル
+  （`start-windows.bat` = `packaging/start-windows.bat`）は
+  **`PythonPortable/` → 手元の `py`/`python`** の順で解決します。どちらでも
   Python のインストールは不要です。
 - **Git**: MinGit を互換名 `PortableGit/` で同梱。あればそれを使い（`runtime.git_exe()`）、
   無ければ PATH 上の git — **git のインストールも不要**です。
 - ハブは同梱のエディタ（`program/attr_editor/app.py`、`program/tex_editor/app.py`）を
   同じ Python（`runtime.python_exe()`）で起動します。都市の複製からコードを動かすことはありません。
 - 検出結果は `/api/status` の `runtime`（git/python の path・bundled）で確認できます。
-- macOS はバイナリ非同梱（M1）: `start-mac.command` が CLT の `python3` を使います
-  （`PythonPortable/` を置いた場合はそちらを優先）。
+- macOS はバイナリ非同梱（M1）: 利用者フォルダの起動スクリプト（`citygml.sh`）が PATH 上の
+  `python3`（Apple の Command Line Tools）を使います。`packaging/start-mac.command` は
+  ソースツリーから起動するときだけのものです。
 
 > `PythonPortable/` と `PortableGit/` は zip 内で `program/`（`hub.py` と
 > 同じ階層）に置かれます。
@@ -196,7 +199,7 @@ Git 設定はどの git が動くかを左右しません。名義は複製に�
 | `setup.html` | 初期設定とアカウント画面（複製が無い間、または都市にアカウントが無い間に表示）。 |
 | `settings.html` | 都市別の設定（アカウント、GitHub のコピー、データフォルダ、版、デスクトップアイコン、削除のしかた）。 |
 | `review.html` | 管理者向けの建物別・変更履歴確認と承認 UI。 |
-| `packaging/start-mac.command` / `.bat` | `.py` 版ランチャー。zip では `start-mac.command`（mac）／`program/start-windows.bat`（win）。 |
+| `packaging/start-mac.command` / `.bat` | ソースツリーから起動するための起動ファイル。配布 zip に最上位の起動ファイルはもうありません（hub-v1.2.0）：zip は一行インストーラの取得物で、`citygml-tools/citygml-hub/<tag>/` に展開されて `program/hub.py` が起動されます。`program/citygml.sh`／`citygml.ps1` が利用者フォルダに複製される起動スクリプトです。 |
 
 - 各ツールは既定ポート（attr_editor=8765 / tex_editor=8766）で起動し、既に listen していれば再利用します。
 - GitHub API は REST / GraphQL を標準ライブラリで直接呼びます（`gh` CLI 非依存）。

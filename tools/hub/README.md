@@ -56,7 +56,7 @@ entrance page — "one screen, one action" — and in addition there are **zero 
   (the screen advances automatically as soon as it arrives, #96). The waiting screen also
   states that the terminal is waiting as part of "first-time setup" to drive the browser
   screen, and that if the maintainer responds later, the user can close the screen and simply
-  launch **the same "start-windows.bat"** (on Mac, the same launcher file) to resume — no need to
+  **start the tools again** (the desktop icon, or the one-line command) to resume — no need to
   redo the GitHub connection.
   No advance invitation is needed = you do not need to know the recipient's GitHub account at
   distribution time.
@@ -87,7 +87,7 @@ opening a terminal.
 - The `client_id` is **public information** (the device flow needs no client_secret). Provide
   it via `oauthClientId` in `preset.json` or the environment variable
   `CITYGML_OAUTH_CLIENT_ID`.
-- **One account per city, chosen explicitly (hub-v1.2.1).** The account screen offers
+- **One account per city, chosen explicitly (hub-v1.3).** The account screen offers
   three ways in, each one click: the GitHub CLI sign-in of this computer (shown with its
   login when `gh` is signed in), an account connected before on this computer, or a new
   sign-in with the 8-digit code. Nothing is used silently; the choice is recorded per city
@@ -109,7 +109,7 @@ opening a terminal.
   is Settings → Applications → Authorized OAuth Apps).
 - Earlier versions kept one token in `~/.citygml_auth.json` and, on some computers, wrote a
   global credential helper pointing at the plain-text `~/.citygml_git_credentials`. The first
-  start of hub-v1.2.1 shows a one-time hand-over screen listing what was found, migrates the
+  start of hub-v1.3 shows a one-time hand-over screen listing what was found, migrates the
   token into an account file, and offers to remove only what the earlier version wrote.
 - The label of "this computer's GitHub sign-in" is read from the GitHub CLI's own config file; its token is read only when that choice is pressed (`CITYGML_HUB_NO_GH=1` hides the choice). Proposals are opened with the city's account or on GitHub's own screen — the editors never call `gh pr create`. Every process scrubs the shell's git overrides (`GIT_AUTHOR_*`, `GIT_ASKPASS`, `GIT_SSH*`, …) at start.
 - If a city is hosted by an organization with **OAuth App access restrictions** (on by
@@ -184,9 +184,11 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
 
 - **Python**: the python.org **embeddable package**, bundled as `PythonPortable/`
   (version + SHA-256 pinned; see the repository-root `THIRD_PARTY_NOTICES.md`).
-  The launcher (`start-windows.bat` = `packaging/start-windows.bat`) resolves
-  **`PythonPortable/` → local `py`/`python`** in that order, so no Python install
-  is needed.
+  The per-user launcher (`citygml.ps1`) starts `program/hub.py` with
+  `program/PythonPortable/python.exe`; the fallback starter shipped inside
+  `program/` (`start-windows.bat` = `packaging/start-windows.bat`) resolves
+  **`PythonPortable/` → local `py`/`python`** in that order. No Python install
+  is needed either way.
 - **Git**: MinGit under the compatibility name `PortableGit/`, used whenever it is
   present (`runtime.git_exe()`); otherwise the git on PATH — **no git installation
   is needed**.
@@ -195,8 +197,9 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
   nothing is ever run from a city clone.
 - The detection result can be checked in `/api/status` under `runtime` (git/python
   path, bundled).
-- macOS bundles no binaries (M1): `start-mac.command` uses the CLT `python3`
-  (`PythonPortable/` is also honored there if ever bundled).
+- macOS bundles no binaries (M1): the per-user launcher (`citygml.sh`) uses the
+  `python3` on PATH (Apple's Command Line Tools); `packaging/start-mac.command`
+  is only for running from a source checkout.
 
 > `PythonPortable/` and `PortableGit/` live inside `program/` in the zip (same
 > level as `hub.py`).

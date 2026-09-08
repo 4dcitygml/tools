@@ -82,7 +82,7 @@ Shared settings file (`~/.citygml_attr_editor.json`):
 
 - `cities[<owner/repo>].repo` is the clone of that city; `repo` is the last
   used clone (kept for tools that know only one clone); `lang` is the UI language.
-- `cities[<owner/repo>].login` is the GitHub account that city uses (hub-v1.2.1):
+- `cities[<owner/repo>].login` is the GitHub account that city uses (hub-v1.3):
   its token comes from `~/.citygml/auth/<login>.json`, its fork is `<login>/<repo>`,
   and its noreply address is written into the clone's **local** git config. A
   client never reads the computer's global git identity, credential helpers or
