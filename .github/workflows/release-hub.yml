@@ -34,9 +34,12 @@ on:
     tags: ['hub-v*']
   pull_request:
     paths:
+      # everything the zip carries or that builds it (hub-v1.3.1: runtime.py and the
+      # other shared modules were missing here, so a hotfix to them had no PR build)
       - '.github/workflows/release-hub.yml'
-      - 'tools/hub/**'
-      - 'tools/attr_editor/app.py'
+      - 'tools/**'
+      - 'scripts/**'
+      - 'install/**'
       - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
     inputs:
