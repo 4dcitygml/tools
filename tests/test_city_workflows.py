@@ -9,7 +9,10 @@ public layout: <root>/tools, <root>/city-template, <root>/sample-*-station).
 from __future__ import annotations
 
 from collections import defaultdict
-from scripts.audit_tools_pins import audit
+try:
+    from scripts.audit_tools_pins import audit
+except ImportError:      # the pin audit script is not published yet
+    audit = None
 import unittest
 from pathlib import Path
 
@@ -17,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATE = ROOT / "city-template"
 SAMPLES = sorted(ROOT.glob("sample-*-station"))
 MIRRORED = ("pr-analysis.yml", "pr-comment.yml", "pr-recheck.yml", "pr-base-freshness.yml", "history-index.yml",
-            "starter-kit.yml", "review-report.yml")
+            "review-report.yml")   # the starter kit is gone (hub-v1.2.0); review-report is compared where a repository has it
 
 
 @unittest.skipUnless(TEMPLATE.is_dir() and SAMPLES, "sibling city repositories not checked out")
@@ -25,6 +28,7 @@ class CityWorkflowContractTest(unittest.TestCase):
     def _wf(self, repo: Path, name: str) -> str:
         return (repo / ".github" / "workflows" / name).read_text(encoding="utf-8")
 
+    @unittest.skipIf(audit is None, "scripts/audit_tools_pins.py not present")
     def test_city_pins_are_consistent_and_same_version_wrappers_match(self) -> None:
         cohorts = defaultdict(list)
         for repo in [TEMPLATE, *SAMPLES]:

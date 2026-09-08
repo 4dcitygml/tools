@@ -86,7 +86,7 @@ Consult [implementation status](docs/implementation-status.md) before enabling a
 | `tools-v` | Common processing, CI, schemas, semantic definitions, guidance and supporting sources | City operators, after checking the impact on their procedures |
 
 Hub keeps its existing two client assets and version series. City tooling has its own
-`tools-v1.1.0` release. Versions can advance
+`tools-v` series (first `tools-v1.1.0`, currently `tools-v1.2.2`). Versions can advance
 independently. See [distribution and verification](docs/shared-tooling-release.md)
 for the current transition, exact filenames and checks.
 
