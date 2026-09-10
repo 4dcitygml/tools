@@ -36,5 +36,3 @@ not an existing formal relationship with a standards organization.
 Implementation is incremental. A successful pilot does not unlock arbitrary
 bulk updates. See [implementation status](implementation-status.md) for current
 limits and [source distribution](shared-tooling-release.md) for delivery.
-
-[日本語](ja/principles.md)

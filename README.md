@@ -16,7 +16,7 @@ own repositories. 4dcitygml gathers reusable findings from their ordinary issues
 and pull requests; a separate report is not required. Cities can also consult
 us directly about problems in the shared tools.
 
-See [our approach](docs/principles.md) ([日本語](docs/ja/principles.md)) for how
+See [our approach](docs/principles.md) for how
 city data, shared practice and feedback to standards development connect.
 
 ## What's inside
@@ -68,8 +68,7 @@ by the data maintainer — and the approved history *is* the record of the city.
 ## Shared processing and practice
 
 Cities improve their own data while contributing cases that improve the common
-processing, checks and explanations. See [the shared approach](docs/principles.md)
-([日本語](docs/ja/principles.md)).
+processing, checks and explanations. See [the shared approach](docs/principles.md).
 
 The [LOD0 semantic correction recipe](docs/lod0-semantic-correction.md) is a
 pilot implementation included in version 1.1.0. It requires evidence review,
