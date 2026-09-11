@@ -61,8 +61,9 @@ class TestAccountFiles(_Tmp):
 
     def test_credential_store_has_git_format_and_never_reaches_argv(self):
         self.acc.save_account("tester", "tok-1", 42)
-        self.assertEqual(self.acc.credentials_path("tester").read_text(encoding="utf-8"),
-                         "https://x-access-token:tok-1@github.com\n")
+        # bytes, not text: a text-mode read would hide a CR LF written on Windows
+        self.assertEqual(self.acc.credentials_path("tester").read_bytes(),
+                         b"https://x-access-token:tok-1@github.com\n")
         args = runtime.git_args(net=True, store=self.acc.store_for("tester"))
         self.assertEqual(args[1:3], ["-c", "credential.helper="])
         self.assertTrue(args[4].startswith("credential.https://github.com.helper=store --file="))
@@ -80,6 +81,68 @@ class TestAccountFiles(_Tmp):
             args = runtime.git_args(net=True, store=self.acc.store_for("tester"))
             helper = args[4] if len(args) > 4 else ""
             self.assertIn("'", helper)
+
+
+class TestCredentialStoreLineEndings(_Tmp):
+    """The store must end its line with LF on every platform (2026-09-11 Windows report:
+    hub-v1.3.1 wrote it in text mode, Windows turned the LF into CR LF, git's credential
+    store ignored the line and a push failed with "could not read Username ... terminal
+    prompts disabled"). Verified below against git itself, the way a push asks for it."""
+
+    CRLF = b"https://x-access-token:tok-1@github.com\r\n"
+    LF = b"https://x-access-token:tok-1@github.com\n"
+
+    def _fill(self, store) -> subprocess.CompletedProcess:
+        """What git would get for github.com with this store, through runtime.git_args."""
+        if not runtime.git_exe():
+            self.skipTest("git is not installed")
+        return subprocess.run(
+            [*runtime.git_args(net=True, store=store), "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n", capture_output=True, text=True,
+            env=accounts.scrub_git_env(os.environ), timeout=30)
+
+    def test_save_account_writes_lf_bytes_that_git_accepts(self):
+        self.acc.save_account("tester", "tok-1", 42)
+        path = self.acc.credentials_path("tester")
+        self.assertEqual(path.read_bytes(), self.LF)
+        r = self._fill(self.acc.store_for("tester"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("username=x-access-token\n", r.stdout)
+        self.assertIn("password=tok-1\n", r.stdout)
+
+    def test_git_ignores_a_crlf_store(self):
+        # the failure mode itself, so the repair below is known to matter
+        path = self.tmp / "crlf.git-credentials"
+        path.write_bytes(self.CRLF)
+        r = self._fill(path)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("password=", r.stdout)
+        self.assertIn("could not read Username", r.stderr)
+
+    def test_store_for_repairs_a_crlf_store_from_the_account_token(self):
+        self.acc.save_account("tester", "tok-1", 42)
+        path = self.acc.credentials_path("tester")
+        path.write_bytes(self.CRLF)          # what an earlier version left on Windows
+        self.assertEqual(self.acc.store_for("tester"), path)
+        self.assertEqual(path.read_bytes(), self.LF)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        r = self._fill(path)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("password=tok-1\n", r.stdout)
+
+    def test_store_for_leaves_a_healthy_store_untouched(self):
+        self.acc.save_account("tester", "tok-1", 42)
+        with patch.object(self.acc, "_write_private") as write:
+            self.assertEqual(self.acc.store_for("tester"), self.acc.credentials_path("tester"))
+        write.assert_not_called()
+
+    def test_store_for_without_a_token_returns_the_store_as_it_is(self):
+        # a store whose account file is gone: nothing to rewrite from, git fails plainly
+        path = self.acc.credentials_path("tester")
+        path.parent.mkdir(parents=True)
+        path.write_bytes(self.CRLF)
+        self.assertEqual(self.acc.store_for("tester"), path)
+        self.assertEqual(path.read_bytes(), self.CRLF)
 
 
 class TestIdentity(_Tmp):

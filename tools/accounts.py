@@ -57,26 +57,48 @@ def credentials_path(login: str) -> Path:
     return runtime.auth_dir() / f"{safe_login(login)}.git-credentials"
 
 
+def store_line(token: str) -> str:
+    """The one line of an account's credential store, in git-credential-store format."""
+    return f"https://x-access-token:{token}@github.com\n"
+
+
 def store_for(login) -> "Path | None":
     """The credential store git gets for this account's network commands, or None
-    (no account, or its store is gone): see runtime.git_args."""
+    (no account, or its store is gone): see runtime.git_args.
+
+    A store whose line ends in CR LF is rewritten from the account's token first:
+    hub-v1.3.1 and earlier wrote it in text mode, which on Windows turned the LF into
+    CR LF, and git's credential store ignores such a line (a push then failed with
+    "could not read Username ... terminal prompts disabled")."""
     if not login:
         return None
     try:
         path = credentials_path(login)
     except ValueError:
         return None
-    return path if path.is_file() else None
+    if not path.is_file():
+        return None
+    try:
+        if b"\r" in path.read_bytes():
+            token = token_for(login)
+            if token:
+                _write_private(path, store_line(token))
+    except OSError:
+        pass
+    return path
 
 
 def _write_private(path: Path, text: str) -> None:
+    """Write text as UTF-8 with the line endings it carries (LF on every platform: a
+    text-mode write would turn them into CR LF on Windows, which git's credential
+    store rejects), readable by the owner only, replaced atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(path.parent, 0o700)
     except OSError:
         pass
     tmp = path.with_name(path.name + f".tmp{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_bytes(text.encode("utf-8"))
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
@@ -87,7 +109,7 @@ def save_account(login: str, token: str, user_id, name: str = "") -> dict:
     record = {"login": login, "id": int(user_id or 0), "name": str(name or ""),
               "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     _write_private(account_path(login), json.dumps({**record, "token": str(token)}))
-    _write_private(credentials_path(login), f"https://x-access-token:{token}@github.com\n")
+    _write_private(credentials_path(login), store_line(token))
     return record
 
 
