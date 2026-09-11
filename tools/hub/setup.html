@@ -334,9 +334,27 @@ function render() {
   renderProg(i);
   const legacyPending = st && st.legacy && !st.legacyReviewed && !st.login && !st.waiting;
   const v = (legacyPending ? screenLegacy : [screenConnect, screenFork, screenClone, screenDone][i])(st || {});
-  $('screen').innerHTML = v.html + (pollError
+  $('screen').innerHTML = v.html + certificateReportPanel(st) + (pollError
     ? `<div class="err">${esc(pollError)}</div>` : '');
   $('nav').innerHTML = v.nav;
+}
+
+function certificateReportPanel(s) {
+  if (!s || !s.certificateReport) return '';
+  return `<details open><summary>${t('hub.diagnostic_title', 'Diagnostic information for a public issue')}</summary>
+    <p>${t('hub.diagnostic_hint', 'Only the information below is copied. It contains no account names, sign-in codes, tokens, paths or raw error messages. Nothing is sent automatically.')}</p>
+    <textarea id="certificateReport" readonly rows="14" style="width:100%;box-sizing:border-box" aria-label="${t('hub.diagnostic_title', 'Diagnostic information for a public issue')}">${esc(s.certificateReport)}</textarea>
+    <button onclick="copyCertificateReport(this)">${t('hub.diagnostic_copy', 'Copy diagnostic information')}</button></details>`;
+}
+async function copyCertificateReport(button) {
+  const field = $('certificateReport'); if (!field) return;
+  try {
+    await navigator.clipboard.writeText(field.value);
+    button.textContent = t('hub.diagnostic_copied', 'Copied');
+  } catch (_) {
+    field.focus(); field.select();
+    button.textContent = t('hub.diagnostic_select', 'Select and copy the diagnostic information above');
+  }
 }
 
 // ---- Actions ----
@@ -344,8 +362,8 @@ async function doConnect() {
   const b = $('go'); if (b) { b.disabled = true;
     b.innerHTML = '<span class="spin"></span>' + t('hub.setup_preparing', 'Preparing…'); }
   const r = await api('/api/auth/start', {});
-  if (r.ok === false) { st = {...st, error: r.error}; render(); return; }
-  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null};
+  if (r.ok === false) { st = {...st, error: r.error, certificateReport: r.certificateReport || null}; render(); return; }
+  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null, certificateReport: null};
   render();
   await poll();
 }

@@ -2057,6 +2057,7 @@ class AuthManager:
         self.verify_url = ""
         self.waiting = False
         self.error: "str | None" = None
+        self.certificate_report: "str | None" = None
         self.login: "str | None" = None
         self._token = ""
         self._user: "dict | None" = None
@@ -2116,6 +2117,7 @@ class AuthManager:
             self.login, self._token = login, token
             self._user, self._user_at = None, 0.0
             self.waiting, self.user_code, self.error = False, "", None
+            self.certificate_report = None
         if self.city:
             accounts.bind_city_login(self.city, login)
         self._apply_identity()
@@ -2232,6 +2234,7 @@ class AuthManager:
         with self.lock:
             self.login, self._token, self._user, self._user_at = None, "", None, 0.0
             self.waiting, self.user_code, self.error = False, "", None
+            self.certificate_report = None
             root = self.clone_root
         if self.city:
             accounts.bind_city_login(self.city, None)
@@ -2290,6 +2293,7 @@ class AuthManager:
                 "userCode": self.user_code,
                 "verifyUrl": self.verify_url,
                 "error": self.error,
+                "certificateReport": self.certificate_report,
                 "login": (user or {}).get("login") if user else None,
                 "chosen": bool(self.login),
                 "bound": self.login,
@@ -2311,9 +2315,18 @@ class AuthManager:
         with self.lock:
             if self.waiting:
                 return {"userCode": self.user_code, "verifyUrl": self.verify_url}
+            self.certificate_report = None
+            self.error = None
             try:
                 r = runtime.post_form(DEVICE_CODE_URL, {"client_id": cid, "scope": OAUTH_SCOPE})
-            except (urllib.error.URLError, OSError):
+            except (urllib.error.URLError, OSError) as exc:
+                if runtime.is_certificate_error(exc):
+                    self.certificate_report = runtime.certificate_diagnostics()
+                    self.error = tr(
+                        "hub.err_auth_certificate",
+                        "GitHub's HTTPS certificate could not be verified. The connection was stopped "
+                        "before sign-in. Please report this message and the tool version to the distributor.")
+                    raise RuntimeError(self.error) from None
                 raise RuntimeError(tr(
                     "hub.err_auth_offline",
                     "GitHub could not be reached to start the sign-in. Check the internet "
@@ -2337,7 +2350,16 @@ class AuthManager:
                     "client_id": cid, "device_code": device_code,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 })
-            except OSError:
+            except OSError as exc:
+                if runtime.is_certificate_error(exc):
+                    with self.lock:
+                        self.waiting = False
+                        self.certificate_report = runtime.certificate_diagnostics()
+                        self.error = tr(
+                            "hub.err_auth_certificate",
+                            "GitHub's HTTPS certificate could not be verified. The connection was stopped "
+                            "before sign-in. Please report this message and the tool version to the distributor.")
+                    return
                 continue  # keep waiting through temporary network errors
             if r.get("access_token"):
                 token = r["access_token"]
@@ -2753,7 +2775,8 @@ class Handler(runtime.LocalHandler):
                 try:
                     self._json({"ok": True, **s.account.start()})
                 except RuntimeError as e:
-                    self._error(str(e))
+                    self._json({"ok": False, "error": str(e),
+                                "certificateReport": s.account.certificate_report})
                 return
             # Account screen (hub-v1.2.1): every choice is an explicit click.
             if path == "/api/auth/use":

@@ -553,5 +553,11 @@
   "hub.err_github_offline": "GitHub war nicht erreichbar. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.",
   "hub.account_unreachable": "Diese Stadt verwendet bereits @{login}, aber GitHub war zur Bestätigung nicht erreichbar (offline?). Sobald die Verbindung wieder besteht, geht es hier von selbst weiter; Sie können unten auch neu wählen.",
   "hub.err_auth_user_failed": "GitHub hat die Anmeldung angenommen, konnte aber nicht gefragt werden, wer Sie sind (offline?). Prüfen Sie die Internetverbindung und starten Sie die Anmeldung erneut.",
-  "hub.err_account_save_failed": "Die Verbindung konnte auf diesem Computer nicht gespeichert werden ({where}: {reason}). Prüfen Sie, ob in den Ordner geschrieben werden kann, und wählen Sie dann erneut."
+  "hub.err_account_save_failed": "Die Verbindung konnte auf diesem Computer nicht gespeichert werden ({where}: {reason}). Prüfen Sie, ob in den Ordner geschrieben werden kann, und wählen Sie dann erneut.",
+  "hub.err_auth_certificate": "Das HTTPS-Zertifikat von GitHub konnte nicht überprüft werden. Die Anmeldung wurde gestoppt. Bitte melden Sie diese Nachricht und die Tool-Version dem Anbieter.",
+  "hub.diagnostic_title": "Diagnoseinformationen für ein öffentliches Issue",
+  "hub.diagnostic_hint": "Nur die folgenden Informationen werden kopiert. Sie enthalten keine Kontonamen, Anmeldecodes, Token, Pfade oder ursprünglichen Fehlermeldungen. Es wird nichts automatisch gesendet.",
+  "hub.diagnostic_copy": "Diagnoseinformationen kopieren",
+  "hub.diagnostic_copied": "Kopiert",
+  "hub.diagnostic_select": "Die obigen Diagnoseinformationen auswählen und kopieren"
 }
