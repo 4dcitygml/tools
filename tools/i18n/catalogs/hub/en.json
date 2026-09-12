@@ -553,5 +553,11 @@
   "hub.err_github_offline": "GitHub could not be reached. Check the internet connection and try again.",
   "hub.account_unreachable": "This city already uses @{login}, but GitHub could not be reached to confirm it (offline?). With the connection back, this screen continues by itself; you can also choose again below.",
   "hub.err_auth_user_failed": "GitHub accepted the sign-in, but could not be asked who you are (offline?). Check the internet connection and start the sign-in again.",
-  "hub.err_account_save_failed": "The connection could not be saved on this computer ({where}: {reason}). Check that the folder can be written to, then choose again."
+  "hub.err_account_save_failed": "The connection could not be saved on this computer ({where}: {reason}). Check that the folder can be written to, then choose again.",
+  "hub.err_auth_certificate": "GitHub's HTTPS certificate could not be verified. The connection was stopped before sign-in. Please report this message and the tool version to the distributor.",
+  "hub.diagnostic_title": "Diagnostic information for a public issue",
+  "hub.diagnostic_hint": "Only the information below is copied. It contains no account names, sign-in codes, tokens, paths or raw error messages. Nothing is sent automatically.",
+  "hub.diagnostic_copy": "Copy diagnostic information",
+  "hub.diagnostic_copied": "Copied",
+  "hub.diagnostic_select": "Select and copy the diagnostic information above"
 }

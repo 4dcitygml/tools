@@ -93,7 +93,7 @@ class _CapturedRequest:
         self.req = None
         self._body, self._status = body, status
 
-    def __call__(self, req, timeout=0):
+    def __call__(self, req, timeout=0, context=None):
         self.req = req
         outer = self
 
@@ -138,7 +138,7 @@ class TestHeaderOnlyTransport(unittest.TestCase):
         self._check(lambda path, token: runtime.github_user_status(token))
 
     def test_http_error_result_carries_no_token(self):
-        def boom(req, timeout=0):
+        def boom(req, timeout=0, context=None):
             raise urllib.error.HTTPError(
                 req.full_url, 401, "Unauthorized", None,
                 io.BytesIO(b'{"message": "Bad credentials"}'))
@@ -148,7 +148,7 @@ class TestHeaderOnlyTransport(unittest.TestCase):
         self.assertNotIn(SENTINEL, json.dumps(body))
 
     def test_network_error_exception_carries_no_token(self):
-        def down(req, timeout=0):
+        def down(req, timeout=0, context=None):
             raise urllib.error.URLError("connection refused")
         with patch.object(runtime.urllib.request, "urlopen", down):
             with self.assertRaises(urllib.error.URLError) as ctx:

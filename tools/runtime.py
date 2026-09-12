@@ -22,6 +22,7 @@ import re
 import shlex
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -441,6 +442,89 @@ def last_clone() -> "Path | None":
 # ---- GitHub over HTTPS (no CLI) ----
 
 USER_AGENT = "4dcitygml-tools"
+MACOS_CA_FILE = "/etc/ssl/cert.pem"
+
+
+def https_context() -> ssl.SSLContext:
+    """Keep Python's verified TLS; supply macOS roots when its default store is empty.
+
+    python.org installations can have no CA file until a separate setup script is
+    run. macOS already ships a root bundle, independently of that Python install.
+    Never modify the user's files or SSL globals, retry insecurely, or override an
+    explicit SSL_CERT_FILE / SSL_CERT_DIR. A configured lazy CA directory also
+    remains authoritative. This is the OS root bundle, not the user's Keychain.
+    """
+    return _load_macos_roots(ssl.create_default_context())
+
+
+def _load_macos_roots(context: ssl.SSLContext) -> ssl.SSLContext:
+    if (sys.platform == "darwin"
+            and not os.environ.get("SSL_CERT_FILE")
+            and not os.environ.get("SSL_CERT_DIR")
+            and not context.cert_store_stats()["x509_ca"]
+            and not ssl.get_default_verify_paths().capath):
+        try:
+            context.load_verify_locations(cafile=MACOS_CA_FILE)
+        except (OSError, ssl.SSLError):
+            raise ssl.SSLCertVerificationError("The macOS root certificate bundle could not be loaded") from None
+    return context
+
+
+
+def certificate_diagnostics() -> str:
+    """Public-issue report: fixed keys, enums and numbers only; never raw errors.
+
+    Called only after a certificate failure. No network, subprocess, persistence,
+    account lookup or environment dump. Unknown facts remain explicitly unknown.
+    """
+    facts = {
+        "report": "certificate-diagnostics-v1",
+        "error": "certificate-verification-failed",
+        "os": {"darwin": "macOS", "win32": "Windows", "linux": "Linux"}.get(sys.platform, "other"),
+        "python": ".".join(str(n) for n in sys.version_info[:3]),
+        "hub": "unknown",
+        "custom_ca_file": "set" if os.environ.get("SSL_CERT_FILE") else "unset",
+        "custom_ca_directory": "set" if os.environ.get("SSL_CERT_DIR") else "unset",
+        "default_ca_count": "unknown",
+        "default_ca_directory": "unknown",
+        "tool_ca_count": "unknown",
+        "tool_ca_load": "unknown",
+    }
+    try:
+        tag = running_hub_tag()
+        if isinstance(tag, str) and re.fullmatch(r"hub-v[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", tag):
+            facts["hub"] = tag
+    except Exception:
+        pass
+    def count(context):
+        value = context.cert_store_stats().get("x509_ca")
+        return str(value) if type(value) is int and 0 <= value <= 1000000 else "unknown"
+    context = None
+    try:
+        # Avoid create_default_context here: SSLKEYLOGFILE can cause a file write.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_default_certs()
+        facts["default_ca_count"] = count(context)
+    except Exception:
+        context = None
+    try:
+        facts["default_ca_directory"] = "present" if ssl.get_default_verify_paths().capath else "absent"
+    except Exception:
+        pass
+    try:
+        if context is None:
+            raise RuntimeError("default context unavailable")
+        facts["tool_ca_count"] = count(_load_macos_roots(context))
+        facts["tool_ca_load"] = "ok"
+    except Exception:
+        facts["tool_ca_load"] = "failed"
+    return "```text\n" + "\n".join(f"{key}: {value}" for key, value in facts.items()) + "\n```"
+
+
+def is_certificate_error(error: BaseException) -> bool:
+    """Identify direct and urllib-wrapped failures without exposing exception text."""
+    return (isinstance(error, ssl.SSLCertVerificationError)
+            or isinstance(getattr(error, "reason", None), ssl.SSLCertVerificationError))
 
 
 def request(url: str, *, method: str = "GET", headers=None, body=None,
@@ -452,7 +536,7 @@ def request(url: str, *, method: str = "GET", headers=None, body=None,
     for k, v in (headers or {}).items():
         req.add_header(k, v)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=https_context()) as r:
             return r.status, r.read(), r.headers.get_content_type()
     except urllib.error.HTTPError as e:
         return e.code, e.read() or b"", e.headers.get_content_type() if e.headers else ""
@@ -509,7 +593,7 @@ def github_user_status(token: str) -> "tuple[int, dict | None]":
 
 def download(url: str, dest, timeout: int = 60) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as fh:
+    with urllib.request.urlopen(req, timeout=timeout, context=https_context()) as r, open(dest, "wb") as fh:
         shutil.copyfileobj(r, fh)
 
 

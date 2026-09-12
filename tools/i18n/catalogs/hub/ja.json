@@ -553,5 +553,11 @@
   "hub.err_github_offline": "GitHub に到達できません。インターネット接続を確認して、もう一度お試しください。",
   "hub.account_unreachable": "この都市はすでに @{login} を使っていますが、GitHub に到達できず確認できません（オフライン？）。接続が戻ればこの画面は自動で先へ進みます。下から選び直すこともできます。",
   "hub.err_auth_user_failed": "GitHub はログインを受け付けましたが、どのアカウントか確認できませんでした（オフライン？）。インターネット接続を確認して、もう一度ログインを始めてください。",
-  "hub.err_account_save_failed": "接続をこのパソコンに保存できませんでした（{where}: {reason}）。フォルダに書き込めることを確認して、もう一度選んでください。"
+  "hub.err_account_save_failed": "接続をこのパソコンに保存できませんでした（{where}: {reason}）。フォルダに書き込めることを確認して、もう一度選んでください。",
+  "hub.err_auth_certificate": "GitHub の HTTPS 証明書を検証できなかったため、ログイン処理を停止しました。このメッセージとツールのバージョンを配布元にお知らせください。",
+  "hub.diagnostic_title": "公開Issueに貼り付ける診断情報",
+  "hub.diagnostic_hint": "コピーするのは下の情報だけです。アカウント名、認証コード、トークン、パス、元のエラー文は含みません。自動送信はしません。",
+  "hub.diagnostic_copy": "診断情報をコピー",
+  "hub.diagnostic_copied": "コピーしました",
+  "hub.diagnostic_select": "上の診断情報を選択してコピーしてください"
 }
