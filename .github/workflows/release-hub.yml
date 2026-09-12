@@ -211,7 +211,22 @@ jobs:
           $out3 = & powershell -NoProfile -ExecutionPolicy Bypass -File $script -FetchLatest 2>&1 | Out-String
           $tag = ($out3.Trim() -split "`r?`n")[-1]
           if ($LASTEXITCODE -ne 0 -or $tag -ne "hub-$ver") { Write-Host $out3; throw "fetch mode failed (last line '$tag')" }
-          Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver"
+          # the one-line command run again (script text, no file behind it, as [scriptblock]::Create((irm …)) runs it):
+          # a newer release is published (same zip under a higher name) → it is installed next to the old one and started
+          $ver2 = "v99.1.0"
+          $rel2 = @(@{ tag_name = "hub-$ver2"; draft = $false; prerelease = $false; html_url = "x";
+                       assets = @(@{ name = "citygml-hub-$ver2-windows-full.zip"; browser_download_url = "u"; digest = "sha256:$sha" }) })
+          $json2 = Join-Path $env:RUNNER_TEMP "releases2.json"
+          ConvertTo-Json -InputObject $rel2 -Depth 5 | Set-Content -Encoding UTF8 $json2
+          $env:CITYGML_RELEASES_JSON = $json2
+          $out4 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$script'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $out4 -notmatch "Updated the editing tools: hub-$ver2 installed next to hub-$ver" -or $out4 -notmatch "EXEC hub-$ver2 4dcitygml/sample-newyork-station") { Write-Host $out4; throw "one-line command run again did not update" }
+          if (-not (Test-Path (Join-Path $env:CITYGML_TOOLS_DIR "citygml-hub\hub-$ver\program\hub.py"))) { throw "the previous version was not left in place" }
+          # …and offline, the one-line command starts what is installed instead of failing
+          $env:CITYGML_RELEASES_JSON = Join-Path $env:RUNNER_TEMP "no-such-releases.json"
+          $out5 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$script'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $out5 -notmatch "Could not check for a newer version; starting the installed hub-$ver2" -or $out5 -notmatch "EXEC hub-$ver2") { Write-Host $out5; throw "one-line command offline did not start the installed version" }
+          Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver, one-line command updated to hub-$ver2 and starts it offline"
       - name: Upload Windows package directly to requested Release
         if: inputs.release_tag != ''
         shell: bash

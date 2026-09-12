@@ -40,7 +40,8 @@ request.
    `~/Documents/citygml-tools/citygml-hub/<version>/` after verifying it against
    the SHA-256 digest GitHub publishes for the asset, keeps a copy of itself in
    `~/Documents/citygml-tools/`, and starts the hub. Running it again is always
-   safe: it starts the installed tools.
+   safe: it installs the newest release if there is one, then starts the tools
+   (offline, the installed tools start).
 2. The hub opens in your browser, connected to that city. Choose the city's
    GitHub account once (the screen states exactly what you authorize); the hub
    creates your copy of the city. After setup a desktop icon starts the tools.
