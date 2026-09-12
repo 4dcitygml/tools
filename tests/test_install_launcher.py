@@ -60,6 +60,21 @@ class TestLauncher(unittest.TestCase):
         env.update(env_over)
         return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env)
 
+    def run_one_line(self, *args, **env_over):
+        """The README's one-line command: the script text runs through `bash -c`, so no file
+        stands behind it (BASH_SOURCE is empty), exactly as with curl."""
+        env = dict(os.environ, CITYGML_TOOLS_DIR=str(self.tools), CITYGML_RELEASES_JSON=str(self.rel),
+                   CITYGML_ASSET_FILE=str(self.asset), CITYGML_NO_EXEC="1", LANG="en_US.UTF-8")
+        env.update(env_over)
+        return subprocess.run(["bash", "-c", SCRIPT.read_text(encoding="utf-8"), "--", *args],
+                              capture_output=True, text=True, env=env)
+
+    def _installed(self, tag: str, marker: str = "x") -> Path:
+        folder = self.tools / "citygml-hub" / tag / "program"
+        folder.mkdir(parents=True)
+        (folder / "hub.py").write_text(f"print('{marker}')")
+        return folder
+
     def test_first_run_installs_newest_published_release_and_hands_over(self):
         r = self.run_script("4dcitygml/sample-munich-station")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -120,6 +135,48 @@ class TestLauncher(unittest.TestCase):
         r = self.run_script("o/r", CITYGML_RELEASES_JSON="/nonexistent")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("EXEC hub-v1.2.0 o/r", r.stdout)
+
+    # ---- the one-line command run again (2026-09-11): it updates, the icon does not ----
+
+    def test_one_line_command_run_again_installs_the_newer_release(self):
+        self._installed("hub-v1.2.0", "cur")
+        releases_json(self.rel, [("hub-v1.2.0", self.sha, False), ("hub-v1.4.0", self.sha, False)])
+        r = self.run_one_line("o/r")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("EXEC hub-v1.4.0 o/r", r.stdout)
+        self.assertIn("Updated the editing tools: hub-v1.4.0 installed next to hub-v1.2.0", r.stdout)
+        self.assertTrue((self.tools / "citygml-hub" / "hub-v1.4.0" / "program" / "hub.py").is_file())
+        self.assertTrue((self.tools / "citygml-hub" / "hub-v1.2.0" / "program" / "hub.py").is_file())  # left in place
+
+    def test_one_line_command_when_up_to_date_downloads_nothing(self):
+        self._installed("hub-v1.3.0", "cur")
+        r = self.run_one_line("o/r", CITYGML_ASSET_FILE="/nonexistent")       # a download would fail
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("EXEC hub-v1.3.0 o/r", r.stdout)
+        self.assertIn("up to date (hub-v1.3.0)", r.stdout)
+
+    def test_one_line_command_without_network_starts_the_installed_version(self):
+        self._installed("hub-v1.3.0", "cur")
+        r = self.run_one_line("o/r", CITYGML_RELEASES_JSON="/nonexistent")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("EXEC hub-v1.3.0 o/r", r.stdout)
+        self.assertIn("Could not check for a newer version; starting the installed hub-v1.3.0", r.stdout)
+
+    def test_one_line_command_without_network_and_nothing_installed_fails(self):
+        r = self.run_one_line("o/r", CITYGML_RELEASES_JSON="/nonexistent")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Check the internet connection", r.stderr)
+        self.assertNotIn("EXEC", r.stdout)
+
+    def test_launcher_run_from_a_file_does_not_look_for_updates(self):
+        # the desktop icon runs the copy in the tools folder: what is installed starts, the hub
+        # announces newer versions itself
+        self._installed("hub-v1.2.0", "cur")
+        releases_json(self.rel, [("hub-v1.2.0", self.sha, False), ("hub-v1.4.0", self.sha, False)])
+        r = self.run_script("o/r")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("EXEC hub-v1.2.0 o/r", r.stdout)
+        self.assertFalse((self.tools / "citygml-hub" / "hub-v1.4.0").exists())
 
     def test_default_city_follows_the_language(self):
         for lang, city in (("ja_JP.UTF-8", "sample-tokyo-station"), ("de_DE.UTF-8", "sample-munich-station"), ("en_US.UTF-8", "sample-newyork-station")):
