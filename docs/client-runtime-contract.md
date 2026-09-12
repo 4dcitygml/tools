@@ -131,9 +131,13 @@ Shared settings file (`~/.citygml_attr_editor.json`):
 - Installation = unpack into `citygml-hub/<tag>/` after the digest matched;
   staging first, rename last; an existing `<tag>` folder is never touched.
 - The launcher always starts the newest installed version. Nothing is
-  downloaded unless the user asks: the first install by the one-line command,
-  later versions by the hub's *Get it now* (`POST /api/update/fetch`) after the
-  automatic check (`GET /api/update`). A new version is used from the next start.
+  downloaded unless the user asks: the one-line command (the script arriving
+  from the network, not from a file) installs the newest release when it is
+  newer than what is installed, and starts what is installed when the lookup
+  fails; the desktop launcher (the copy in the tools folder) never looks for
+  updates, later versions come by the hub's *Get it now* (`POST /api/update/fetch`)
+  after the automatic check (`GET /api/update`). A new version is used from the
+  next start.
   The launcher is the one place that downloads, verifies and unpacks a release:
   *Get it now* runs its fetch mode (`citygml.sh --fetch-latest` /
   `citygml.ps1 -FetchLatest`), which prints the installed tag.

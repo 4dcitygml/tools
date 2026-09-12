@@ -6,12 +6,16 @@
 #   First time (from the city's README, in PowerShell):
 #     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.ps1))) <owner/repo>
 #   Afterwards this same file lives in %USERPROFILE%\Documents\citygml-tools\citygml.ps1 and
-#   the desktop shortcut the hub creates runs it. Running it again is always safe.
+#   the desktop shortcut the hub creates runs it. Running the one-line command again is always
+#   safe: it installs the newest release if there is one, then starts the tools.
 #
-# Steps mirror citygml.sh: decide the city → keep a copy of this script → start the newest
-# installed hub of this generation (hub-v1.2.0 or newer), downloading and digest-verifying the
-# latest release when there is none → hand over to the hub (bundled Python and Git travel inside
-# the download). Older installations (hub-v1.0.x) are left in place, untouched, never started.
+# Steps mirror citygml.sh: decide the city → keep a copy of this script → the one-line command
+# (this script arriving from the network, not from a file) installs the latest release when it
+# is newer than what is installed (download verified against GitHub's SHA-256 digest; offline,
+# an installed version still starts), while the desktop shortcut starts the newest installed hub
+# of this generation (hub-v1.2.0 or newer) and downloads only when there is none → hand over to
+# the hub (bundled Python and Git travel inside the download). Older installations (hub-v1.0.x)
+# are left in place, untouched, never started.
 # `citygml.ps1 -FetchLatest` is the hub's "Get it now": it installs the newest release next to
 # the running one (same download and digest check) and prints its tag. This file is the one
 # place that downloads, verifies and unpacks a release on Windows.
@@ -36,6 +40,7 @@ if (-not $FetchLatest -and $City -notmatch "^[^/]+/[^/]+$") { throw "The city mu
 # 2. Keep a copy of this launcher in the tools folder.
 New-Item -ItemType Directory -Force $toolsDir | Out-Null
 $selfPath = Join-Path $toolsDir "citygml.ps1"
+$oneLine = -not $PSCommandPath   # no file behind this run: the one-line command from the README
 if ($PSCommandPath -and (Test-Path $PSCommandPath) -and ((Resolve-Path $PSCommandPath).Path -ne $selfPath)) {
   Copy-Item $PSCommandPath $selfPath -Force
 } elseif (-not $PSCommandPath -and -not $env:CITYGML_RELEASES_JSON) {
@@ -92,8 +97,21 @@ if ($FetchLatest) {
 }
 
 $tag = Get-NewestInstalled
-if (-not $tag) {
-  try { $tag = Install-Latest } catch { throw "The latest version could not be installed ($($_.Exception.Message)). Check the internet connection and try again." }
+if ($oneLine -or -not $tag) {
+  # The one-line command installs the newest release (an update when one is already installed);
+  # a launcher run from a file starts what is installed (the hub offers newer versions on its own
+  # screen). Without network, an installed version still starts.
+  $new = ""; $why = ""
+  try { $new = Install-Latest } catch { $why = $_.Exception.Message }
+  if ($new -and (Test-Path (Join-Path $hubs "$new\program\hub.py"))) {
+    if ($tag -and $new -eq $tag) { Write-Host "The editing tools are up to date ($tag)." }
+    if ($tag -and $new -ne $tag) { Write-Host "Updated the editing tools: $new installed next to $tag." }
+    $tag = Get-NewestInstalled
+  } elseif ($tag) {
+    Write-Host "Could not check for a newer version; starting the installed $tag."
+  } else {
+    throw "The latest version could not be installed ($why). Check the internet connection and try again."
+  }
 }
 $app = Join-Path $hubs "$tag\program\hub.py"
 $py = Join-Path $hubs "$tag\program\PythonPortable\python.exe"

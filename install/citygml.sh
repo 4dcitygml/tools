@@ -7,16 +7,21 @@
 #   First time (from the city's README):
 #     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh)" -- <owner/repo>
 #   Afterwards this same file lives in ~/Documents/citygml-tools/citygml.sh and the
-#   desktop icon the hub creates runs it. Running it again is always safe.
+#   desktop icon the hub creates runs it. Running the one-line command again is always
+#   safe: it installs the newest release if there is one, then starts the tools.
 #
 # What it does, in order:
 #   1. Decides the city: the argument, else a practice city chosen by your language.
 #   2. Copies itself into ~/Documents/citygml-tools/ (locally written files carry no
 #      quarantine attribute, so the icon opens without a Gatekeeper warning).
-#   3. Starts the newest installed hub of this generation (hub-v1.2.0 or newer: the
-#      versions that fetch updates from their own screen). When there is none, downloads
-#      the latest hub release from 4dcitygml/tools and verifies it against the SHA-256
-#      digest GitHub publishes for the asset. Nothing runs unless the digest matches.
+#   3. The one-line command (this script arriving from the network, not from a file)
+#      looks up the latest hub release of 4dcitygml/tools and installs it when it is
+#      newer than what is installed, verifying the download against the SHA-256 digest
+#      GitHub publishes for the asset. Nothing runs unless the digest matches. When the
+#      lookup fails (offline) and a version is installed, that one starts. The desktop
+#      icon (this file run from ~/Documents/citygml-tools/) starts the newest installed
+#      hub of this generation (hub-v1.2.0 or newer: the versions that fetch updates from
+#      their own screen) and downloads only when there is none.
 #      Older installations (hub-v1.0.x, flat or in a version folder) are not this
 #      file's business: they are left in place, untouched, and never started by it.
 #   4. Hands over to the hub, which keeps your city's data up to date and offers
@@ -69,6 +74,8 @@ esac
 # 2. Keep a copy of this launcher in the tools folder (the desktop icon points here).
 mkdir -p "$TOOLS_DIR"
 SELF="${BASH_SOURCE[0]:-}"
+ONE_LINE=0
+[ -n "$SELF" ] || ONE_LINE=1   # no file behind this run: the one-line command from the README
 if [ "$SELF" != "$TOOLS_DIR/citygml.sh" ]; then
   if [ -n "$SELF" ] && [ -f "$SELF" ]; then
     cp "$SELF" "$TOOLS_DIR/citygml.sh"
@@ -123,7 +130,7 @@ EOF
   rm -f "$json"
   [ -n "${TAG:-}" ] || fail "Could not determine the latest version. Check the internet connection and try again."
   if [ -f "$HUBS/$TAG/program/hub.py" ]; then echo "$TAG"; return 0; fi   # already installed: nothing to download
-  msg "Downloading the editing tools ($TAG) …"
+  msg "Downloading the editing tools ($TAG) …" >&2   # progress on stderr: stdout carries the tag
   tmp="$(mktemp "${TMPDIR:-/tmp}/citygml-hub.XXXXXX")"
   if [ -n "${CITYGML_ASSET_FILE:-}" ]; then cp "$CITYGML_ASSET_FILE" "$tmp"; else curl -fL "$URL" -o "$tmp"; fi \
     || { rm -f "$tmp"; fail "The download of $TAG failed. Check the internet connection and try again."; }
@@ -146,7 +153,18 @@ if [ "$FETCH_ONLY" = 1 ]; then
 fi
 
 TAG="$(newest_installed)"
-[ -n "$TAG" ] || TAG="$(install_latest | tail -n 1)"
+if [ "$ONE_LINE" = 1 ] || [ -z "$TAG" ]; then
+  # The one-line command installs the newest release (an update when one is already
+  # installed); a launcher run from a file starts what is installed (the hub offers
+  # newer versions on its own screen). Without network, an installed version still starts.
+  if NEW="$(install_latest | tail -n 1)" && [ -n "$NEW" ] && [ -f "$HUBS/$NEW/program/hub.py" ]; then
+    if [ -n "$TAG" ] && [ "$NEW" = "$TAG" ]; then msg "The editing tools are up to date ($TAG)."; fi
+    if [ -n "$TAG" ] && [ "$NEW" != "$TAG" ]; then msg "Updated the editing tools: $NEW installed next to $TAG."; fi
+    TAG="$(newest_installed)"
+  elif [ -n "$TAG" ]; then
+    msg "Could not check for a newer version; starting the installed $TAG."
+  fi
+fi
 APP="$HUBS/$TAG/program/hub.py"
 [ -n "$TAG" ] && [ -f "$APP" ] || fail "The latest version could not be installed. Check the internet connection and try again."
 
