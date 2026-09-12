@@ -52,7 +52,9 @@ request.
    The script installs the newest `hub-v` release into
    `~/Documents/citygml-tools/citygml-hub/<version>/` after verifying it against
    the SHA-256 digest GitHub publishes for the asset, keeps a copy of itself in
-   `~/Documents/citygml-tools/`, and starts the hub.
+   `~/Documents/citygml-tools/`, and starts the hub. Running it again is always
+   safe: it installs the newest release if there is one, then starts the tools
+   (offline, the installed tools start).
 2. The hub opens in your browser, connected to that city. After setup it offers
    a desktop icon; from then on the icon starts the tools (no terminal needed).
 3. Newer versions are announced inside the hub; *Get it now* downloads and
