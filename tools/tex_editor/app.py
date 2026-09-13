@@ -38,6 +38,14 @@ from urllib.parse import unquote, urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 
+# The shared runtime sits one level up (program/ in the hub bundle, tools/ in the source tree)
+for _d in (APP_DIR, APP_DIR.parent):
+    if (_d / "runtime.py").is_file():
+        if str(_d) not in sys.path:
+            sys.path.insert(0, str(_d))
+        break
+import runtime  # noqa: E402
+
 # Load the attribute editor as the shared base (by path, not import, to stay a standalone file)
 _ATTR_PATH = APP_DIR.parent / "attr_editor" / "app.py"
 if not _ATTR_PATH.is_file():
@@ -48,38 +56,14 @@ _spec.loader.exec_module(attr)
 
 
 def tr(key: str, default: str, **params) -> str:
-    """Translate server-side (Python) generated text (fail-open).
-
-    Same scheme as attr.tr() but looks up the tex_editor catalog (attr's
-    version is pinned to the attr_editor catalog and cannot be reused).
-    """
-    mod = attr.i18n_module()
-    if mod is not None:
-        try:
-            return mod.translate("tex_editor", key, default, **params)
-        except Exception:
-            pass
-    s = default
-    for k, v in params.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
+    """Translation of the editor's server-generated text (fail-open, see runtime.translate)."""
+    return runtime.translate("tex_editor", key, default, **params)
 
 
 def tr_lang(lang: str, key: str, default: str, **params) -> str:
-    """tr() with an explicit language, for repo-facing text (PR title/body).
-
-    Repo-facing text follows the repository's working language (4dcitygml.json
-    "lang"), not the UI language of the person editing."""
-    mod = attr.i18n_module()
-    if mod is not None:
-        try:
-            return mod.translate("tex_editor", key, default, lang=lang, **params)
-        except Exception:
-            pass
-    s = default
-    for k, v in params.items():
-        s = s.replace("{" + k + "}", str(v))
-    return s
+    """tr() with an explicit language, for repo-facing text (PR title/body): it follows
+    the repository's working language, not the UI language of the person editing."""
+    return runtime.translate("tex_editor", key, default, lang=lang, **params)
 
 _IMAGE_MAX_BYTES = 30 * 1024 * 1024  # cap on the baked atlas size (safety net)
 
@@ -902,33 +886,16 @@ class TexHandler(attr.Handler):
 
 def create_server(repo_root, port: int, *, data: "str | None" = None,
                   textures=None) -> ThreadingHTTPServer:
-    """Entry point for external callers (e.g. the integrated frontend) to assemble this server (for frozen builds)."""
-    attr.sync_upstream_main(repo_root)
+    """Entry point for external callers (the hub) to assemble this server without a browser."""
+    runtime.sync_upstream_main(repo_root)
     TexHandler.repo = TexRepo(Path(repo_root), data)
     if textures:
         TexHandler.repo.tex_override = Path(textures).resolve()
     return ThreadingHTTPServer(("127.0.0.1", int(port)), TexHandler)
 
 
-def _make_console_safe() -> None:
-    """Never let console output crash the app on a narrow code page.
-
-    On Windows a redirected stdout/stderr uses the legacy code page (cp1252,
-    cp932, ...), and the embeddable Python ignores PYTHONUTF8/PYTHONIOENCODING
-    (._pth isolated mode). Help text and log lines contain characters such as
-    "→", so unencodable characters are escaped instead of raising.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(errors="backslashreplace")
-            except (ValueError, OSError):
-                pass
-
-
 def main() -> None:
-    _make_console_safe()
+    runtime.make_console_safe()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (can be omitted when run from inside clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
@@ -938,11 +905,11 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    repo_root = args.repo or attr.detect_repo()
+    repo_root = args.repo or runtime.detect_repo(APP_DIR)
     if repo_root is None:
-        cfg = attr.load_config()
+        cfg = runtime.load_config()
         saved = cfg.get("repo")
-        if saved and attr.has_building_data(Path(saved)):
+        if saved and runtime.has_building_data(Path(saved)):
             repo_root = Path(saved)
     if repo_root is None:
         sys.exit(
@@ -950,7 +917,7 @@ def main() -> None:
             "in the attribute editor (tools/attr_editor/app.py) first"
         )
 
-    attr.sync_upstream_main(repo_root)
+    runtime.sync_upstream_main(repo_root)
     try:
         TexHandler.repo = TexRepo(repo_root, args.data)
     except RuntimeError as e:

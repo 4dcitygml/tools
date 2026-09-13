@@ -46,7 +46,7 @@ class Base(unittest.TestCase):
 class TestNormalize(Base):
     def test_forms(self):
         for mod in (attr, hub):
-            n = mod._normalize_upstream
+            n = mod.runtime._normalize_upstream
             self.assertEqual(n("owner/repo"), "https://github.com/owner/repo")
             self.assertEqual(n("https://github.com/o/r"), "https://github.com/o/r")
             self.assertEqual(n("https://github.com/o/r.git"), "https://github.com/o/r")
@@ -69,57 +69,55 @@ class TestPriority(Base):
 
     def test_default_without_context(self):
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(), DEFAULT)
-            self.assertEqual(mod.upstream_nwo(None), DEFAULT)
+            self.assertEqual(mod.runtime.upstream_nwo(), DEFAULT)
+            self.assertEqual(mod.runtime.upstream_nwo(None), DEFAULT)
 
     def test_city_json_wins_over_default(self):
         d = self._repo_with("stadt-muenchen/13100-muenchen", None)
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "stadt-muenchen/13100-muenchen")
+            self.assertEqual(mod.runtime.upstream_nwo(d), "stadt-muenchen/13100-muenchen")
 
     def test_git_remote_upstream_used_when_no_city_json(self):
         d = self._repo_with(None, "git@github.com:city-of-x/13101-cityname.git")
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "city-of-x/13101-cityname")
+            self.assertEqual(mod.runtime.upstream_nwo(d), "city-of-x/13101-cityname")
 
     def test_city_json_wins_over_remote(self):
         d = self._repo_with("a/b", "https://github.com/c/d.git")
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "a/b")
+            self.assertEqual(mod.runtime.upstream_nwo(d), "a/b")
 
     def test_env_wins_over_everything(self):
         os.environ["CITYGML_UPSTREAM"] = "env-owner/env-repo"
         d = self._repo_with("a/b", None)
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), "env-owner/env-repo")
+            self.assertEqual(mod.runtime.upstream_nwo(d), "env-owner/env-repo")
 
     def test_broken_city_json_falls_back(self):
         d = Path(tempfile.mkdtemp())
         (d / "4dcitygml.json").write_text("{not json", encoding="utf-8")
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), DEFAULT)
+            self.assertEqual(mod.runtime.upstream_nwo(d), DEFAULT)
 
     def test_invalid_repo_value_falls_back(self):
         d = self._repo_with("https://evil.example/o/r", None)
         for mod in (attr, hub):
-            self.assertEqual(mod.upstream_nwo(d), DEFAULT)
+            self.assertEqual(mod.runtime.upstream_nwo(d), DEFAULT)
 
 
 class TestDemoCityJsons(unittest.TestCase):
-    """Consistency check that the three demo cities' 4dcitygml.json files are readable by this resolution logic."""
+    """Consistency check that the three demo cities' 4dcitygml.json files are readable by this
+    resolution logic: each clone resolves to the city its own file names."""
 
     def test_demo_city_jsons_resolve(self):
         base = REPO_ROOT.parent
-        expect = {
-            "sample-tokyo-station": "4dcitygml/sample-tokyo-station",
-            "sample-munich-station": "4dcitygml/sample-munich-station",
-            "sample-newyork-station": "4dcitygml/sample-newyork-station",
-        }
-        for folder, nwo in expect.items():
-            d = base / folder
+        suffix = REPO_ROOT.name.removeprefix("tools")   # sibling checkouts share this checkout's suffix
+        for folder in ("sample-tokyo-station", "sample-munich-station", "sample-newyork-station"):
+            d = base / (folder + suffix)
             if not (d / "4dcitygml.json").is_file():
                 self.skipTest(f"environment does not have {folder}/4dcitygml.json")
-            self.assertEqual(attr.upstream_nwo(d), nwo)
+            declared = json.loads((d / "4dcitygml.json").read_text(encoding="utf-8"))["repo"]
+            self.assertEqual(attr.runtime.upstream_nwo(d), declared, folder)
 
 
 class TestStableBuildingId(unittest.TestCase):

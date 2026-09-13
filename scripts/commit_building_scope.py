@@ -19,8 +19,11 @@ Exceptions are only ``Change-Type: lifecycle`` (enumerate multiple IDs as old→
 (initial source recording), ``Change-Type: scope-extract`` (removal of non-target municipalities),
 and the identity kinds ``identity-baseline`` / ``identity-correction`` (exactly one building's
 ``uro:buildingID`` replaced, declared by ``Building-ID-From`` / ``Building-ID-To`` and backed by a
-``Provenance-Manifest`` — see docs/bulk-submission-provenance.md), and ``schema-update``
-(edition artifacts only — code lists, schema profiles — with no CityGML change at all).
+``Provenance-Manifest`` — see docs/bulk-submission-provenance.md), ``schema-update``
+(edition artifacts only — code lists, schema profiles — with no CityGML change at all), and
+``practice-reset`` (a practice repository returning to its baseline: the city's data
+directories equal those of the commit named by ``Reset-To`` and nothing outside them changes;
+history is kept, nothing is rewritten).
 Documentation/code-only commits do not require building trailers.
 
 Usage:
@@ -44,19 +47,17 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.provenance_manifest import parse_manifest_ref, sha256_hex, validate as validate_manifest  # noqa: E402
-from scripts.reconstruct_minimal import building_spans  # noqa: E402
+from scripts.repo_scope import data_dirs, is_data  # noqa: E402
+from scripts.building_identity import IdentityRule, building_spans, rule_from_config, stable_id  # noqa: E402
 from scripts.texture_check import _building_appearance_sig  # noqa: E402
 from scripts.lifecycle_manifest import validate as validate_lifecycle  # noqa: E402
 
-_BUILDING_ID_VALUE_RE = re.compile(
-    rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>"
-)
 _CITY_VALUE_RE = re.compile(
     rb"<(?:\w+:)?city(?:\s[^>]*)?>([^<]+)</(?:\w+:)?city>"
 )
 _TRAILER_RE = re.compile(
     r"^(Building|Building-Added|Building-Deleted|Change-Type|Scope-Municipality"
-    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Lifecycle-Manifest|Corrects):"
+    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Lifecycle-Manifest|Corrects|Reset-To):"
     r"[ \t]*(.+?)[ \t]*$",
     re.MULTILINE,
 )
@@ -131,12 +132,13 @@ def _changed_gml_paths(repo: Path, parent: str, commit: str) -> list[str]:
     return sorted({line for line in str(output).splitlines() if line.endswith(".gml")})
 
 
-def _stable_id(member: bytes, gml_id: str) -> str:
-    match = _BUILDING_ID_VALUE_RE.search(member)
-    if match is None:
-        return gml_id
-    value = match.group(1).decode("utf-8", errors="replace").strip()
-    return value or gml_id
+def _city_config(repo: Path, sha: str) -> dict:
+    """The clone's 4dcitygml.json as committed at sha ({} when absent or unreadable)."""
+    try:
+        cfg = json.loads(str(_git(repo, "show", f"{sha}:4dcitygml.json")))
+    except (RuntimeError, ValueError):
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
 
 
 def _municipality(member: bytes) -> str | None:
@@ -147,7 +149,7 @@ def _municipality(member: bytes) -> str | None:
     return value or None
 
 
-def _snapshot(blobs: list[bytes]) -> Snapshot:
+def _snapshot(blobs: list[bytes], rule: IdentityRule = IdentityRule()) -> Snapshot:
     snapshot = Snapshot()
     appearance_sets: dict[str, set[tuple[str, str, str]]] = {}
 
@@ -155,7 +157,7 @@ def _snapshot(blobs: list[bytes]) -> Snapshot:
         local_gml_to_stable: dict[str, str] = {}
         for gml_id, (start, end) in building_spans(raw).items():
             member = raw[start:end]
-            stable = _stable_id(member, gml_id)
+            stable = stable_id(member, gml_id, rule)
             local_gml_to_stable[gml_id] = stable
             snapshot.gml_to_stable[gml_id] = stable
             snapshot.municipalities[stable] = _municipality(member)
@@ -175,11 +177,11 @@ def _snapshot(blobs: list[bytes]) -> Snapshot:
     return snapshot
 
 
-def _member_bytes(blobs: list[bytes], stable: str) -> bytes | None:
+def _member_bytes(blobs: list[bytes], stable: str, rule: IdentityRule = IdentityRule()) -> bytes | None:
     for raw in blobs:
         for gml_id, (start, end) in building_spans(raw).items():
             member = raw[start:end]
-            if _stable_id(member, gml_id) == stable:
+            if stable_id(member, gml_id, rule) == stable:
                 return member
     return None
 
@@ -206,6 +208,24 @@ def _all_identity_trailers(trailers: dict[str, list[str]]) -> list[str]:
     ]
 
 
+def _data_path_test(repo: Path, sha: str):
+    """Whether a path belongs to the city's data at that commit: 4dcitygml.json data_dirs, the
+    PLATEAU layout and provenance/ (as the repository scope gate defines data); a repository
+    without any of these treats its CityGML files as the data."""
+    dirs = data_dirs(_city_config(repo, sha))
+    return lambda path: is_data(path, dirs) or (not dirs and path.endswith(".gml"))
+
+
+def _data_blobs(repo: Path, sha: str, in_data) -> dict[str, str]:
+    """path -> blob id of every data path at that commit."""
+    out = {}
+    for line in str(_git(repo, "ls-tree", "-r", sha)).splitlines():
+        meta, _, path = line.partition("\t")
+        if in_data(path):
+            out[path] = meta.split()[2]
+    return out
+
+
 def inspect_commit(repo: Path, sha: str) -> CommitResult:
     parents = str(_git(repo, "show", "-s", "--format=%P", sha)).strip().split()
     subject = str(_git(repo, "show", "-s", "--format=%s", sha)).strip()
@@ -230,6 +250,32 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
     if len(change_types) > 1:
         result.errors.append("Specify exactly one Change-Type trailer.")
 
+    if change_type == "practice-reset":
+        # A practice repository returning to its baseline: the city's data directories
+        # (and only they) become what the commit named by Reset-To holds. Compared on the
+        # blob ids of every data path, so the reset can neither smuggle a change nor miss one;
+        # workflows, documents and configuration on main are left as they are.
+        targets = trailers.get("Reset-To", [])
+        if identities:
+            result.errors.append("practice-reset commits must not list per-building trailers.")
+        if len(targets) != 1:
+            result.errors.append("Specify exactly one Reset-To: <commit> trailer for practice-reset.")
+            return result
+        try:
+            _git(repo, "rev-parse", "--verify", f"{targets[0]}^{{commit}}")
+        except RuntimeError:
+            result.errors.append(f"The Reset-To commit {targets[0]} is not available in this checkout.")
+            return result
+        in_data = _data_path_test(repo, sha)
+        changed = str(_git(repo, "diff", "--name-only", "--no-renames", parent, sha)).splitlines()
+        outside = sorted(p for p in changed if p and not in_data(p))
+        if outside:
+            result.errors.append("A practice-reset commit changes only the city's data directories; unexpected: "
+                                 + ", ".join(outside[:5]))
+        if _data_blobs(repo, sha, in_data) != _data_blobs(repo, targets[0], in_data):
+            result.errors.append("A practice-reset commit must restore the data directories exactly as its Reset-To commit holds them.")
+        return result
+
     if not paths:
         if change_type == 'lifecycle':
             result.errors.append('A lifecycle commit must change CityGML buildings.')
@@ -250,8 +296,9 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
 
     old_blobs = [raw for path in paths if (raw := _blob(repo, parent, path)) is not None]
     new_blobs = [raw for path in paths if (raw := _blob(repo, sha, path)) is not None]
-    old = _snapshot(old_blobs)
-    new = _snapshot(new_blobs)
+    rule = rule_from_config(_city_config(repo, sha))
+    old = _snapshot(old_blobs, rule)
+    new = _snapshot(new_blobs, rule)
 
     if old.duplicates or new.duplicates:
         dup = sorted(old.duplicates | new.duplicates)
@@ -368,8 +415,8 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
                 f"actual deleted={sorted(result.deleted_ids)} added={sorted(result.added_ids)}."
             )
             return result
-        before = _member_bytes(old_blobs, source)
-        after = _member_bytes(new_blobs, target)
+        before = _member_bytes(old_blobs, source, rule)
+        after = _member_bytes(new_blobs, target, rule)
         if before is None or after is None or _replace_building_id(before, source, target) != after:
             result.errors.append(
                 f"The building's bytes changed beyond the buildingID value ({source} -> {target}); "
@@ -454,8 +501,8 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
                 result.errors.append(f"Provenance manifest {ref_path} does not match the digest in the trailer.")
     stable = next(iter(result.changed_ids))
     if result.manifest_ref:
-        result.member_before = _member_bytes(old_blobs, stable)
-        result.member_after = _member_bytes(new_blobs, stable)
+        result.member_before = _member_bytes(old_blobs, stable, rule)
+        result.member_after = _member_bytes(new_blobs, stable, rule)
     expected_key = "Building"
     if stable in result.added_ids:
         expected_key = "Building-Added"
@@ -736,7 +783,9 @@ def render(results: list[CommitResult]) -> str:
                 ids = f"lifecycle {event['kind']} ({event['eventId']}): {', '.join(event['oldIds'])} -> {', '.join(event['newIds'])}"
             else:
                 sorted_ids = sorted(result.changed_ids)
-                ids = ", ".join(sorted_ids[:10]) or "no semantic building change"
+                # administrative kinds without per-building ids (source-baseline, layout,
+                # schema-update, practice-reset) are named by their change type
+                ids = ", ".join(sorted_ids[:10]) or result.change_type or "no semantic building change"
                 if len(sorted_ids) > 10:
                     ids += f" and {len(sorted_ids) - 10} more"
             lines.append(f"OK   {short}  {ids}  {result.subject}")

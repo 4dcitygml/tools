@@ -248,6 +248,15 @@ if grep -q '^Change-Type: source-baseline$' /tmp/pr-messages.txt 2>/dev/null; th
 fi
 record SOURCE_BASELINE "$BASELINE_ENABLED"
 
+# --- Detect a practice reset (a practice repository returning to its baseline) ---
+# The commit-scope gate verifies the tree against the Reset-To commit; per-building
+# reviewability and the 3D preview would only describe practice edits being undone.
+RESET_ENABLED="false"
+if grep -q '^Change-Type: practice-reset$' /tmp/pr-messages.txt 2>/dev/null; then
+  RESET_ENABLED="true"
+fi
+record PRACTICE_RESET "$RESET_ENABLED"
+
 # --- Detect bulk (manifest-backed) submissions: identity-baseline / identity-correction / source-update ---
 # Accepted by reproduction (docs/bulk-submission-provenance.md): the commit scope
 # gate has already checked every commit against the provenance manifest; here the
@@ -471,7 +480,7 @@ fi
 
 # --- Generate Cesium preview comment body (continue-on-error) ---
 PREVIEW_URL=""
-if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENABLED" != "true" ] && [ "$BULK_ENABLED" != "true" ]; then
+if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENABLED" != "true" ] && [ "$RESET_ENABLED" != "true" ] && [ "$BULK_ENABLED" != "true" ]; then
   set +e
   (
     set -euo pipefail
@@ -533,7 +542,7 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BULK_ENABLED
 fi
 
 # --- Generate reviewability lint (W3) (continue-on-error) ---
-if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENABLED" != "true" ] && [ "$BULK_ENABLED" != "true" ]; then
+if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENABLED" != "true" ] && [ "$RESET_ENABLED" != "true" ] && [ "$BULK_ENABLED" != "true" ]; then
   set +e
   (
     set -euo pipefail

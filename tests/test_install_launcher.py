@@ -178,6 +178,25 @@ class TestLauncher(unittest.TestCase):
         self.assertIn("EXEC hub-v1.2.0 o/r", r.stdout)
         self.assertFalse((self.tools / "citygml-hub" / "hub-v1.4.0").exists())
 
+    def test_release_source_defaults_are_stable_and_overridable(self):
+        # Installed launchers (copies of this script) keep working: with nothing set, the
+        # script names the production repository exactly as before; CITYGML_TOOLS_REPO
+        # redirects both the self-update URL and the releases API (development copies).
+        defs = 'eval "$(sed -n "/^INSTALL_TAG=/,/^RELEASES_API=/p" "$0")"; echo "$SELF_URL"; echo "$RELEASES_API"'
+        clean = {k: v for k, v in os.environ.items()
+                 if k not in ("CITYGML_TOOLS_REPO", "CITYGML_RELEASES_API", "CITYGML_INSTALL_TAG")}
+        out = subprocess.run(["bash", "-c", defs, str(SCRIPT)], capture_output=True, text=True, env=clean).stdout.split()
+        self.assertEqual(out, ["https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh",
+                               "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30"])
+        out = subprocess.run(["bash", "-c", defs, str(SCRIPT)], capture_output=True, text=True,
+                             env=dict(clean, CITYGML_TOOLS_REPO="o/r")).stdout.split()
+        self.assertEqual(out, ["https://raw.githubusercontent.com/o/r/install-v1/install/citygml.sh",
+                               "https://api.github.com/repos/o/r/releases?per_page=30"])
+        ps1 = (SCRIPT.parent / "citygml.ps1").read_text(encoding="utf-8")
+        self.assertIn('$toolsRepo = if ($env:CITYGML_TOOLS_REPO) { $env:CITYGML_TOOLS_REPO } else { "4dcitygml/tools" }', ps1)
+        self.assertIn('raw.githubusercontent.com/$toolsRepo/$installTag/install/citygml.ps1', ps1)
+        self.assertIn('api.github.com/repos/$toolsRepo/releases?per_page=30', ps1)
+
     def test_default_city_follows_the_language(self):
         for lang, city in (("ja_JP.UTF-8", "sample-tokyo-station"), ("de_DE.UTF-8", "sample-munich-station"), ("en_US.UTF-8", "sample-newyork-station")):
             r = self.run_script(LANG=lang)

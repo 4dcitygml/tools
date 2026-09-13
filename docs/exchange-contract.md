@@ -79,7 +79,8 @@ language can read and write them with stock git tooling.
   instead. The accepted values are exactly: `lifecycle` (merge/split/rebuild),
   `layout` (mesh subdivision with an unchanged ID set), `source-baseline`
   (initial source recording), `scope-extract` (removing non-target
-  municipalities).
+  municipalities), `practice-reset` (a practice repository returning to its
+  baseline).
   - `lifecycle` commits MUST also carry exactly one
     `Lifecycle-Manifest: provenance/lifecycle/<event>.json@sha256:<hex>`
     trailer; the manifest lists the old→new IDs, the reason, and the evidence
@@ -88,6 +89,12 @@ language can read and write them with stock git tooling.
   - `scope-extract` commits MUST carry exactly one
     `Scope-Municipality: <municipality code>` trailer naming the municipality
     being kept, and MUST NOT list per-building trailers.
+  - `practice-reset` commits MUST carry exactly one `Reset-To: <commit>`
+    trailer, MUST NOT list per-building trailers, MUST leave the repository's
+    data directories (`data_dirs` in `4dcitygml.json`, else the PLATEAU
+    layout and `provenance/`) exactly as that commit holds them (the gate
+    compares blob ids), and MUST NOT change anything outside them. History is
+    never rewritten: a reset is an ordinary pull request that a person merges.
 - `identity-baseline` and `identity-correction` (replacing a building's
   `uro:buildingID`, one building per commit, with `Building-ID-From:` /
   `Building-ID-To:` / `Identity-Evidence:` trailers) are used by bulk
@@ -102,7 +109,7 @@ language can read and write them with stock git tooling.
 - The complete list of trailers the commit scope gate reads: `Building:`,
   `Building-Added:`, `Building-Deleted:`, `Change-Type:`, `Scope-Municipality:`,
   `Lifecycle-Manifest:`, `Provenance-Manifest:`, `Building-ID-From:`,
-  `Building-ID-To:`, `Corrects:`. `Identity-Evidence:` is read from the
+  `Building-ID-To:`, `Corrects:`, `Reset-To:`. `Identity-Evidence:` is read from the
   provenance manifest, not from the commit. Trailers that official tools emit
   for human readers but no gate reads: `Created-By:` (Part B),
   `Carry-Forward-From:` and `Source-To:` (carry-forward commits). Any other
@@ -262,9 +269,14 @@ parsed.
 | `<!-- citygml-automatic-inspection -->` | Inspection summary, one `<!--cp:key-->` row per gate (A6). |
 | `<!-- citygml-change-summary -->` | Table of changed values derived from the diff (tool-independent). |
 | `<!-- citygml-commit-scope -->`, `<!-- citygml-reviewability-lint -->`, `<!-- citygml-quality-lint -->` | Detailed findings of the `commit-scope`, `minimal-diff` and `file-scope` / `structure` gates. |
-| `<!-- citygml-base-freshness -->` | The PR is behind main and must be updated. |
+| `<!-- citygml-base-freshness -->` | The PR is behind main and must be updated. A state comment: one per PR, edited between `<!-- status:active -->` and `<!-- status:resolved -->`. |
 | `<!-- citygml-auto-resubmission -->` | CI asked the proposer to fix and resubmit. |
 | `<!-- citygml-ci-retry-request -->` | A re-inspection request (A8; written by clients, read by CI). |
+
+Analysis comments carry `<!-- citygml-ci-context:<digest>:<run>:<attempt> -->`,
+naming the run and PR context they belong to; clients trust them by that stamp
+and by the bot identity. State comments (base freshness) belong to no run and
+are trusted by the bot identity alone.
 
 Check runs on the head commit: `analyze` (the inspection run) and, where the
 city publishes machine reports, `ci-report`. GitHub's required-checks setting

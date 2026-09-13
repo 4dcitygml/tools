@@ -266,7 +266,7 @@ def main(argv=None):
     g = sub.add_parser('generate')
     for key in ('repository', 'mesh', 'municipality', 'current', 'rationale', 'product', 'tools-commit', 'plan-issue', 'output'):
         g.add_argument('--' + key, required=True)
-    g.add_argument('--tools-repo', default='4dcitygml/tools')
+    g.add_argument('--tools-repo', default=os.environ.get('CITYGML_TOOLS_REPO') or '4dcitygml/tools')
     g.add_argument('--current-uri'); g.add_argument('--rationale-uri'); g.add_argument('--apply-output'); g.add_argument('--report')
     a = sub.add_parser('apply'); a.add_argument('--manifest', required=True); a.add_argument('--input', required=True); a.add_argument('--output', required=True)
     c = sub.add_parser('commits'); c.add_argument('--manifest', required=True); c.add_argument('--repo', required=True)

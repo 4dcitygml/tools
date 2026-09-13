@@ -24,10 +24,11 @@ param([string]$City = "", [switch]$FetchLatest)
 $ErrorActionPreference = "Stop"
 
 $installTag = if ($env:CITYGML_INSTALL_TAG) { $env:CITYGML_INSTALL_TAG } else { "install-v1" }
-$selfUrl = "https://raw.githubusercontent.com/4dcitygml/tools/$installTag/install/citygml.ps1"
+$toolsRepo = if ($env:CITYGML_TOOLS_REPO) { $env:CITYGML_TOOLS_REPO } else { "4dcitygml/tools" }   # the repository that publishes the releases and this script
+$selfUrl = "https://raw.githubusercontent.com/$toolsRepo/$installTag/install/citygml.ps1"
 $toolsDir = if ($env:CITYGML_TOOLS_DIR) { $env:CITYGML_TOOLS_DIR } else { Join-Path $env:USERPROFILE "Documents\citygml-tools" }
 $hubs = Join-Path $toolsDir "citygml-hub"
-$releasesApi = if ($env:CITYGML_RELEASES_API) { $env:CITYGML_RELEASES_API } else { "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30" }
+$releasesApi = if ($env:CITYGML_RELEASES_API) { $env:CITYGML_RELEASES_API } else { "https://api.github.com/repos/$toolsRepo/releases?per_page=30" }
 
 # 1. City: argument, else a practice city by language.
 if (-not $City -and -not $FetchLatest) {

@@ -41,11 +41,12 @@ on:
       - 'tools/tex_editor/**'
       - 'tools/i18n/**'
       - 'tools/themes/**'
+      - 'scripts/pr_classification.py'
       - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to upload directly to specified Release without using Actions temp storage (e.g. hub-v1.1.0)'
+        description: 'Existing hub-v tag whose Release receives the packages (built, then published after the production approval)'
         required: false
         type: string
 
@@ -97,6 +98,7 @@ jobs:
             tools/tex_editor
             tools/i18n
             tools/themes
+            scripts
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
         working-directory: tools/hub
@@ -194,6 +196,9 @@ jobs:
               # Everything below is hidden in program/
               z.write("../app.py", f"{LIB}/hub.py")
               z.write("../operator_explanation.py", f"{LIB}/operator_explanation.py")
+              z.write(repo_root / "scripts" / "pr_classification.py", f"{LIB}/pr_classification.py")
+              z.write(repo_root / "tools" / "runtime.py", f"{LIB}/runtime.py")
+              z.write(repo_root / "tools" / "git_sync.py", f"{LIB}/git_sync.py")
               z.write("../index.html", f"{LIB}/index.html")
               z.write("../review.html", f"{LIB}/review.html")
               z.write("../packaging/start-windows.bat", f"{LIB}/start-windows.bat")
@@ -245,6 +250,9 @@ jobs:
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
               f"{LIB}/operator_explanation.py",
+              f"{LIB}/pr_classification.py",
+              f"{LIB}/runtime.py",
+              f"{LIB}/git_sync.py",
               f"{LIB}/attr_editor/app.py",
               f"{LIB}/attr_editor/index.html",
               f"{LIB}/tex_editor/app.py",
@@ -266,7 +274,7 @@ jobs:
               raise RuntimeError(f"Distribution zip has unexpected items at top level: {top - allowed_top}")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
           print(f"{artifacts[0].name} sha256={digest}")
-      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
+      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs, classification table)
         shell: python
         working-directory: tools/hub/dist
         run: |
@@ -285,10 +293,14 @@ jobs:
                   found = owner._tool_app(fake, hub.TOOLS[key])
                   if not found or program not in found.parents:
                       raise RuntimeError(f"{key} does not resolve inside program/: {found}")
-              if hub.i18n_module() is None:
+              if hub.runtime.i18n_module() is None:
                   raise RuntimeError("language pack not found next to the hub")
-              if hub.theme_module() is None:
+              if hub.runtime.theme_module() is None:
                   raise RuntimeError("theme pack not found next to the hub")
+              if hub.runtime.git_sync_module() is None:
+                  raise RuntimeError("git_sync module not found next to the hub")
+              if hub.classification_module() is None:
+                  raise RuntimeError("classification table not found next to the hub")
               catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
               if catalogs != ["de.json", "en.json", "ja.json"]:
                   raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
@@ -326,9 +338,9 @@ jobs:
           spec.loader.exec_module(hub)
 
           expected_git = (lib / "PortableGit" / "cmd" / "git.exe").resolve()
-          if pathlib.Path(hub.git_cmd()[0]).resolve() != expected_git:
+          if pathlib.Path(hub.runtime.git_cmd()[0]).resolve() != expected_git:
               raise SystemExit("hub cannot detect bundled MinGit")
-          py_exe, bundled = hub.python_cmd()
+          py_exe, bundled = hub.runtime.python_cmd()
           if not bundled or pathlib.Path(py_exe).resolve().parent != (lib / "PythonPortable").resolve():
               raise SystemExit("hub cannot detect bundled PythonPortable")
           if hub.Hub(smoke_repo)._git("rev-parse", "--is-inside-work-tree") != "true":
@@ -339,22 +351,11 @@ jobs:
           & $py $check $lib $smoke
           if ($LASTEXITCODE -ne 0) { throw "Bundled bundle verification failed" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        # On PRs, only assemble and verify. Do not depend on artifact storage quota.
-        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        # On PRs, only assemble and verify. The package is handed to the gated release job.
+        if: github.event_name != 'pull_request'
         with:
           name: hub-windows
           path: tools/hub/dist/citygml-hub-*-windows-full.zip
-      - name: Upload Windows package directly to requested Release
-        if: inputs.release_tag != ''
-        shell: bash
-        working-directory: tools/hub/dist
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          version="${RELEASE_TAG#*-}"
-          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-windows-full.zip"
 
   macos-zip:
     needs: validate-release
@@ -373,6 +374,7 @@ jobs:
             tools/tex_editor
             tools/i18n
             tools/themes
+            scripts
       - name: Assemble macOS zip
         # Info-ZIP's zip sometimes does not set the UTF-8 flag (EFS) on Japanese file
         # names, so build with Python's zipfile (non-ASCII names always get EFS).
@@ -408,6 +410,9 @@ jobs:
               # The full body is hidden in program/ (the .command looks in the adjacent program/)
               add(z, f"{base}/app.py", f"{LIB}/hub.py")
               add(z, f"{base}/operator_explanation.py", f"{LIB}/operator_explanation.py")
+              add(z, "scripts/pr_classification.py", f"{LIB}/pr_classification.py")
+              add(z, "tools/runtime.py", f"{LIB}/runtime.py")
+              add(z, "tools/git_sync.py", f"{LIB}/git_sync.py")
               add(z, f"{base}/index.html", f"{LIB}/index.html")
               add(z, f"{base}/review.html", f"{LIB}/review.html")
               add(z, f"{base}/preset.json", f"{LIB}/preset.json")
@@ -445,6 +450,9 @@ jobs:
               f"{LIB}/NOTICE",
               f"{LIB}/THIRD_PARTY_NOTICES.md",
               f"{LIB}/operator_explanation.py",
+              f"{LIB}/pr_classification.py",
+              f"{LIB}/runtime.py",
+              f"{LIB}/git_sync.py",
               f"{LIB}/attr_editor/app.py",
               f"{LIB}/attr_editor/index.html",
               f"{LIB}/tex_editor/app.py",
@@ -461,7 +469,7 @@ jobs:
               raise RuntimeError("start-mac.command does not have execute bit")
           digest = hashlib.sha256(artifacts[0].read_bytes()).hexdigest()
           print(f"{artifacts[0].name} sha256={digest}")
-      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs)
+      - name: Smoke-test the archive (extract, import the hub, resolve editors, language and theme packs, classification table)
         shell: python
         run: |
           import importlib.util, inspect, pathlib, tempfile, types, zipfile
@@ -479,48 +487,47 @@ jobs:
                   found = owner._tool_app(fake, hub.TOOLS[key])
                   if not found or program not in found.parents:
                       raise RuntimeError(f"{key} does not resolve inside program/: {found}")
-              if hub.i18n_module() is None:
+              if hub.runtime.i18n_module() is None:
                   raise RuntimeError("language pack not found next to the hub")
-              if hub.theme_module() is None:
+              if hub.runtime.theme_module() is None:
                   raise RuntimeError("theme pack not found next to the hub")
+              if hub.runtime.git_sync_module() is None:
+                  raise RuntimeError("git_sync module not found next to the hub")
+              if hub.classification_module() is None:
+                  raise RuntimeError("classification table not found next to the hub")
               catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / "hub").glob("*.json"))
               if catalogs != ["de.json", "en.json", "ja.json"]:
                   raise RuntimeError(f"hub catalogs incomplete: {catalogs}")
           print(f"smoke test passed for {archive.name}")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        # On PRs, only assemble and verify. Do not depend on artifact storage quota.
-        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        # On PRs, only assemble and verify. The package is handed to the gated release job.
+        if: github.event_name != 'pull_request'
         with:
           name: hub-macos
           path: citygml-hub-*-macos.zip
-      - name: Upload macOS package directly to requested Release
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          version="${RELEASE_TAG#*-}"
-          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-macos.zip"
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/hub-v')
+    # The only job that publishes. It runs in the `production` environment, so it waits
+    # for the deployment approval (docs/production-protection.md); the builds and smoke
+    # tests above run unattended and nothing reaches users before that approval.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/hub-v')) || inputs.release_tag != ''
     needs: [windows, macos-zip]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: hub-*
           path: dist
           merge-multiple: true
-      - name: Create release and upload versioned packages
+      - name: Create the release for a pushed tag, then upload the versioned packages
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          version="${GITHUB_REF_NAME#*-}"
+          version="${RELEASE_TAG#*-}"
           windows="dist/citygml-hub-${version}-windows-full.zip"
           macos="dist/citygml-hub-${version}-macos.zip"
           test -f "$windows"
@@ -534,9 +541,11 @@ jobs:
             (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")
             echo '```'
           } > notes.md
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # A manual run names an existing Release; only a pushed tag creates one.
+            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $RELEASE_TAG does not exist"; exit 1; }
+            gh release create "$RELEASE_TAG" --verify-tag \
               --title "4dcitygml Hub ${version}" \
               --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" "$windows" "$macos"
+          gh release upload "$RELEASE_TAG" "$windows" "$macos"

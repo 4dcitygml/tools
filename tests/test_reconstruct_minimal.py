@@ -56,6 +56,16 @@ def _reindent(raw: bytes) -> bytes:
 
 
 class TestBuildingSpans(unittest.TestCase):
+    def test_default_namespace_members_are_found(self):
+        # CityGML 1.0 data (Munich) writes <cityObjectMember> in the default namespace
+        raw = _model(_bldg("A"), _bldg("B")).replace(b"core:cityObjectMember", b"cityObjectMember")
+        self.assertEqual(sorted(building_spans(raw)), ["A", "B"])
+        head = raw.replace(b"<bldg:storeysAboveGround>3</bldg:storeysAboveGround>",
+                           b"<bldg:storeysAboveGround>4</bldg:storeysAboveGround>", 1)
+        result = reconstruct(raw, head)
+        self.assertEqual(result.modified, ["A"])
+        self.assertEqual(result.output, head)
+
     def test_spans_cover_only_their_building(self):
         raw = _model(_bldg("A"), _bldg("B"))
         spans = building_spans(raw)

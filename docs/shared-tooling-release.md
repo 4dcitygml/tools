@@ -14,7 +14,10 @@ Two independent release series serve different destinations. Confirm published a
 builds and smoke-tests the common source. Each workflow accepts only its own
 series for publication, including a manually requested tag. A manual dispatch
 on a branch with the release tag left empty builds without publishing a Release.
-Existing assets are not silently overwritten on a rerun.
+Existing assets are not silently overwritten on a rerun. In every release
+workflow the builds and smoke tests run unattended and only one job publishes;
+that job runs in the `production` environment and waits for the maintainer's
+deployment approval (see [production protection](production-protection.md)).
 
 Hub releases keep their existing tag and asset naming. The first
 independent tools release is `tools-v1.1.0`. The two series may advance

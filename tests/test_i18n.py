@@ -222,9 +222,25 @@ class TestAppIntegration(_EnvGuard):
         attr = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(attr)
         os.environ["CITYGML_LANG"] = "de"
-        out = attr.localized_html(b"<html><head></head><body></body></html>")
+        out = attr.runtime.localized_html(b"<html><head></head><body></body></html>", "attr_editor")
         self.assertIn("Textur".encode(), out)
         self.assertIn(b'window.LANG = "de";', out)
+
+    def test_every_app_follows_the_shared_lang_setting(self):
+        # Runtime contract: `lang` in the shared settings file is the UI language of
+        # every tool (after CITYGML_LANG, before the OS locale); the hub included.
+        spec = importlib.util.spec_from_file_location(
+            "attr_app_i18n_setting", REPO_ROOT / "tools" / "attr_editor" / "app.py")
+        attr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(attr)
+        saved = attr.runtime.load_config
+        attr.runtime.load_config = lambda: {"lang": "ja"}
+        try:
+            for app in ("hub", "attr_editor", "tex_editor"):
+                out = attr.runtime.localized_html(b"<html><head></head><body></body></html>", app)
+                self.assertIn(b'window.LANG = "ja";', out, app)
+        finally:
+            attr.runtime.load_config = saved
 
 
 if __name__ == "__main__":

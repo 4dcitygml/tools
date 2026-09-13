@@ -262,14 +262,18 @@ class TestAttributeEditorFirstUse(unittest.TestCase):
 
 
 class TestAttributeEditorReleaseWorkflow(unittest.TestCase):
-    def test_packages_upload_directly_to_release_without_actions_artifacts(self):
-        workflow = (
-            REPO_ROOT / ".github" / "workflows" / "release-attr-editor.yml"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("actions/upload-artifact", workflow)
-        self.assertIn("release_tag:", workflow)
-        self.assertIn('gh release upload "$RELEASE_TAG"', workflow)
-        self.assertIn("only verify the build", workflow)
+    def test_publishing_is_one_job_gated_by_the_production_environment(self):
+        # docs/production-protection.md: builds and smoke tests run unattended; the
+        # only job that touches a Release waits for the production approval.
+        for name in ("release-hub.yml", "release-tools.yml", "release-attr-editor.yml"):
+            workflow = (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+            self.assertEqual(workflow.count("environment: production"), 1, name)
+            release_job = workflow[workflow.index("\n  release:\n"):]
+            self.assertIn("environment: production", release_job, name)
+            self.assertEqual(workflow.count("gh release upload"), 1, name)
+            self.assertIn("gh release upload", release_job, name)
+            self.assertIn("release_tag:", workflow, name)
+            self.assertIn('RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}', release_job, name)
 
 
 class TestEditor3DPreviews(unittest.TestCase):
@@ -517,12 +521,12 @@ class TestSavedOAuthPrCreation(_EnglishEnv):
         attr.load_hub_token = lambda: "saved-token"
         def fake_api(path, token, method="GET", payload=None, timeout=30):
             captured.update(path=path, payload=payload)
-            return 201, {"html_url": "https://github.com/munakata-city/citygml/pull/1"}
+            return 201, {"html_url": "https://github.com/example-city/citygml/pull/1"}
         attr.github_api = fake_api
-        with patch.object(attr, 'upstream_nwo', return_value='munakata-city/citygml'):
+        with patch.object(attr.runtime, 'upstream_nwo', return_value='example-city/citygml'):
             self.repo._create_pr_api('edit/b-1', 'title', 'body')
         self.assertFalse(captured['payload']['draft'])
-        self.assertEqual(captured['path'], '/repos/munakata-city/citygml/pulls')
+        self.assertEqual(captured['path'], '/repos/example-city/citygml/pulls')
 
     def test_manual_fallback_compares_fork_branch_to_upstream_main(self):
         self.assertEqual(
@@ -758,10 +762,18 @@ class TestWindowsBundle(unittest.TestCase):
             self.assertEqual(self.workflow.count(entry), 2, entry)
         # the sparse checkout of both build jobs must materialise the bundled directories
         self.assertEqual(self.workflow.count("            tools/tex_editor\n            tools/i18n\n            tools/themes\n"), 2)
-        hub = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
-        self.assertIn('APP_DIR / "i18n" / "i18n_loader.py"', hub)
-        self.assertIn('APP_DIR / "themes" / "theme_loader.py"', hub)
-        self.assertIn("for cand in (APP_DIR / rel, APP_DIR.parent / rel)", hub)
+        # the A5 classification table travels with the hub (review_kind delegates to it)
+        self.assertEqual(self.workflow.count("            tools/themes\n            scripts\n"), 2)
+        self.assertEqual(self.workflow.count('f"{LIB}/pr_classification.py"'), 4)
+        # the shared runtime and the sync module sit next to hub.py (imported by name)
+        for entry in ('f"{LIB}/runtime.py"', 'f"{LIB}/git_sync.py"'):
+            self.assertEqual(self.workflow.count(entry), 4, entry)
+        # the packs and the editors are resolved from the runtime's own folder (program/ or tools/)
+        runtime_src = (REPO_ROOT / "tools" / "runtime.py").read_text(encoding="utf-8")
+        self.assertIn('PROGRAM_DIR / "i18n" / "i18n_loader.py"', runtime_src)
+        self.assertIn('PROGRAM_DIR / "themes" / "theme_loader.py"', runtime_src)
+        hub_src = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
+        self.assertIn('runtime.PROGRAM_DIR / Path(t["path"]).relative_to("tools")', hub_src)
 
     def test_release_uses_pinned_mingit_and_python_and_size_gate(self):
         # A5/A7: build-time downloads are pinned by version URL + SHA-256 and
@@ -805,8 +817,9 @@ class TestWindowsBundle(unittest.TestCase):
         self.assertNotIn("start-windows.exe", self.workflow)
 
     def test_bundle_dirs_include_hidden_program_directory(self):
-        self.assertIn(hub.EXE_DIR / hub.LIB_SUBDIR, hub.BUNDLE_DIRS)
-        self.assertIn(attr.EXE_DIR / attr.LIB_SUBDIR, attr.BUNDLE_DIRS)
+        runtime = hub.runtime
+        self.assertIs(attr.runtime, runtime)  # one runtime module for every tool
+        self.assertIn(runtime.PROGRAM_DIR / runtime.LIB_SUBDIR, runtime.BUNDLE_DIRS)
 
     def test_hub_and_attr_resolve_git_from_program_directory(self):
         with tempfile.TemporaryDirectory() as d:
@@ -815,20 +828,20 @@ class TestWindowsBundle(unittest.TestCase):
             bundled.parent.mkdir(parents=True)
             bundled.touch()
 
-            old_which = hub.shutil.which
-            old_hub_dirs, old_hub_resolved = hub.BUNDLE_DIRS, hub._git_resolved
-            old_attr_dirs, old_attr_resolved = attr.BUNDLE_DIRS, attr._git_resolved
+            old_which = hub.runtime.shutil.which
+            old_hub_dirs, old_hub_resolved = hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved
+            old_attr_dirs, old_attr_resolved = attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved
             try:
-                hub.shutil.which = lambda _name: None
-                hub.BUNDLE_DIRS = [root, root / "program"]
-                attr.BUNDLE_DIRS = [root, root / "program"]
-                hub._git_resolved = attr._git_resolved = None
-                self.assertEqual(Path(hub.git_cmd()[0]), bundled)
-                self.assertEqual(Path(attr.git_cmd()[0]), bundled)
+                hub.runtime.shutil.which = lambda _name: None
+                hub.runtime.BUNDLE_DIRS = [root, root / "program"]
+                attr.runtime.BUNDLE_DIRS = [root, root / "program"]
+                hub.runtime._git_resolved = attr.runtime._git_resolved = None
+                self.assertEqual(Path(hub.runtime.git_cmd()[0]), bundled)
+                self.assertEqual(Path(attr.runtime.git_cmd()[0]), bundled)
             finally:
-                hub.shutil.which = old_which
-                hub.BUNDLE_DIRS, hub._git_resolved = old_hub_dirs, old_hub_resolved
-                attr.BUNDLE_DIRS, attr._git_resolved = old_attr_dirs, old_attr_resolved
+                hub.runtime.shutil.which = old_which
+                hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved = old_hub_dirs, old_hub_resolved
+                attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved = old_attr_dirs, old_attr_resolved
 
     def test_configured_system_git_is_preferred_to_bundle(self):
         with tempfile.TemporaryDirectory() as d:
@@ -837,20 +850,20 @@ class TestWindowsBundle(unittest.TestCase):
             bundled.touch()
             system = str(Path(d) / "system" / "git.exe")
 
-            old_which = hub.shutil.which
-            old_hub = (hub.BUNDLE_DIRS, hub._git_resolved, hub._system_git_is_configured)
-            old_attr = (attr.BUNDLE_DIRS, attr._git_resolved, attr._system_git_is_configured)
+            old_which = hub.runtime.shutil.which
+            old_hub = (hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved, hub.runtime._system_git_is_configured)
+            old_attr = (attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved, attr.runtime._system_git_is_configured)
             try:
-                hub.shutil.which = lambda _name: system
-                hub.BUNDLE_DIRS = attr.BUNDLE_DIRS = [Path(d)]
-                hub._git_resolved = attr._git_resolved = None
-                hub._system_git_is_configured = attr._system_git_is_configured = lambda _exe: True
-                self.assertEqual(hub.git_cmd(), (system, False))
-                self.assertEqual(attr.git_cmd(), (system, False))
+                hub.runtime.shutil.which = lambda _name: system
+                hub.runtime.BUNDLE_DIRS = attr.runtime.BUNDLE_DIRS = [Path(d)]
+                hub.runtime._git_resolved = attr.runtime._git_resolved = None
+                hub.runtime._system_git_is_configured = attr.runtime._system_git_is_configured = lambda _exe: True
+                self.assertEqual(hub.runtime.git_cmd(), (system, False))
+                self.assertEqual(attr.runtime.git_cmd(), (system, False))
             finally:
-                hub.shutil.which = old_which
-                hub.BUNDLE_DIRS, hub._git_resolved, hub._system_git_is_configured = old_hub
-                attr.BUNDLE_DIRS, attr._git_resolved, attr._system_git_is_configured = old_attr
+                hub.runtime.shutil.which = old_which
+                hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved, hub.runtime._system_git_is_configured = old_hub
+                attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved, attr.runtime._system_git_is_configured = old_attr
 
     def test_unconfigured_system_git_falls_back_to_bundle(self):
         with tempfile.TemporaryDirectory() as d:
@@ -859,71 +872,71 @@ class TestWindowsBundle(unittest.TestCase):
             bundled.touch()
             system = str(Path(d) / "system" / "git.exe")
 
-            old_which = hub.shutil.which
-            old_hub = (hub.BUNDLE_DIRS, hub._git_resolved, hub._system_git_is_configured)
-            old_attr = (attr.BUNDLE_DIRS, attr._git_resolved, attr._system_git_is_configured)
+            old_which = hub.runtime.shutil.which
+            old_hub = (hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved, hub.runtime._system_git_is_configured)
+            old_attr = (attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved, attr.runtime._system_git_is_configured)
             try:
-                hub.shutil.which = lambda _name: system
-                hub.BUNDLE_DIRS = attr.BUNDLE_DIRS = [Path(d)]
-                hub._git_resolved = attr._git_resolved = None
-                hub._system_git_is_configured = attr._system_git_is_configured = lambda _exe: False
-                self.assertEqual(hub.git_cmd(), (str(bundled), True))
-                self.assertEqual(attr.git_cmd(), (str(bundled), True))
+                hub.runtime.shutil.which = lambda _name: system
+                hub.runtime.BUNDLE_DIRS = attr.runtime.BUNDLE_DIRS = [Path(d)]
+                hub.runtime._git_resolved = attr.runtime._git_resolved = None
+                hub.runtime._system_git_is_configured = attr.runtime._system_git_is_configured = lambda _exe: False
+                self.assertEqual(hub.runtime.git_cmd(), (str(bundled), True))
+                self.assertEqual(attr.runtime.git_cmd(), (str(bundled), True))
             finally:
-                hub.shutil.which = old_which
-                hub.BUNDLE_DIRS, hub._git_resolved, hub._system_git_is_configured = old_hub
-                attr.BUNDLE_DIRS, attr._git_resolved, attr._system_git_is_configured = old_attr
+                hub.runtime.shutil.which = old_which
+                hub.runtime.BUNDLE_DIRS, hub.runtime._git_resolved, hub.runtime._system_git_is_configured = old_hub
+                attr.runtime.BUNDLE_DIRS, attr.runtime._git_resolved, attr.runtime._system_git_is_configured = old_attr
 
     def test_system_git_keeps_its_credential_helper(self):
-        old_cmd, old_cred = hub.git_cmd, hub.GIT_CRED_PATH
+        old_cmd, old_cred = hub.runtime.git_cmd, hub.runtime.GIT_CRED_PATH
         try:
             with tempfile.TemporaryDirectory() as d:
                 cred = Path(d) / "credentials"
-                hub.GIT_CRED_PATH = cred
-                hub.git_cmd = lambda: ("C:/Program Files/Git/cmd/git.exe", False)
+                hub.runtime.GIT_CRED_PATH = cred
+                hub.runtime.git_cmd = lambda: ("C:/Program Files/Git/cmd/git.exe", False)
                 self.assertEqual(
-                    hub.git_base_args(net=True),
+                    hub.runtime.git_base_args(net=True),
                     ["C:/Program Files/Git/cmd/git.exe"],
                 )
                 hub.write_git_credentials("secret-token")
                 self.assertFalse(cred.exists())
         finally:
-            hub.git_cmd, hub.GIT_CRED_PATH = old_cmd, old_cred
+            hub.runtime.git_cmd, hub.runtime.GIT_CRED_PATH = old_cmd, old_cred
 
     def test_bundled_git_uses_hub_credential_file_without_global_config(self):
-        old_hub = (hub.git_cmd, hub.GIT_CRED_PATH)
-        old_attr = (attr.git_cmd, attr.GIT_CRED_PATH)
+        old_hub = (hub.runtime.git_cmd, hub.runtime.GIT_CRED_PATH)
+        old_attr = (attr.runtime.git_cmd, attr.runtime.GIT_CRED_PATH)
         try:
             with tempfile.TemporaryDirectory(prefix="git credentials ") as d:
                 cred = Path(d) / "credentials"
-                hub.GIT_CRED_PATH = attr.GIT_CRED_PATH = cred
-                hub.git_cmd = attr.git_cmd = lambda: ("C:/bundle/git.exe", True)
+                hub.runtime.GIT_CRED_PATH = attr.runtime.GIT_CRED_PATH = cred
+                hub.runtime.git_cmd = attr.runtime.git_cmd = lambda: ("C:/bundle/git.exe", True)
                 hub.write_git_credentials("secret-token")
 
                 self.assertEqual(
                     cred.read_text(encoding="utf-8"),
                     "https://x-access-token:secret-token@github.com\n",
                 )
-                for args in (hub.git_base_args(net=True), attr.git_base_args(net=True)):
+                for args in (hub.runtime.git_base_args(net=True), attr.runtime.git_base_args(net=True)):
                     self.assertEqual(args[0], "C:/bundle/git.exe")
                     self.assertIn("credential.helper=", args)
                     self.assertTrue(any("credential.https://github.com.helper=store --file=" in a
                                         and "'" in a for a in args))
         finally:
-            hub.git_cmd, hub.GIT_CRED_PATH = old_hub
-            attr.git_cmd, attr.GIT_CRED_PATH = old_attr
+            hub.runtime.git_cmd, hub.runtime.GIT_CRED_PATH = old_hub
+            attr.runtime.git_cmd, attr.runtime.GIT_CRED_PATH = old_attr
 
     def test_hub_repo_commands_use_resolved_git(self):
         seen = []
-        old_cmd, old_run = hub.git_cmd, hub.subprocess.run
-        hub.git_cmd = lambda: ("/bundle/PortableGit/cmd/git.exe", True)
+        old_cmd, old_run = hub.runtime.git_cmd, hub.subprocess.run
+        hub.runtime.git_cmd = lambda: ("/bundle/PortableGit/cmd/git.exe", True)
         hub.subprocess.run = lambda args, **kwargs: (
             seen.append(args) or SimpleNamespace(returncode=0, stdout="true\n"))
         try:
             with tempfile.TemporaryDirectory() as d:
                 self.assertEqual(hub.Hub(Path(d))._git("status"), "true")
         finally:
-            hub.git_cmd, hub.subprocess.run = old_cmd, old_run
+            hub.runtime.git_cmd, hub.subprocess.run = old_cmd, old_run
         self.assertEqual(seen[0][0], "/bundle/PortableGit/cmd/git.exe")
 
 class TestAuthFlow(_EnglishEnv):
@@ -1030,7 +1043,7 @@ class TestFork(unittest.TestCase):
             hub.github_user, hub.gh_api = orig_user, orig_api
 
     def test_upstream_nwo(self):
-        self.assertEqual(hub.upstream_nwo(), "4dcitygml/sample-tokyo-station")
+        self.assertEqual(hub.runtime.upstream_nwo(), "4dcitygml/sample-tokyo-station")
 
 
 class TestUpstreamAccess(unittest.TestCase):
@@ -1120,7 +1133,7 @@ class TestGitConfig(unittest.TestCase):
         self.assertEqual(set(hub.git_identity()), {"name", "email"})
 
     def test_system_git_requires_global_name_and_email(self):
-        exe = hub.shutil.which("git")
+        exe = hub.runtime.shutil.which("git")
         if not exe:
             self.skipTest("git is not installed")
         with tempfile.TemporaryDirectory() as d:
@@ -1128,14 +1141,14 @@ class TestGitConfig(unittest.TestCase):
             old = os.environ.get("GIT_CONFIG_GLOBAL")
             os.environ["GIT_CONFIG_GLOBAL"] = str(gc)
             try:
-                self.assertFalse(hub._system_git_is_configured(exe))
+                self.assertFalse(hub.runtime._system_git_is_configured(exe))
                 hub.subprocess.run([exe, "config", "--global", "user.name", "Taro Test"], check=True)
-                self.assertFalse(hub._system_git_is_configured(exe))
+                self.assertFalse(hub.runtime._system_git_is_configured(exe))
                 hub.subprocess.run(
                     [exe, "config", "--global", "user.email", "taro@example.com"], check=True
                 )
-                self.assertTrue(hub._system_git_is_configured(exe))
-                self.assertTrue(attr._system_git_is_configured(exe))
+                self.assertTrue(hub.runtime._system_git_is_configured(exe))
+                self.assertTrue(attr.runtime._system_git_is_configured(exe))
             finally:
                 if old is None:
                     os.environ.pop("GIT_CONFIG_GLOBAL", None)
@@ -1161,13 +1174,13 @@ class TestGitConfig(unittest.TestCase):
             self.assertIn("taro@example.com", txt)
 
     def test_attr_config_write_failure_does_not_break_activation(self):
-        old = attr.CONFIG_PATH
+        old = attr.runtime.CONFIG_PATH
         try:
             with tempfile.TemporaryDirectory() as d:
-                attr.CONFIG_PATH = Path(d)  # write_text on a directory raises OSError
-                attr.save_config({"repo": "C:/data/sample-tokyo-station"})
+                attr.runtime.CONFIG_PATH = Path(d)  # write_text on a directory raises OSError
+                attr.runtime.save_config({"repo": "C:/data/sample-tokyo-station"})
         finally:
-            attr.CONFIG_PATH = old
+            attr.runtime.CONFIG_PATH = old
 
     def test_git_config_set_requires_both(self):
         self.assertIsNotNone(hub.git_config_set("", ""))
@@ -1358,7 +1371,7 @@ class TestPreset(unittest.TestCase):
     def test_shipped_preset_has_client_id(self):
         # The preset.json bundled in the distribution zip (tools/hub/preset.json) must be readable.
         # Without it the device flow cannot start and first-time setup stalls.
-        cid = hub.load_preset().get("oauthClientId")
+        cid = hub.runtime.load_preset(hub.APP_DIR).get("oauthClientId")
         if not cid:
             # This skip disappears once the value is set after creating the 4dcitygml OAuth App (M4 of the launch steps).
             # Must be set before the first Release (this test is the distribution gate).
@@ -1367,11 +1380,11 @@ class TestPreset(unittest.TestCase):
 
     def test_preset_has_no_client_secret(self):
         # The device flow needs no client_secret; keep it out (prevents leakage).
-        self.assertNotIn("oauthClientSecret", hub.load_preset())
+        self.assertNotIn("oauthClientSecret", hub.runtime.load_preset(hub.APP_DIR))
 
     def test_preset_has_no_mode(self):
         # Public operation only (private/invitation modes removed in #9); no mode key at all.
-        self.assertNotIn("mode", hub.load_preset())
+        self.assertNotIn("mode", hub.runtime.load_preset(hub.APP_DIR))
 
 
 if __name__ == "__main__":

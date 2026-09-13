@@ -17,7 +17,8 @@ the existing lint's changed-buildings-only scope). Pre-existing defects are
 tolerated as the baseline.
 
 Toolchain (all OSS, no FME needed):
-    Extract changed buildings -> project EPSG:6697->UTM (pyproj, metric) -> convert to CityJSON (citygml-tools)
+    Extract changed buildings -> project the city's CRS (4dcitygml.json `crs`) to a metric UTM zone when it is not
+    already a metric projection (pyproj) -> convert to CityJSON (citygml-tools)
     -> val3dity (--planarity_d2p_tol 0.03 = compliant with §6.3 L12) -> compare report validity per building
 
 External tools are specified via environment variables (CI provides them; if unset, default names on PATH):
@@ -50,7 +51,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_constants import VAL3DITY_MARKER, VAL3DITY_PLANARITY_D2P_M  # noqa: E402
-from scripts.diff_citygml import GML_NS, _gml_id, _local, load_buildings  # noqa: E402
+from scripts.diff_citygml import _gml_id, _local, load_buildings  # noqa: E402
 from scripts.citygml_lint import _changed_ids  # noqa: E402
 from scripts.safe_xml import safe_fromstring  # noqa: E402
 
@@ -107,15 +108,45 @@ def _subset_root(xml_bytes: bytes, ids: set) -> Optional[etree._Element]:
     return root if kept else None
 
 
-def _centroid_lonlat(root: etree._Element) -> Optional[tuple]:
-    """Get a representative (lon, lat) from the Envelope or the first posList (for UTM zone selection)."""
+def _city_crs(repo: Path) -> str:
+    """The CRS the city's data is written in (4dcitygml.json `crs`; PLATEAU's EPSG:6697 by default)."""
+    try:
+        value = json.loads((Path(repo) / "4dcitygml.json").read_text(encoding="utf-8")).get("crs")
+    except (OSError, ValueError, AttributeError):
+        value = None
+    return str(value) if value else "EPSG:6697"
+
+
+def _lat_first(crs: str) -> bool:
+    """Whether coordinates in the data are written latitude first (EPSG:6697 is lat lon h; projected CRSs are x y z)."""
+    from pyproj import CRS
+    return str(CRS(crs).axis_info[0].direction).lower().startswith("north")
+
+
+def _first_point(root: etree._Element) -> Optional[tuple]:
+    """A representative coordinate triple as written (Envelope corner or the first posList/pos)."""
     for tag in ("lowerCorner", "posList", "pos"):
         for el in root.iter():
             if _local(el)[1] == tag and el.text:
                 t = el.text.split()
                 if len(t) >= 3:
-                    return (float(t[1]), float(t[0]))  # (lon, lat) <- PLATEAU is lat lon h
+                    return (float(t[0]), float(t[1]), float(t[2]))
     return None
+
+
+def _target_crs(src_crs: str, root: etree._Element) -> Optional[str]:
+    """The metric CRS val3dity should see: None when the data is already a metric projection
+    (nothing to do), else the UTM zone of the data's location."""
+    from pyproj import CRS, Transformer
+    src = CRS(src_crs)
+    if src.is_projected and str(src.axis_info[0].unit_name).lower().startswith("met"):
+        return None
+    point = _first_point(root)
+    if point is None:
+        return None
+    x, y = (point[1], point[0]) if _lat_first(src_crs) else (point[0], point[1])
+    lon, lat = Transformer.from_crs(src, "EPSG:4326", always_xy=True).transform(x, y)
+    return _utm_epsg(lon, lat)
 
 
 def _utm_epsg(lon: float, lat: float) -> str:
@@ -128,40 +159,41 @@ def _utm_epsg(lon: float, lat: float) -> str:
     return f"EPSG:{info[0].code}"
 
 
-def _reproject(root: etree._Element, dst_epsg: str) -> None:
-    """Project posList etc. from EPSG:6697 (lat lon h) to dst_epsg (meters) (always_xy)."""
+def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
+    """Project posList etc. from the city's CRS to dst_epsg (meters, x y z), and name dst_epsg in every srsName."""
     from pyproj import Transformer
-    tr = Transformer.from_crs("EPSG:6697", dst_epsg, always_xy=True)
+    tr = Transformer.from_crs(src_crs, dst_epsg, always_xy=True)
+    lat_first = _lat_first(src_crs)
     for el in root.iter():
         if not isinstance(el.tag, str) or _local(el)[1] not in _COORD_TAGS or not el.text:
             continue
         t = el.text.split()
         if not t or len(t) % 3:
             continue
-        lats = [float(t[i]) for i in range(0, len(t), 3)]
-        lons = [float(t[i + 1]) for i in range(0, len(t), 3)]
+        a = [float(t[i]) for i in range(0, len(t), 3)]
+        b = [float(t[i + 1]) for i in range(0, len(t), 3)]
         hs = [float(t[i + 2]) for i in range(0, len(t), 3)]
-        xs, ys, zs = tr.transform(lons, lats, hs)
+        xs, ys = (b, a) if lat_first else (a, b)
+        xs, ys, zs = tr.transform(xs, ys, hs)
         el.text = " ".join(f"{v:.4f}" for xyz in zip(xs, ys, zs) for v in xyz)
     for el in root.iter():
-        v = el.get("srsName")
-        if v and "6697" in v:
-            el.set("srsName", dst_epsg.split(":")[-1].join(v.split("6697")))
+        if isinstance(el.tag, str) and el.get("srsName"):
+            el.set("srsName", dst_epsg)
 
 
 # --- Running val3dity -------------------------------------------------------
-def _validate_ids(xml_bytes: bytes, ids: set, work: Path) -> Optional[dict]:
-    """Extract the buildings in `ids` -> project -> CityJSON -> val3dity, returning {building_id: {"valid":bool,"codes":[...]}}.
+def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: str = "EPSG:6697") -> Optional[dict]:
+    """Extract the buildings in `ids` -> project to meters when needed -> CityJSON -> val3dity,
+    returning {building_id: {"valid":bool,"codes":[...]}}.
 
     None when there is nothing to extract or a tool fails (= undecidable, skip).
     """
     root = _subset_root(xml_bytes, ids)
     if root is None:
         return None
-    c = _centroid_lonlat(root)
-    if c is None:
-        return None
-    _reproject(root, _utm_epsg(c[0], c[1]))
+    target = _target_crs(src_crs, root)
+    if target is not None:
+        _reproject(root, src_crs, target)
     gml = work / "subset.gml"
     gml.write_bytes(etree.tostring(root, xml_declaration=True, encoding="UTF-8"))
     # CityGML → CityJSON
@@ -193,6 +225,7 @@ def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
     regressions: list = []
     checked = 0
     skipped = 0
+    src_crs = _city_crs(repo)
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for rel in gml_files:
@@ -205,11 +238,11 @@ def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
             changed = _changed_ids(old_map, new_map)
             if not changed:
                 continue
-            head_v = _validate_ids(head_bytes, changed, work)
+            head_v = _validate_ids(head_bytes, changed, work, src_crs)
             if head_v is None:
                 skipped += 1
                 continue
-            base_v = _validate_ids(base_bytes, changed & set(old_map), work) if base_bytes else {}
+            base_v = _validate_ids(base_bytes, changed & set(old_map), work, src_crs) if base_bytes else {}
             base_v = base_v or {}
             checked += len(head_v)
             regressions.extend(find_regressions(head_v, base_v, rel))
@@ -251,14 +284,14 @@ def render(result: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _local_files(paths: list, work: Path) -> dict:
+def _local_files(paths: list, work: Path, src_crs: str = "EPSG:6697") -> dict:
     """Local: validate all buildings of each file (baseline health)."""
     total = invalid = 0
     per_file = []
     for p in paths:
         b = Path(p).read_bytes()
         ids = set(load_buildings(b))
-        v = _validate_ids(b, ids, work)
+        v = _validate_ids(b, ids, work, src_crs)
         if v is None:
             per_file.append((p, None, None)); continue
         inv = [(k, x["codes"]) for k, x in v.items() if not x["valid"]]
@@ -275,6 +308,7 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--head-sha", default=None)
     p.add_argument("--file-list", type=Path, default=None)
     p.add_argument("--enforce", action="store_true", help="Exit 1 if regressions found (default: advisory)")
+    p.add_argument("--crs", default=None, help="CRS of the data (default: `crs` in <repo>/4dcitygml.json, else EPSG:6697)")
     args = p.parse_args(argv)
 
     missing = _tools_available()
@@ -293,7 +327,7 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.files:
         with tempfile.TemporaryDirectory() as td:
-            res = _local_files(args.files, Path(td))
+            res = _local_files(args.files, Path(td), args.crs or _city_crs(args.repo))
         for path, n, inv in res["per_file"]:
             if n is None:
                 print(f"{path}: Skipped (extraction/tool unavailable)"); continue

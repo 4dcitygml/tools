@@ -84,7 +84,7 @@ class TestRealCodelist(unittest.TestCase):
     def test_real_bridge_function_has_unknown(self):
         p = REPO_ROOT / "13101_chiyoda-ku_pref_2023_citygml_1_op" / "codelists" / "Bridge_function.xml"
         if not p.exists():
-            self.skipTest("codelists 未収録の環境")
+            self.skipTest("PLATEAU codelists are not present in this environment")
         table = load_codelist(p)
         self.assertTrue(any(is_unknown_label(v) for v in table.values()),
                         "Bridge_function に不明コードがあるはず")

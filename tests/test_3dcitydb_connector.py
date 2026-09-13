@@ -100,12 +100,12 @@ class ConnectorTests(unittest.TestCase):
             building_id=building_id,
             reason="現地確認による修正",
             source="2026年度調査",
-            public_author="citydatawalker",
+            public_author="example-user",
         )
         body = connector.render_pr_body(plan, proposal)
         self.assertIn("<!--sec:reason-->", body)
         self.assertIn(building_id, body)
-        self.assertIn("citydatawalker", body)
+        self.assertIn("example-user", body)
         self.assertIn("2026年度調査", body)
 
     def test_normalize_default_core_namespace(self) -> None:
@@ -153,7 +153,7 @@ class ConnectorTests(unittest.TestCase):
             building_id=plan.modified[0],
             reason="geometry correction",
             source="survey",
-            public_author="citydatawalker",
+            public_author="example-user",
         )
         with self.assertRaises(connector.SyncError):
             connector.create_proposal(self.config(geometry), plan, proposal)

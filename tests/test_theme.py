@@ -114,7 +114,7 @@ class TestAppIntegration(unittest.TestCase):
         spec.loader.exec_module(attr)
         d = Path(tempfile.mkdtemp())
         (d / "theme.json").write_text('{"extends": "us"}', encoding="utf-8")
-        out = attr.themed_html(b"<html><head></head><body></body></html>", d)
+        out = attr.runtime.themed_html(b"<html><head></head><body></body></html>", d)
         self.assertIn(b"--accent: #0039a6;", out)
 
     def test_attr_editor_ignores_broken_theme(self):
@@ -126,7 +126,7 @@ class TestAppIntegration(unittest.TestCase):
         (d / "theme.json").write_text('{"extends": "wa", "tokens": {"accent": "bad"}}',
                                       encoding="utf-8")
         html = b"<html><head></head><body></body></html>"
-        self.assertEqual(attr.themed_html(html, d), html)  # broken theme is ignored and served plain
+        self.assertEqual(attr.runtime.themed_html(html, d), html)  # broken theme is ignored and served plain
 
 
 if __name__ == "__main__":

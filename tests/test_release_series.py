@@ -43,7 +43,8 @@ class ReleaseSeriesTest(unittest.TestCase):
         for series in ['hub','tools']:
             text=self.workflow(series)
             self.assertIn(f"tags: ['{series}-v*']", text)
-            self.assertIn(f"if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/{series}-v')",text)
+            # one publish job per series: a pushed series tag, or a manual run naming an existing Release
+            self.assertIn(f"if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/{series}-v')) || inputs.release_tag != ''",text)
             self.assertNotIn('--clobber',text)
         hub=self.workflow('hub'); common=self.workflow('tools')
         self.assertNotIn('citygml-tools-${version}-source.zip',hub)

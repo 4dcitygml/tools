@@ -16,9 +16,11 @@ except ImportError:      # the pin audit script is not published yet
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-TEMPLATE = ROOT / "city-template"
-SAMPLES = sorted(ROOT.glob("sample-*-station"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ROOT = REPO_ROOT.parent
+SIBLING_SUFFIX = REPO_ROOT.name.removeprefix("tools")   # sibling checkouts share this checkout's suffix
+TEMPLATE = ROOT / ("city-template" + SIBLING_SUFFIX)
+SAMPLES = sorted(ROOT.glob("sample-*-station" + SIBLING_SUFFIX))
 MIRRORED = ("pr-analysis.yml", "pr-comment.yml", "pr-recheck.yml", "pr-base-freshness.yml", "history-index.yml",
             "review-report.yml")   # the starter kit is gone (hub-v1.2.0); review-report is compared where a repository has it
 

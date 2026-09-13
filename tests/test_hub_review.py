@@ -115,9 +115,19 @@ class TestReviewParsers(_EnglishEnv):
 
     def test_editor_pr_kind(self):
         self.assertEqual(hub.review_kind(example_pr()), "attribute")
-        tex = example_pr()
-        tex["title"] = "テクスチャ更新(2面): 13101-bldg-1"
+        tex = example_pr()  # a manual PR: no branch prefix, the title decides
+        tex["title"], tex["head"]["ref"] = "テクスチャ更新(2面): 13101-bldg-1", "feature-x"
         self.assertEqual(hub.review_kind(tex), "texture")
+        # One table for CI and the hub (scripts/pr_classification.py): branch prefixes
+        # win, and what CI cannot classify is shown as `other`.
+        geom = example_pr()
+        geom["title"], geom["head"]["ref"] = "Rebuilt block", "geom/13101-bldg-1"
+        self.assertEqual(hub.review_kind(geom), "geometry")
+        other = example_pr()
+        other["title"], other["head"]["ref"] = "Notes on the survey", "misc/notes"
+        self.assertEqual(hub.review_kind(other), "other")
+        explicit = dict(other, review_kind="texture")
+        self.assertEqual(hub.review_kind(explicit), "texture")
 
     def test_markdown_change_table(self):
         tables = hub.markdown_tables(example_pr()["body"])
@@ -252,6 +262,25 @@ class TestReviewParsers(_EnglishEnv):
         retry = hub.ci_retry_info("fail", stale_comment)
         self.assertFalse(retry["available"])
         self.assertEqual(retry["kind"], "update")
+
+
+    def test_state_comments_are_trusted_by_bot_identity_alone(self):
+        # pr-base-freshness.yml keeps one comment per PR and edits it between active and
+        # resolved; it never carries an analysis stamp, so the stamp filter must not drop it.
+        bot = {"login": "github-actions[bot]", "type": "Bot"}
+        freshness = {"user": bot, "body": (
+            "<!-- citygml-base-freshness -->\n<!-- status:active -->\n"
+            "Please incorporate the latest version.")}
+        forged = {"user": {"login": "proposer", "type": "User"}, "body": freshness["body"]}
+        old_analysis = {"user": bot, "body": "<!-- citygml-commit-scope -->\n<!-- citygml-ci-context:old:1:1 -->\n"}
+        report = {"context": {"head": "abc123"}, "runId": 50, "runAttempt": 1, "checks": []}
+        for explanation in ({"required": True, "reason": "current", "report": report},
+                            {"required": True, "reason": "report-unavailable"}):
+            trusted = hub.trusted_ci_comments([freshness, forged, old_analysis], explanation)
+            self.assertIn(freshness, trusted, explanation["reason"])
+            self.assertNotIn(forged, trusted)
+            self.assertNotIn(old_analysis, trusted)
+            self.assertEqual(hub.ci_retry_info("fail", trusted)["kind"], "update")
 
 
 class TestReviewApiModel(_EnglishEnv):

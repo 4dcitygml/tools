@@ -79,3 +79,49 @@ class TestRender(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestCityCrs(unittest.TestCase):
+    """The gate projects to meters only when the city's CRS is not already a metric projection."""
+
+    def setUp(self):
+        try:
+            import pyproj  # noqa: F401
+        except Exception:
+            self.skipTest("pyproj not installed")
+
+    @staticmethod
+    def _root(corner: str):
+        from scripts.safe_xml import safe_fromstring
+        return safe_fromstring((
+            '<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" xmlns:gml="http://www.opengis.net/gml">'
+            f'<gml:boundedBy><gml:Envelope srsName="x"><gml:lowerCorner>{corner}</gml:lowerCorner></gml:Envelope>'
+            '</gml:boundedBy></core:CityModel>').encode())
+
+    def test_metric_projection_is_used_as_is(self):
+        from scripts.val3dity_gate import _target_crs
+        self.assertIsNone(_target_crs("EPSG:25832", self._root("691004.92 5334557.80 518.7")))   # Munich, UTM 32N
+
+    def test_geographic_and_foot_projections_go_to_utm(self):
+        from scripts.val3dity_gate import _target_crs
+        self.assertEqual(_target_crs("EPSG:6697", self._root("35.68 139.77 10")), "EPSG:32654")       # Tokyo, lat lon h
+        self.assertEqual(_target_crs("EPSG:2263", self._root("988847.9 211227.4 8.6")), "EPSG:32618")  # New York, ftUS
+
+    def test_reprojection_respects_axis_order_and_names_the_target(self):
+        from scripts.val3dity_gate import _reproject
+        root = self._root("988847.9 211227.4 8.6")
+        _reproject(root, "EPSG:2263", "EPSG:32618")
+        x, y, z = (float(v) for v in root.find(".//{http://www.opengis.net/gml}lowerCorner").text.split())
+        self.assertTrue(580000 < x < 590000 and 4505000 < y < 4515000, (x, y))   # Manhattan in UTM 18N meters
+        self.assertAlmostEqual(z, 8.6, places=3)
+        self.assertEqual(root.find(".//{http://www.opengis.net/gml}Envelope").get("srsName"), "EPSG:32618")
+
+    def test_city_crs_defaults_to_plateau(self):
+        import tempfile
+        from pathlib import Path
+        from scripts.val3dity_gate import _city_crs
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_city_crs(Path(d)), "EPSG:6697")
+            (Path(d) / "4dcitygml.json").write_text('{"crs": "EPSG:2263"}', encoding="utf-8")
+            self.assertEqual(_city_crs(Path(d)), "EPSG:2263")

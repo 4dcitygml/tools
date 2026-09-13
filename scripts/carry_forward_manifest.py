@@ -26,7 +26,8 @@ Keys split by an edition change (registry predecessor/successors) distribute
 the single old value to each successor present. Multi-valued keys (repeated
 elements) with a local change are reported as conflicts (manual).
 
-Subcommands: generate / apply / commits / verify (same shape as identity_manifest.py).
+Subcommands: generate / apply / commits / verify, on the command skeleton shared
+through scripts/provenance_manifest.py.
 The product is the new official file with the reapplied values; commits are
 one `Building:` commit per building, gated like source-update.
 """
@@ -50,9 +51,11 @@ from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
 from scripts import codelist_crosswalk as X  # noqa: E402
 from scripts import semantic_registry as R  # noqa: E402
 from scripts.identity_manifest import _environment, _file_material, load_edition  # noqa: E402
-from scripts.provenance_manifest import canonical_bytes, manifest_ref, sha256_hex, validate  # noqa: E402
+from scripts.provenance_manifest import (  # noqa: E402
+    changes_by_building, commit_series, committed_manifest, compare_reproduction, locate_materials,
+    manifest_ref, schema_errors, sha256_hex, write_generated)
 from scripts.reconstruct_minimal import _tag_localname, building_spans  # noqa: E402
-from scripts.source_update_manifest import _unique_leaf, apply_changes_to_member, apply_manifest  # noqa: E402
+from scripts.source_update_manifest import _unique_leaf, apply_manifest, per_building_steps  # noqa: E402
 
 
 def _values_by_key(attrs: dict[str, str], edition: str, member: bytes | None = None) -> dict[str, list[str]]:
@@ -232,18 +235,6 @@ def build_manifest(args: argparse.Namespace) -> tuple[dict, bytes]:
     return manifest, product
 
 
-def _reproducible_view(manifest: dict) -> dict:
-    return {"kind": manifest["kind"], "scope": manifest["scope"], "products": manifest["products"], "evidence": manifest["evidence"],
-            "materials": [{k: m[k] for k in ("name", "sha256", "bytes")} for m in manifest["materials"]]}
-
-
-def changes_by_building(manifest: dict) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {}
-    for c in manifest["evidence"]["changes"]:
-        out.setdefault(c["id"], []).append({k: v for k, v in c.items() if k != "id"})
-    return out
-
-
 def commit_message(stable: str, changes: list[dict], edition_from: str, edition_to: str, manifest_path: str, manifest_bytes: bytes) -> str:
     labels = ", ".join(f"{c['from_key']}: {c['old']} → {c['new']}" for c in changes[:3])
     more = f" (+{len(changes) - 3} more)" if len(changes) > 3 else ""
@@ -255,15 +246,9 @@ def commit_message(stable: str, changes: list[dict], edition_from: str, edition_
 
 def cmd_generate(args: argparse.Namespace) -> int:
     manifest, product = build_manifest(args)
-    errors = validate(manifest)
-    if errors:
-        print("manifest does not conform to the schema:\n  " + "\n  ".join(errors), file=sys.stderr)
-        return 2
-    data = (json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True) + "\n").encode("utf-8")
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_bytes(data)
-    if args.apply_output:
-        Path(args.apply_output).write_bytes(product)
+    code = write_generated(manifest, args.output, product, args.apply_output)
+    if code:
+        return code
     ev = manifest["evidence"]
     print(json.dumps({"output": args.output, "editions": [ev["edition_from"], ev["edition_to"]], "shared": ev["shared"], "counts": ev["counts"],
                       "summary": ev["summary"], "lifecycle": {k: len(v) for k, v in ev["lifecycle"].items()}}, ensure_ascii=False))
@@ -282,13 +267,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 def cmd_commits(args: argparse.Namespace) -> int:
     repo = Path(args.repo)
-    manifest_path = Path(args.manifest)
-    manifest_bytes = manifest_path.read_bytes()
-    manifest = json.loads(manifest_bytes.decode("utf-8"))
-    rel_manifest = manifest_path.resolve().relative_to(repo.resolve()).as_posix()
+    manifest, manifest_bytes, rel_manifest = committed_manifest(repo, Path(args.manifest))
     product = manifest["products"][0]["path"]
     target = repo / product
-    per_building = changes_by_building(manifest)
     edition_from = manifest["scope"]["edition_from"]
     if manifest["evidence"].get("carried_old_codespace"):
         # carried codes point at codelists/<edition_from>/<file>: keep those lists in the repository first
@@ -305,44 +286,20 @@ def cmd_commits(args: argparse.Namespace) -> int:
                        input=(f"Keep the {edition_from} code lists for codes carried with their old codeSpace\n\n"
                               f"Provenance-Manifest: {manifest_ref(rel_manifest, manifest_bytes)}\nCreated-By: carry_forward_manifest.py/carry-forward\n").encode(), check=True)
     current = load_edition(target, manifest["scope"]["municipality"])
-    gml_ids = {s: b.id for s, b in current.items()}
-    raw = target.read_bytes()
-    spans = building_spans(raw)
-    for stable in sorted(manifest["evidence"]["targets"], key=lambda s: spans[gml_ids[s]][0], reverse=True):
-        start, end = spans[gml_ids[stable]]
-        raw = raw[:start] + apply_changes_to_member(raw[start:end], per_building[stable]) + raw[end:]
-        target.write_bytes(raw)
-        subprocess.run(["git", "-C", str(repo), "-c", "core.looseCompression=1", "add", "--", product, rel_manifest], check=True)
-        message = commit_message(stable, per_building[stable], manifest["scope"]["edition_from"], manifest["scope"]["edition_to"], rel_manifest, manifest_bytes)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-F", "-"], input=message.encode(), check=True)
-    subprocess.run(["git", "-C", str(repo), "gc", "-q"], check=False)
-    final = sha256_hex(target.read_bytes())
-    if final != manifest["products"][0]["sha256"]:
-        print(f"::error::product digest after applying all changes {final} != manifest {manifest['products'][0]['sha256']}", file=sys.stderr)
-        return 1
-    print(f"{len(manifest['evidence']['targets'])} commits created; product digest matches the manifest")
-    return 0
+    edition_to = manifest["scope"]["edition_to"]
+    steps = per_building_steps(
+        target.read_bytes(), manifest["evidence"]["targets"], {s: b.id for s, b in current.items()},
+        changes_by_building(manifest),
+        lambda stable, changes: commit_message(stable, changes, edition_from, edition_to, rel_manifest, manifest_bytes))
+    return commit_series(repo, product, rel_manifest, steps, manifest["products"][0]["sha256"], "changes")
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     committed = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    errors = validate(committed)
-    if errors:
-        print("::error::manifest schema: " + "; ".join(errors[:5]))
+    if schema_errors(committed):
         return 1
     if getattr(args, "materials_dir", None):
-        import urllib.parse
-        import urllib.request
-        located: dict[str, str] = {}
-        for material in committed["materials"]:
-            uri = urllib.parse.urlparse(material["uri"])
-            members = material.get("members") or []
-            if members:
-                located[material["name"]] = str(Path(args.materials_dir) / members[0]["path"])
-            elif uri.scheme == "file":
-                located[material["name"]] = urllib.request.url2pathname(uri.path)
-            else:
-                located[material["name"]] = str(Path(args.materials_dir) / material["name"])
+        located = locate_materials(committed, args.materials_dir)
         args.base, args.current, args.new = located["base"], located["current"], located["new"]
     if not all(getattr(args, k, None) for k in ("base", "current", "new")):
         print("::error::verify needs --base/--current/--new or --materials-dir")
@@ -357,14 +314,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     args.crosswalk = getattr(args, "crosswalk", None)
     args.overrides = getattr(args, "overrides", None)
     regenerated, _product = build_manifest(args)
-    a, b = _reproducible_view(committed), _reproducible_view(regenerated)
-    if canonical_bytes(a) != canonical_bytes(b):
-        for key in a:
-            if canonical_bytes(a[key]) != canonical_bytes(b[key]):
-                print(f"::error::reproduction mismatch in '{key}'")
-        return 1
-    print("reproduction: OK (materials, evidence, and products regenerate identically)")
-    return 0
+    return compare_reproduction(committed, regenerated)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -375,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--base", required=True); g.add_argument("--current", required=True); g.add_argument("--new", required=True)
     g.add_argument("--edition-from"); g.add_argument("--edition-to")
     g.add_argument("--base-uri"); g.add_argument("--current-uri"); g.add_argument("--new-uri")
-    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default="4dcitygml/tools"); g.add_argument("--tools-commit", required=True)
+    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools"); g.add_argument("--tools-commit", required=True)
     g.add_argument("--plan-issue", required=True); g.add_argument("--seed", type=int, default=20260903); g.add_argument("--sample-size", type=int, default=30)
     g.add_argument("--crosswalk", help="code-list crosswalk JSON (default: semantics/codelists/<from>__<to>.json in tools)")
     g.add_argument("--overrides", help="the city's reviewed code rules (semantics/overrides.json in the city repository)")
