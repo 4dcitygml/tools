@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Existing tools-v tag to upload to an existing Release; leave empty on a branch to build without publishing'
+        description: 'Existing tools-v tag whose Release receives the source archive (built, then published after the production approval); leave empty to build without publishing'
         required: false
         type: string
 
@@ -91,38 +91,34 @@ jobs:
           python -I scripts/commit_building_scope.py --help
           python -I scripts/validate_citygml.py --help
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        # On PRs, only build and verify. The archive is handed to the gated release job.
+        if: github.event_name != 'pull_request'
         with:
           name: tools-source
           path: ${{ runner.temp }}/common-tools-dist/*.zip
-      - name: Upload common-tools source to requested Release
-        if: inputs.release_tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          version="${RELEASE_TAG#*-}"
-          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/common-tools-dist/citygml-tools-${version}-source.zip"
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/tools-v')
+    # The only job that publishes. It runs in the `production` environment, so it waits
+    # for the deployment approval (docs/production-protection.md); the builds and smoke
+    # tests above run unattended and nothing reaches users before that approval.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/tools-v')) || inputs.release_tag != ''
     needs: common-tools
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tools-source
           path: dist
-      - name: Create tools release and upload source archive
+      - name: Create the release for a pushed tag, then upload the source archive
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#tools-}"
+          version="${RELEASE_TAG#tools-}"
           common="dist/citygml-tools-${version}-source.zip"
           test -f "$common"
           {
@@ -134,8 +130,10 @@ jobs:
             (cd dist && sha256sum "citygml-tools-${version}-source.zip")
             echo '```'
           } > notes.md
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --latest=false \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # A manual run names an existing Release; only a pushed tag creates one.
+            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $RELEASE_TAG does not exist"; exit 1; }
+            gh release create "$RELEASE_TAG" --verify-tag --latest=false \
               --title "4dcitygml tools ${version}" --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" "$common"
+          gh release upload "$RELEASE_TAG" "$common"

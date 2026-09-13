@@ -10,7 +10,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# The city side of the report contract lives in the city-template repository, expected
+# as a sibling checkout named like this one (tools -> city-template; a suffixed checkout
+# tools<suffix> -> city-template<suffix>). Without it these tests skip.
+SIBLING_SUFFIX = REPO_ROOT.name.removeprefix('tools')
+
+
+def sibling(repo_name):
+    """The same-generation checkout of another 4dcitygml repository next to this one."""
+    return REPO_ROOT.parent / (repo_name + SIBLING_SUFFIX)
+
+
+CITY_TEMPLATE = sibling('city-template')
+CITY_SCRIPTS = CITY_TEMPLATE / '.github' / 'scripts'
+if not CITY_SCRIPTS.is_dir():
+    raise unittest.SkipTest(f"city-template checkout not found next to this repository: {CITY_TEMPLATE}")
 
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -18,14 +33,14 @@ def load(name, path):
     spec.loader.exec_module(module)
     return module
 
-gate = load('report_contract', ROOT/'tools/tools/hub/operator_explanation.py')
+gate = load('report_contract', REPO_ROOT/'tools/hub/operator_explanation.py')
 with patch.dict(sys.modules, {'operator_explanation':gate}):
-    runner = load('report_gate', ROOT/'city-template/.github/scripts/check_review_report.py')
+    runner = load('report_gate', CITY_SCRIPTS/'check_review_report.py')
 with patch.dict(sys.modules, {'operator_explanation':gate,'check_review_report':runner}):
-    publisher = load('report_publisher', ROOT/'city-template/.github/scripts/publish_review_report.py')
+    publisher = load('report_publisher', CITY_SCRIPTS/'publish_review_report.py')
 
 SHA='a'*40
-REPO='munakata-city/citygml'
+REPO='example-city/citygml'
 KEYS=['reason','classification','commit-scope','scope-reproducibility','reproduction','freshness','file-scope','schema','minimal-diff','texture','structure','plausibility','topology','model']
 
 def fixture(number=7):
@@ -130,9 +145,9 @@ class ReportContractTest(unittest.TestCase):
         self.assertFalse(gate.required('4dcitygml/sample-tokyo-station'))
         self.assertTrue(gate.required('proposer/sample-tokyo-station'))
     def test_mirrored_contract(self):
-        expected=(ROOT/'tools/tools/hub/operator_explanation.py').read_bytes()
+        expected=(REPO_ROOT/'tools/hub/operator_explanation.py').read_bytes()
         for repo in ['city-template','sample-tokyo-station','sample-munich-station','sample-newyork-station']:
-            self.assertEqual(expected,(ROOT/repo/'.github/scripts/operator_explanation.py').read_bytes())
+            self.assertEqual(expected,(sibling(repo)/'.github/scripts/operator_explanation.py').read_bytes())
 
 
 class GateTransitionsTest(unittest.TestCase):

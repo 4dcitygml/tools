@@ -51,36 +51,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.diff_citygml import diff_sources  # noqa: E402
 
-_COM_OPEN = b"<core:cityObjectMember>"
-_COM_CLOSE = b"</core:cityObjectMember>"
-_CITYMODEL_CLOSE = b"</core:CityModel>"
-
-# Extract gml:id from a Building (1.0/2.0, any prefix) inside a cityObjectMember.
-_BUILDING_ID_RE = re.compile(rb'<(?:\w+:)?Building\b[^>]*?\sgml:id="([^"]+)"')
-
-
-# --- Byte-span extraction ---------------------------------------------------
-def building_spans(raw: bytes) -> dict[str, tuple[int, int]]:
-    """Return gml:id -> [start, end) of the core:cityObjectMember containing that building.
-
-    end is just past `</core:cityObjectMember>`. Members without a Building
-    (terrain etc.) are out of scope (= left untouched).
-    """
-    spans: dict[str, tuple[int, int]] = {}
-    pos = 0
-    while True:
-        start = raw.find(_COM_OPEN, pos)
-        if start < 0:
-            break
-        close = raw.find(_COM_CLOSE, start)
-        if close < 0:
-            break
-        end = close + len(_COM_CLOSE)
-        m = _BUILDING_ID_RE.search(raw, start, end)
-        if m:
-            spans[m.group(1).decode("utf-8")] = (start, end)
-        pos = end
-    return spans
+# Member spans and the file's own spelling of cityObjectMember come from the shared identity module
+# (PLATEAU writes <core:cityObjectMember>, CityGML 1.0 data often the default-namespace <cityObjectMember>).
+from scripts.building_identity import building_spans, citymodel_close, member_markers  # noqa: E402,F401
 
 
 def _tag_localname(path: str) -> str:
@@ -248,13 +221,14 @@ def reconstruct(base: bytes, head: bytes) -> Result:
     # --- Insert new blocks for added buildings (right after the last member, or just before the CityModel close) -------
     insert_ids = added
     if insert_ids:
-        last_close = base.rfind(_COM_CLOSE)
+        com_open, com_close = member_markers(base)
+        last_close = base.rfind(com_close)
         if last_close >= 0:
-            anchor = last_close + len(_COM_CLOSE)
-            last_open = base.rfind(_COM_OPEN, 0, last_close)
+            anchor = last_close + len(com_close)
+            last_open = base.rfind(com_open, 0, last_close)
             eol, indent = _eol_and_indent(base, last_open if last_open >= 0 else anchor)
         else:
-            cm = base.rfind(_CITYMODEL_CLOSE)
+            cm = citymodel_close(base)
             anchor = cm if cm >= 0 else len(base)
             eol, indent = (b"\r\n" if b"\r\n" in base else b"\n"), b"\t"
         blocks = b""

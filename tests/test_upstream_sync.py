@@ -95,9 +95,9 @@ def advance_upstream(up: Path, relpath: str = "docs/note.txt",
 
 
 class _SyncFixture(unittest.TestCase):
-    """One upstream + one clone; both module copies (attr / hub) point at it."""
+    """One upstream + one clone; the runtime shared by attr and hub points at it."""
 
-    modules = (attr, hub)
+    modules = (attr.runtime,)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -115,6 +115,29 @@ class _SyncFixture(unittest.TestCase):
 
 
 class TestStartupSync(_SyncFixture):
+    def test_sync_targets_the_clones_own_city_not_the_environment(self):
+        # CITYGML_UPSTREAM only selects which clone to open (runtime contract); the hub
+        # passes it on to the editors it launches. A local path cannot stand in for a
+        # city repository here, so the resolution request is observed instead.
+        seen = []
+
+        def resolve(root=None, ignore_env=False, _u=self.up, **_kw):
+            seen.append(ignore_env)
+            return str(_u)
+
+        saved = os.environ.get("CITYGML_UPSTREAM")
+        os.environ["CITYGML_UPSTREAM"] = "other-city/citygml"
+        try:
+            attr.runtime.upstream_url = resolve
+            advance_upstream(self.up, "docs/env.txt")
+            self.assertIsNotNone(attr.runtime.sync_upstream_main(self.clone))
+        finally:
+            if saved is None:
+                os.environ.pop("CITYGML_UPSTREAM", None)
+            else:
+                os.environ["CITYGML_UPSTREAM"] = saved
+        self.assertEqual(seen, [True])
+
     def test_fast_forward(self):
         for i, m in enumerate(self.modules):
             with self.subTest(module=m.__name__):
@@ -130,7 +153,7 @@ class TestStartupSync(_SyncFixture):
         git(self.up, "commit", "-q", "--amend", "-m", "rewritten (daily reset)")
         new = git(self.up, "rev-parse", "HEAD")
         self.assertNotEqual(old, new)
-        got = attr.sync_upstream_main(self.clone)
+        got = attr.runtime.sync_upstream_main(self.clone)
         self.assertEqual(got, new)
         self.assertEqual(git(self.clone, "rev-parse", "main"), new)
 
@@ -139,7 +162,7 @@ class TestStartupSync(_SyncFixture):
         gml = self.clone / "city/udx/bldg/53394611_bldg_6697_op.gml"
         gml.write_text(GML + "<!-- local -->", encoding="utf-8")
         before = git(self.clone, "rev-parse", "main")
-        self.assertIsNone(attr.sync_upstream_main(self.clone))
+        self.assertIsNone(attr.runtime.sync_upstream_main(self.clone))
         self.assertEqual(git(self.clone, "rev-parse", "main"), before)
         self.assertIn("<!-- local -->", gml.read_text(encoding="utf-8"))
 
@@ -147,7 +170,7 @@ class TestStartupSync(_SyncFixture):
         new = advance_upstream(self.up)
         extra = self.clone / "scratch.txt"
         extra.write_text("keep me", encoding="utf-8")
-        self.assertEqual(attr.sync_upstream_main(self.clone), new)
+        self.assertEqual(attr.runtime.sync_upstream_main(self.clone), new)
         self.assertEqual(extra.read_text(encoding="utf-8"), "keep me")
 
     def test_on_branch_moves_main_ref_only(self):
@@ -156,13 +179,13 @@ class TestStartupSync(_SyncFixture):
         marker.write_text("wip", encoding="utf-8")
         git(self.clone, "add", "wip.txt")
         new = advance_upstream(self.up)
-        self.assertEqual(attr.sync_upstream_main(self.clone), new)
+        self.assertEqual(attr.runtime.sync_upstream_main(self.clone), new)
         self.assertEqual(git(self.clone, "rev-parse", "main"), new)
         self.assertEqual(git(self.clone, "rev-parse", "--abbrev-ref", "HEAD"), "edit/x")
         self.assertTrue(marker.is_file())  # the working tree was not touched
 
     def test_unreachable_upstream_is_silent(self):
-        attr_url, hub_url = attr.upstream_url, hub.upstream_url
+        attr_url, hub_url = attr.runtime.upstream_url, hub.runtime.upstream_url
         for m in self.modules:
             m.upstream_url = lambda root=None, **_kw: str(Path(self.temp.name) / "nope")
         try:
@@ -172,12 +195,12 @@ class TestStartupSync(_SyncFixture):
                     self.assertIsNone(m.sync_upstream_main(self.clone))
             self.assertEqual(git(self.clone, "rev-parse", "main"), before)
         finally:
-            attr.upstream_url, hub.upstream_url = attr_url, hub_url
+            attr.runtime.upstream_url, hub.runtime.upstream_url = attr_url, hub_url
 
     def test_plain_folder_is_silent(self):
         plain = Path(self.temp.name) / "plain"
         plain.mkdir()
-        self.assertIsNone(attr.sync_upstream_main(plain))
+        self.assertIsNone(attr.runtime.sync_upstream_main(plain))
 
 
 class TestPrBranchBase(_SyncFixture):

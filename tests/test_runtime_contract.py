@@ -40,14 +40,14 @@ class TestContractArtifacts(unittest.TestCase):
 
     def test_editor_settings_write_merges(self):
         with tempfile.TemporaryDirectory() as tmp:
-            saved = attr.CONFIG_PATH
-            attr.CONFIG_PATH = Path(tmp) / "config.json"
+            saved = attr.runtime.CONFIG_PATH
+            attr.runtime.CONFIG_PATH = Path(tmp) / "config.json"
             try:
-                attr.CONFIG_PATH.write_text(json.dumps({"cities": {"o/r": {"repo": "/x"}}, "lang": "de"}))
-                attr.save_config({"repo": "/x"})
-                cfg = json.loads(attr.CONFIG_PATH.read_text())
+                attr.runtime.CONFIG_PATH.write_text(json.dumps({"cities": {"o/r": {"repo": "/x"}}, "lang": "de"}))
+                attr.runtime.save_config({"repo": "/x"})
+                cfg = json.loads(attr.runtime.CONFIG_PATH.read_text())
             finally:
-                attr.CONFIG_PATH = saved
+                attr.runtime.CONFIG_PATH = saved
         self.assertEqual(cfg["cities"]["o/r"]["repo"], "/x")
         self.assertEqual(cfg["lang"], "de")
         self.assertEqual(cfg["repo"], "/x")

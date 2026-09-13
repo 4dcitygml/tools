@@ -151,11 +151,12 @@ Consequences worth knowing:
   The preview itself is **rendered server-side by the same code that posts the
   PR** (`/api/pr-preview`), so preview and PR cannot drift.
 - The generated ja/de title prefixes (`属性修正`/`テクスチャ`,
-  `Attributkorrektur`/`Textur…`) deliberately match the title fallbacks in
-  `review_kind()` and the CI scripts, so even branch-less manual PRs classify;
-  this pairing is contract-tested (`tests/test_repo_language.py`).
+  `Attributkorrektur`/`Textur…`) deliberately match the one classification
+  table (`scripts/pr_classification.py`, shipped as `program/pr_classification.py`)
+  that CI and the hub's `review_kind()` share, so even branch-less manual PRs
+  classify; this pairing is contract-tested (`tests/test_repo_language.py`).
 - Squash-merged PRs carry the repo-language PR title into the history's title
-  line (practice repos are periodically reset; the `Building:` trailer
+  line (practice repositories are reset by their operators when needed; the `Building:` trailer
   contract lives in the commit body and is unaffected).
 
 ## Layout of the installed program

@@ -187,25 +187,25 @@ class TestTokenFilesAreOwnerOnly(unittest.TestCase):
 
     def test_auth_file_is_0600(self):
         with tempfile.TemporaryDirectory() as tmp:
-            orig = hub.AUTH_PATH
-            hub.AUTH_PATH = Path(tmp) / "auth.json"
+            orig = hub.runtime.AUTH_PATH
+            hub.runtime.AUTH_PATH = Path(tmp) / "auth.json"
             try:
                 hub.save_token(SENTINEL)
-                mode = stat.S_IMODE(os.stat(hub.AUTH_PATH).st_mode)
+                mode = stat.S_IMODE(os.stat(hub.runtime.AUTH_PATH).st_mode)
             finally:
-                hub.AUTH_PATH = orig
+                hub.runtime.AUTH_PATH = orig
             self.assertEqual(mode, 0o600)
 
     def test_git_credentials_file_is_0600(self):
         with tempfile.TemporaryDirectory() as tmp:
-            orig_path, orig_git = hub.GIT_CRED_PATH, hub.git_cmd
-            hub.GIT_CRED_PATH = Path(tmp) / "credentials"
-            hub.git_cmd = lambda: ("/usr/bin/git", True)  # pretend the bundled git is active
+            orig_path, orig_git = hub.runtime.GIT_CRED_PATH, hub.runtime.git_cmd
+            hub.runtime.GIT_CRED_PATH = Path(tmp) / "credentials"
+            hub.runtime.git_cmd = lambda: ("/usr/bin/git", True)  # pretend the bundled git is active
             try:
                 hub.write_git_credentials(SENTINEL)
-                mode = stat.S_IMODE(os.stat(hub.GIT_CRED_PATH).st_mode)
+                mode = stat.S_IMODE(os.stat(hub.runtime.GIT_CRED_PATH).st_mode)
             finally:
-                hub.GIT_CRED_PATH, hub.git_cmd = orig_path, orig_git
+                hub.runtime.GIT_CRED_PATH, hub.runtime.git_cmd = orig_path, orig_git
             self.assertEqual(mode, 0o600)
 
 

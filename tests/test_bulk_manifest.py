@@ -22,6 +22,19 @@ def check(schema: dict, value) -> list[str]:
     return _validate(value, schema)
 
 
+class TestToolsRepositoryName(unittest.TestCase):
+    def test_manifest_scripts_share_one_default_and_one_override(self):
+        # The tools repository is named once per script, with CITYGML_TOOLS_REPO as the only override
+        # (development copies point it at themselves; installed users see the unchanged default).
+        root = Path(__file__).resolve().parents[1] / "scripts"
+        for name in ("identity_manifest.py", "source_update_manifest.py", "carry_forward_manifest.py",
+                     "lod0_semantic_manifest.py", "repo_scope.py"):
+            src = (root / name).read_text(encoding="utf-8")
+            self.assertIn("CITYGML_TOOLS_REPO", src, name)
+            self.assertRegex(src, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO["']\) or ["']4dcitygml/tools["']""", name)
+            self.assertNotRegex(src, r"""default=["']4dcitygml/tools["']""", name)
+
+
 class BulkManifestTest(unittest.TestCase):
     def test_example_conforms_to_schema(self) -> None:
         self.assertEqual(check(SCHEMA, EXAMPLE), [])

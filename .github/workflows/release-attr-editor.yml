@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Target existing Release tag for attachment (leave blank for build verification only)'
+        description: 'Existing attr-editor-v tag whose Release receives the packages (built, then published after the production approval); leave blank to build without publishing'
         required: false
         type: string
 
@@ -105,6 +105,8 @@ jobs:
               z.writestr(f"{ROOT}/READ-ME-FIRST.txt", guide)
               z.write("../packaging/start-windows.bat", f"{ROOT}/start-windows.bat")
               z.write("../app.py", f"{ROOT}/app.py")
+              z.write(repo_root / "tools" / "runtime.py", f"{ROOT}/runtime.py")
+              z.write(repo_root / "tools" / "git_sync.py", f"{ROOT}/git_sync.py")
               z.write("../index.html", f"{ROOT}/index.html")
               z.write("../viewer.html", f"{ROOT}/viewer.html")
               z.write(repo_root / "LICENSE", f"{ROOT}/LICENSE")
@@ -160,25 +162,12 @@ jobs:
           $py = Join-Path $root "PythonPortable\python.exe"
           & $py (Join-Path $root "app.py") --help *> $null
           if ($LASTEXITCODE -ne 0) { throw "Bundled Python failed to run app.py" }
-      # Do not double-store distributions as Actions artifacts; attach directly to the Release only when a tag is specified.
-      # If release_tag is empty on a manual run, only verify the build and consume no storage quota.
-      - name: Upload Windows package directly to release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # The package is handed to the gated release job; a manual run without release_tag only verifies the build.
         if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
-        shell: bash
-        working-directory: tools/attr_editor/dist
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            gh release create "$RELEASE_TAG" \
-              --title "Attribute Editor $RELEASE_TAG" \
-              --notes "CityGML Attribute Editor. For Windows: citygml-attr-editor-windows-full.zip (bundled Python and git, no installation needed), for macOS: citygml-attr-editor-macos.zip (app.py + guide, runs on CLT python3). See tools/attr_editor/setup-guide.md for usage." \
-              2>/dev/null || true
-          else
-            gh release view "$RELEASE_TAG" >/dev/null
-          fi
-          gh release upload "$RELEASE_TAG" citygml-attr-editor-windows-full.zip --clobber
+        with:
+          name: attr-editor-windows
+          path: tools/attr_editor/dist/citygml-attr-editor-windows-full.zip
 
   macos-zip:
     # A zip of app.py + assets + explanatory text instead of a binary (works on any Mac, no signing needed)
@@ -197,6 +186,8 @@ jobs:
           ROOT = "citygml-attr-editor"
           with zipfile.ZipFile("citygml-attr-editor-macos.zip", "w", zipfile.ZIP_DEFLATED) as z:
               z.write("tools/attr_editor/app.py", f"{ROOT}/app.py")
+              z.write("tools/runtime.py", f"{ROOT}/runtime.py")
+              z.write("tools/git_sync.py", f"{ROOT}/git_sync.py")
               z.write("tools/attr_editor/index.html", f"{ROOT}/index.html")
               z.write("tools/attr_editor/viewer.html", f"{ROOT}/viewer.html")
               z.write("tools/attr_editor/packaging/READ-ME-FIRST-macos.txt",
@@ -228,19 +219,42 @@ jobs:
               raise RuntimeError(f"Distribution zip missing required files: {missing}")
           digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
           print(f"{artifact.name} sha256={digest}")
-      - name: Upload macOS package directly to release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # The package is handed to the gated release job; a manual run without release_tag only verifies the build.
         if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        with:
+          name: attr-editor-macos
+          path: citygml-attr-editor-macos.zip
+
+  release:
+    # The only job that publishes. It runs in the `production` environment, so it waits
+    # for the deployment approval (docs/production-protection.md); the builds and smoke
+    # tests above run unattended and nothing reaches users before that approval.
+    if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+    needs: [windows, macos-zip]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: attr-editor-*
+          path: dist
+          merge-multiple: true
+      - name: Create the release for a pushed tag, then upload the packages
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            gh release create "$RELEASE_TAG" \
+          set -euo pipefail
+          test -f dist/citygml-attr-editor-windows-full.zip
+          test -f dist/citygml-attr-editor-macos.zip
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # A manual run names an existing Release; only a pushed tag creates one.
+            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $RELEASE_TAG does not exist"; exit 1; }
+            gh release create "$RELEASE_TAG" --verify-tag \
               --title "Attribute Editor $RELEASE_TAG" \
-              --notes "CityGML Attribute Editor. See tools/attr_editor/setup-guide.md for usage." \
-              2>/dev/null || true
-          else
-            gh release view "$RELEASE_TAG" >/dev/null
+              --notes "CityGML Attribute Editor. For Windows: citygml-attr-editor-windows-full.zip (bundled Python and git, no installation needed), for macOS: citygml-attr-editor-macos.zip (app.py + guide, runs on CLT python3). See tools/attr_editor/setup-guide.md for usage."
           fi
-          gh release upload "$RELEASE_TAG" citygml-attr-editor-macos.zip --clobber
+          gh release upload "$RELEASE_TAG" dist/citygml-attr-editor-windows-full.zip dist/citygml-attr-editor-macos.zip --clobber

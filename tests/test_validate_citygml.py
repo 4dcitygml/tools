@@ -30,6 +30,11 @@ class TestValidate(unittest.TestCase):
         self.assertTrue(ok, msg=str(errors[:3]))
         self.assertEqual(errors, [])
 
+    def test_citygml10_instance_passes_xsd(self) -> None:
+        # International data (Munich, New York) is CityGML 1.0 in the default namespace.
+        ok, errors = validate_file(FIXTURES / "citygml10_building.gml")
+        self.assertTrue(ok, errors)
+
     def test_not_well_formed_is_rejected(self) -> None:
         raw = (FIXTURES / "base.gml").read_bytes()
         broken = raw.replace(b"</bldg:Building>", b"<unclosed></bldg:Building>", 1)

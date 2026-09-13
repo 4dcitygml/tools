@@ -16,14 +16,14 @@ license does NOT apply to them; each set keeps its distributor's terms.
 They are unmodified mirrors obtained by recursively following
 xsd:import/include from each distributor (see schemas/README.md). The
 directory-set hash below is the SHA-256 of the sorted concatenation of
-"path NUL sha256(file) NUL" over the set, recorded 2026-08-29.
+"path NUL sha256(file) NUL" over the set, recorded 2026-08-29 (OGC set re-recorded 2026-09-13 with the CityGML 1.0 modules).
 
-1. OGC — CityGML 2.0 modules and GML 3.1.1
-   - Path: schemas/schemas.opengis.net/ (47 files)
+1. OGC — CityGML 1.0 and 2.0 modules and GML 3.1.1
+   - Path: schemas/schemas.opengis.net/ (60 files)
    - Source: https://schemas.opengis.net/
    - Terms: OGC Document/Software Notice (redistribution of unmodified
      schemas permitted; copyright Open Geospatial Consortium)
-   - Set hash: b4cc892026944f3949ff85f6587cbd31e96d15ef584a187f47484facb98a1bc7
+   - Set hash: 1b545cbabf27439ee9ddb63c1f46a42fa7b62aa58c0a55a0b7c031872e57f564
 
 2. W3C — xlink and SMIL 2.0 schemas
    - Path: schemas/www.w3.org/ (3 files)

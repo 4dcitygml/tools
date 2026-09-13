@@ -5,7 +5,7 @@
 
 Two-stage validation:
 1. well-formed check (lxml; catches unclosed tags etc. Fast and reliable)
-2. XSD schema validation (**xmlschema**. CityGML 2.0 + GML 3.1.1 + i-UR 2.0/3.0/3.1/3.2)
+2. XSD schema validation (**xmlschema**. CityGML 2.0 and 1.0 + GML 3.1.1 + i-UR 2.0/3.0/3.1/3.2)
 
 Why we use xmlschema as the XSD engine:
 - libxml2 (lxml) XSD validation has a known limitation of **false-rejecting** i-UR ADE data
@@ -15,7 +15,7 @@ Why we use xmlschema as the XSD engine:
 
 Schemas are bundled with the repository and resolved offline (network-independent):
 - `schemas/` (mirror of `schemas.opengis.net`/`www.w3.org`/`docs.oasis-open.org`/`www.geospatial.jp`)
-- `schemas/master.xsd` imports all namespaces (including i-UR 2.0/3.0/3.1/3.2). http(s) references are mapped to local by uri_mapper.
+- `schemas/master.xsd` imports all namespaces (CityGML 2.0 and 1.0 modules, i-UR 2.0/3.0/3.1/3.2). http(s) references are mapped to local by uri_mapper.
 
 Quality checks by PLATEAU-Builder (C-1~3) are not included (Windows/Java dependent, post-hoc).
 

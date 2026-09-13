@@ -28,14 +28,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import json
+import os
 import random
 import re
-import subprocess
 import sys
-import urllib.parse
-import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -44,7 +41,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
-from scripts.provenance_manifest import canonical_bytes, manifest_ref, sha256_hex, validate  # noqa: E402
+from scripts.provenance_manifest import (  # noqa: E402
+    commit_series, committed_manifest, compare_reproduction, edition_arg, locate_materials,
+    manifest_ref, schema_errors, sha256_hex, write_generated)
 
 BUILDING_ID_RE_TEMPLATE = rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>%s</(?:\w+:)?buildingID>"
 _INDEX_RE = re.compile(r"\[\d+\]$")
@@ -404,13 +403,6 @@ def _environment() -> dict:
     return env
 
 
-def _reproducible_view(manifest: dict) -> dict:
-    """The parts of a manifest that a re-run must reproduce exactly."""
-    ev = dict(manifest["evidence"])
-    return {"kind": manifest["kind"], "scope": manifest["scope"], "products": manifest["products"],
-            "evidence": ev, "materials": [{k: m[k] for k in ("name", "sha256", "bytes")} for m in manifest["materials"]]}
-
-
 def commit_message(link: dict, manifest_path: str, manifest_bytes: bytes, kind: str, edition_to: str) -> str:
     evidence = (f"tier={link['tier']};method={link['method']};iou={link['iou']};centroid_m={link['centroid_m']};"
                 f"hausdorff_m={link['hausdorff_m']};area_ratio={link['area_ratio']};chain={'>'.join(link['chain'])}")
@@ -426,15 +418,9 @@ def commit_message(link: dict, manifest_path: str, manifest_bytes: bytes, kind: 
 def cmd_generate(args: argparse.Namespace) -> int:
     thr = Thresholds()
     manifest, product = build_manifest(args, thr)
-    errors = validate(manifest)
-    if errors:
-        print("manifest does not conform to the schema:\n  " + "\n  ".join(errors), file=sys.stderr)
-        return 2
-    data = (json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True) + "\n").encode("utf-8")
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output).write_bytes(data)
-    if args.apply_output:
-        Path(args.apply_output).write_bytes(product)
+    code = write_generated(manifest, args.output, product, args.apply_output)
+    if code:
+        return code
     ev = manifest["evidence"]
     print(json.dumps({"output": args.output, "links": len(ev["links"]), "unlinked": len(ev["unlinked"]), "unchanged": ev["unchanged"],
                       "boundaries": [(b["from"], b["to"], b["id_regime"]) for b in ev["boundaries"]],
@@ -452,48 +438,24 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 def cmd_commits(args: argparse.Namespace) -> int:
     repo = Path(args.repo)
-    manifest_path = Path(args.manifest)
-    manifest_bytes = manifest_path.read_bytes()
-    manifest = json.loads(manifest_bytes.decode("utf-8"))
-    rel_manifest = manifest_path.resolve().relative_to(repo.resolve()).as_posix()
+    manifest, manifest_bytes, rel_manifest = committed_manifest(repo, Path(args.manifest))
     product = manifest["products"][0]["path"]
-    target = repo / product
-    links = manifest["evidence"]["links"]  # manifest order = safe one-at-a-time order (order_links)
-    for link in links:
-        target.write_bytes(apply_links(target.read_bytes(), [link]))
-        subprocess.run(["git", "-C", str(repo), "-c", "core.looseCompression=1", "add", "--", product, rel_manifest], check=True)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-F", "-"],
-                       input=commit_message(link, rel_manifest, manifest_bytes, manifest["kind"], manifest["scope"]["edition_to"]).encode(),
-                       check=True)
-    # hundreds of commits each store a full (multi-MB) blob: repack now so the clone stays small before push
-    subprocess.run(["git", "-C", str(repo), "gc", "-q"], check=False)
-    final = sha256_hex(target.read_bytes())
-    if final != manifest["products"][0]["sha256"]:
-        print(f"::error::product digest after applying all links {final} != manifest {manifest['products'][0]['sha256']}", file=sys.stderr)
-        return 1
-    print(f"{len(links)} commits created; product digest matches the manifest")
-    return 0
+
+    def steps():
+        raw = (repo / product).read_bytes()
+        for link in manifest["evidence"]["links"]:  # manifest order = safe one-at-a-time order (order_links)
+            raw = apply_links(raw, [link])
+            yield raw, commit_message(link, rel_manifest, manifest_bytes, manifest["kind"], manifest["scope"]["edition_to"])
+
+    return commit_series(repo, product, rel_manifest, steps(), manifest["products"][0]["sha256"], "links")
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     committed = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    errors = validate(committed)
-    if errors:
-        print("::error::manifest schema: " + "; ".join(errors[:5]))
+    if schema_errors(committed):
         return 1
     if getattr(args, "materials_dir", None):
-        base = Path(args.materials_dir)
-        args.edition = []
-        for material in committed["materials"]:
-            members = material.get("members") or []
-            uri = urllib.parse.urlparse(material["uri"])
-            if members:
-                local = base / members[0]["path"]
-            elif uri.scheme == "file":
-                local = Path(urllib.request.url2pathname(uri.path))
-            else:
-                local = base / material["name"]
-            args.edition.append((material["name"], str(local)))
+        args.edition = list(locate_materials(committed, args.materials_dir).items())
     if not args.edition:
         print("::error::verify needs --edition LABEL=PATH (oldest first) or --materials-dir")
         return 1
@@ -505,21 +467,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     args.seed = committed["sample_audit"]["seed"]; args.sample_size = committed["sample_audit"]["size"]
     args.edition_uri = []
     regenerated, _product = build_manifest(args, thr)
-    a, b = _reproducible_view(committed), _reproducible_view(regenerated)
-    if canonical_bytes(a) != canonical_bytes(b):
-        for key in a:
-            if canonical_bytes(a[key]) != canonical_bytes(b[key]):
-                print(f"::error::reproduction mismatch in '{key}'")
-        return 1
-    print("reproduction: OK (materials, evidence, and products regenerate identically)")
-    return 0
-
-
-def _edition(value: str) -> tuple[str, str]:
-    label, _sep, path = value.partition("=")
-    if not path:
-        raise argparse.ArgumentTypeError("--edition LABEL=PATH")
-    return label, path
+    return compare_reproduction(committed, regenerated)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -531,11 +479,11 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--repository", required=True, help="owner/name of the city repository")
     g.add_argument("--mesh", required=True)
     g.add_argument("--municipality", required=True)
-    g.add_argument("--edition", type=_edition, action="append", required=True, help="LABEL=PATH, oldest first, repeat")
-    g.add_argument("--edition-uri", type=_edition, action="append", help="LABEL=URI of the official archive member (for CI re-fetch)")
+    g.add_argument("--edition", type=edition_arg, action="append", required=True, help="LABEL=PATH, oldest first, repeat")
+    g.add_argument("--edition-uri", type=edition_arg, action="append", help="LABEL=URI of the official archive member (for CI re-fetch)")
     g.add_argument("--product", required=True, help="repository-relative path of the baseline GML that receives the IDs")
     g.add_argument("--product-source", help="local file holding the current bytes of --product (default: first edition file)")
-    g.add_argument("--tools-repo", default="4dcitygml/tools")
+    g.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools")
     g.add_argument("--tools-commit", required=True, help="immutable commit SHA of the tools used")
     g.add_argument("--plan-issue", required=True)
     g.add_argument("--seed", type=int, default=20260902)
@@ -554,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
 
     v = sub.add_parser("verify", help="regenerate from editions and compare with the committed manifest")
     v.add_argument("--manifest", required=True)
-    v.add_argument("--edition", type=_edition, action="append", help="LABEL=PATH, oldest first (or use --materials-dir)")
+    v.add_argument("--edition", type=edition_arg, action="append", help="LABEL=PATH, oldest first (or use --materials-dir)")
     v.add_argument("--materials-dir", help="directory filled by fetch_materials.py (editions mapped from the manifest)")
     v.add_argument("--product-source", help="local file with the pre-identity bytes of the product (parent commit)")
     v.set_defaults(func=cmd_verify)

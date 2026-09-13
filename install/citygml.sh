@@ -38,10 +38,11 @@
 set -euo pipefail
 
 INSTALL_TAG="${CITYGML_INSTALL_TAG:-install-v1}"
-SELF_URL="https://raw.githubusercontent.com/4dcitygml/tools/${INSTALL_TAG}/install/citygml.sh"
+TOOLS_REPO="${CITYGML_TOOLS_REPO:-4dcitygml/tools}"   # the repository that publishes the releases and this script
+SELF_URL="https://raw.githubusercontent.com/${TOOLS_REPO}/${INSTALL_TAG}/install/citygml.sh"
 TOOLS_DIR="${CITYGML_TOOLS_DIR:-$HOME/Documents/citygml-tools}"
 HUBS="$TOOLS_DIR/citygml-hub"
-RELEASES_API="${CITYGML_RELEASES_API:-https://api.github.com/repos/4dcitygml/tools/releases?per_page=30}"
+RELEASES_API="${CITYGML_RELEASES_API:-https://api.github.com/repos/${TOOLS_REPO}/releases?per_page=30}"
 
 msg() { printf '%s\n' "$*"; }
 fail() { printf '%s\n' "$*" >&2; exit 1; }

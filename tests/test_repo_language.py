@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""Contract tests for the repo-language principle (案B).
+"""Contract tests for the repo-language principle.
 
 Principle: repo-facing generated text (PR title, PR body, attribute labels in
 PR text) follows the repository's working language (4dcitygml.json "lang");
@@ -61,7 +61,7 @@ def title_for(lang: str, many: bool = False) -> str:
 
 
 def tex_title_for(lang: str, add: bool = False) -> str:
-    mod = attr.i18n_module()
+    mod = attr.runtime.i18n_module()
     key = "pr.title_tex_add" if add else "pr.title_tex_update"
     default = ("Add textures ({n} faces): {bid}" if add
                else "Update textures ({n} faces): {bid}")

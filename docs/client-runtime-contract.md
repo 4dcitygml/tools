@@ -50,7 +50,10 @@ own screen — never through the GitHub CLI.
 
 Test hooks (never set by launchers in normal use): `CITYGML_TOOLS_DIR`,
 `CITYGML_RELEASES_JSON`, `CITYGML_RELEASES_API`, `CITYGML_ASSET_FILE`,
-`CITYGML_NO_EXEC`, `CITYGML_INSTALL_TAG`; `CITYGML_OAUTH_CLIENT_ID` (development).
+`CITYGML_NO_EXEC`, `CITYGML_INSTALL_TAG`, `CITYGML_TOOLS_REPO` (the repository
+that publishes the releases and the launcher, default `4dcitygml/tools`; the
+same name the city workflows and the manifest scripts read);
+`CITYGML_OAUTH_CLIENT_ID` (development).
 
 ## 3. Files on the computer
 
@@ -74,7 +77,7 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   "repo": "/…/CityGML Data (sample-tokyo-station)",
   "lang": "ja",
   "cities": {
-    "4dcitygml/sample-tokyo-station": {"repo": "/…/CityGML Data (sample-tokyo-station)", "last_used": "2026-09-06T…", "login": "citydatawalker"}
+    "4dcitygml/sample-tokyo-station": {"repo": "/…/CityGML Data (sample-tokyo-station)", "last_used": "2026-09-06T…", "login": "example-user"}
   },
   "legacyReviewed": "2026-09-07"
 }

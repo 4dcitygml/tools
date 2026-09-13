@@ -8,7 +8,7 @@ validate CityGML/PLATEAU **without network access**.
 
 ## Layout
 
-- `schemas.opengis.net/` — the **CityGML 2.0** modules + **GML 3.1.1** (distributed by OGC)
+- `schemas.opengis.net/` — the **CityGML 2.0** and **CityGML 1.0** modules + **GML 3.1.1** (distributed by OGC; 1.0 for international data such as the Munich and New York practice cities)
 - `www.w3.org/` — xlink / SMIL 2.0 (W3C)
 - `docs.oasis-open.org/` — xAL 2.0 (OASIS)
 - `master.xsd` — the validation root that imports all the namespaces above plus the

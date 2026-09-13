@@ -55,6 +55,8 @@ has_gml = os.environ.get("GML_COUNT") != "0"
 scope_extract = os.environ.get("SCOPE_EXTRACT") == "true"
 # source-baseline PRs skip the per-building reviewability lint and the 3D preview (bulk data)
 baseline = os.environ.get("SOURCE_BASELINE") == "true"
+# practice-reset PRs return a practice repository to its baseline (tree verified by commit-scope); the same two gates are not applicable
+reset = os.environ.get("PRACTICE_RESET") == "true"
 # manifest-backed bulk PRs (identity-*, source-update): accepted by reproduction; per-building lint and preview are not applicable
 bulk = os.environ.get("BULK_KIND") == "true"
 
@@ -140,7 +142,7 @@ rows = [
      result(os.environ.get("FORMAT_OUTCOME"), has_gml)),
     ("minimal-diff", T("ci.check_minimal_diff", "Minimal diff"), result(
         os.environ.get("REVIEWABILITY_OUTCOME"),
-        has_gml and not scope_extract and not baseline and not bulk, "out/lint.md"
+        has_gml and not scope_extract and not baseline and not reset and not bulk, "out/lint.md"
     )),
     ("texture", T("ci.check_texture", "Texture consistency"),
      result(os.environ.get("TEXTURE_OUTCOME"),
@@ -160,7 +162,7 @@ rows = [
         "out/val3dity.md"
     )),
     ("model", T("ci.check_model", "3D view"), result(
-        os.environ.get("PREVIEW_OUTCOME"), has_gml and not scope_extract and not baseline and not bulk
+        os.environ.get("PREVIEW_OUTCOME"), has_gml and not scope_extract and not baseline and not reset and not bulk
     )),
 ]
 # Emoji stay code-side (hub and STRICT_GATE match on them), words localize.
