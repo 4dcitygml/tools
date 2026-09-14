@@ -131,7 +131,9 @@ def tools_tag_commits(tools_repo: str) -> "set | None":
         else:
             req = urllib.request.Request(f"https://api.github.com/repos/{tools_repo}/tags?per_page=100",
                                          headers={"Accept": "application/vnd.github+json", "User-Agent": "citygml-ci"})
-            token = os.environ.get("GITHUB_TOKEN")
+            # A city that mirrors the tools privately reads them with CITYGML_TOOLS_TOKEN
+            # (a read-only token for that mirror); otherwise the job's own token suffices.
+            token = os.environ.get("CITYGML_TOOLS_TOKEN") or os.environ.get("GITHUB_TOKEN")
             if token:
                 req.add_header("Authorization", f"Bearer {token}")
             with urllib.request.urlopen(req, timeout=20) as r:
