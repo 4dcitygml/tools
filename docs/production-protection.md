@@ -119,6 +119,14 @@ release is therefore not the tag but the deployment approval below.
   the smoke tests still run unattended; the job that publishes assets waits
   for "Approve deployment" in the Actions view. Nothing reaches users without
   that click.
+- A release tag is pushed only through `scripts/release_guard.py`, which
+  reads the environment back (a required reviewer, self-review allowed, a tag
+  policy admitting the tag), checks that the commit is on `main`, that its
+  workflow gates the release job and, with `--expect-tree`, that its tree is
+  the rehearsed one; it pushes the tag only when all of that holds:
+  `python3 scripts/release_guard.py --repo 4dcitygml/tools --tag tools-v1.3.0 --commit <sha> --expect-tree <tree> --push`.
+  A manual re-publish (`release_tag` input) must be dispatched from the tag,
+  not from `main`, unless the policy also admits `main`.
 
 ### 4. Repositories without releases (city-template, .github, 4dcitygml.github.io)
 
@@ -131,7 +139,12 @@ deliberate step.
 1. **Rehearse in the development copies.** Apply the same rulesets and
    environment to their remotes; run the affected workflows there (a practice
    reset, a release from a tag, a pull request merge). Record what is refused
-   and what passes.
+   and what passes. One feature cannot be rehearsed privately: on GitHub Free,
+   Pro and Team plans, required reviewers (and wait timers) exist only in
+   public repositories, so a private copy's `production` environment runs
+   without the approval step. The approval itself is verified once, on a
+   history-free public rehearsal repository or at the first production
+   release, after reading back the environment's rules.
 2. **Fix what the rehearsal breaks** in the development copies, then in
    production through the normal pull-request route.
 3. **Apply to production** from the common-settings thread, one repository at
@@ -140,6 +153,13 @@ deliberate step.
 
 ### Bringing a change to production
 
+- Verification finishes in the development copies; production is never used
+  to verify. A tools change is released (tagged, built, approved) on the tools
+  copy's own remote first, the city copies pin that tagged commit through
+  their own CI (`CITYGML_TOOLS_REPO` naming the copy, `CITYGML_TOOLS_TOKEN`
+  for a private copy), and only what passed there is ported.
+- A city may pin only a commit a `tools-v*` tag points to (A11): the release
+  precedes every pin, in the copies and in production alike.
 - Production never sees the development copies' history: the change is
   ported by **copying the final files**, committed once per repository with a
   plain English subject such as "Update the shared runtime and the release

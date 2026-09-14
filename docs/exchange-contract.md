@@ -303,7 +303,10 @@ The `file-scope` gate therefore accepts a PR only when every changed file is:
   scripts or workflows needs no label;
 - **the CI tools pin**: a `.github/workflows/*.yml` file whose only changed
   lines are `CITYGML_TOOLS_REF:` values, where the new value is a commit that a
-  `tools-v*` tag of `4dcitygml/tools` points to (CI checks the tags API);
+  `tools-v*` tag of `4dcitygml/tools` points to (CI checks the tags API; a city
+  that names its own mirror in `CITYGML_TOOLS_REPO` is checked against that
+  mirror's tags, read with the optional secret `CITYGML_TOOLS_TOKEN` when the
+  mirror is private);
 - **CI maintenance under the `tooling` label** (A9): any other change under
   `.github/**`, accepted only when a maintainer applied the label.
 
