@@ -114,8 +114,8 @@ release is therefore not the tag but the deployment approval below.
 - Create environment `production` in `4dcitygml/tools` with the maintainer
   as required reviewer; leave "prevent self-review" off; restrict deployment
   branches and tags to `hub-v*`, `tools-v*`, `install-v*`.
-- The upload jobs of `release-hub.yml`, `release-tools.yml` and
-  `release-attr-editor.yml` declare `environment: production`. The build and
+- The upload jobs of `release-hub.yml` and `release-tools.yml` declare
+  `environment: production`. The build and
   the smoke tests still run unattended; the job that publishes assets waits
   for "Approve deployment" in the Actions view. Nothing reaches users without
   that click.

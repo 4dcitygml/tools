@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
 #
 # CityGML PR analysis driver (main part) — shared CI logic, plan C.
 #

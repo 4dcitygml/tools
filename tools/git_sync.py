@@ -23,6 +23,7 @@ Design (2026-09-06):
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import threading
 import time
@@ -131,6 +132,73 @@ def sync_main(root, url: str, base_args: list, log=None) -> dict:
         return {"state": "error", "head": cur_main, "message": "Could not update main"}
     except (OSError, subprocess.SubprocessError) as e:
         return {"state": "error", "head": None, "message": str(e)}
+
+
+class CloneJob:
+    """`git clone` in the background with its progress for a polling screen (the setup
+    screens of the hub and the editors share this one implementation).
+
+    say(event, **params) turns the events "running", "no_git", "bad_url", "not_empty",
+    "start", "size_note", "done", "failed" into the app's own wording; net_args() gives
+    the git arguments for a network command (the city's account or anonymous)."""
+
+    def __init__(self, say, net_args, git_available):
+        self._say, self._net_args, self._git_available = say, net_args, git_available
+        self.lock = threading.Lock()
+        self.running = False
+        self.done = False
+        self.error: "str | None" = None
+        self.dest: "str | None" = None
+        self.lines: list = []
+
+    def state(self) -> dict:
+        with self.lock:
+            return {"ok": True, "gitAvailable": bool(self._git_available()), "running": self.running,
+                    "done": self.done, "error": self.error, "dest": self.dest, "log": self.lines[-8:]}
+
+    def start(self, url: str, dest: str) -> None:
+        with self.lock:
+            if self.running:
+                raise RuntimeError(self._say("running"))
+            if not self._git_available():
+                raise RuntimeError(self._say("no_git"))
+            url = url.strip()
+            if not re.match(r"^(https://|git@|file://|/)", url):
+                raise ValueError(self._say("bad_url"))
+            dest_path = Path(dest).expanduser()
+            if dest_path.exists() and any(dest_path.iterdir()):
+                raise ValueError(self._say("not_empty", dest=dest_path))
+            self.running, self.done, self.error = True, False, None
+            self.dest = str(dest_path)
+            self.lines = [self._say("start", url=url), self._say("size_note")]
+        threading.Thread(target=self._run, args=(url, str(dest_path)), name="citygml-clone", daemon=True).start()
+
+    def _run(self, url: str, dest: str) -> None:
+        try:
+            Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.Popen([*self._net_args(), "clone", "--progress", url, dest],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                seg = raw.rstrip("\r\n").split("\r")[-1].strip()   # git progress arrives \r-separated
+                if seg:
+                    with self.lock:
+                        if self.lines and self.lines[-1].split(":")[0] == seg.split(":")[0]:
+                            self.lines[-1] = seg   # overwrite same-kind progress lines
+                        else:
+                            self.lines.append(seg)
+            code = proc.wait()
+            with self.lock:
+                self.running = False
+                if code == 0:
+                    self.done = True
+                    self.lines.append(self._say("done"))
+                else:
+                    self.error = self._say("failed", code=code)
+        except Exception as e:  # noqa: BLE001 — shown in the screen
+            with self.lock:
+                self.running = False
+                self.error = f"{type(e).__name__}: {e}"
 
 
 class BackgroundSync:

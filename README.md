@@ -55,13 +55,11 @@ request.
    `~/Documents/citygml-tools/`, and starts the hub. Running it again is always
    safe: it installs the newest release if there is one, then starts the tools
    (offline, the installed tools start).
-2. The hub opens in your browser, connected to that city. After setup it offers
-   a desktop icon; from then on the icon starts the tools (no terminal needed).
+2. The hub opens in your browser, connected to that city. Choose the city's
+   GitHub account once (the screen states exactly what you authorize); the hub
+   creates your copy of the city. After setup a desktop icon starts the tools.
 3. Newer versions are announced inside the hub; *Get it now* downloads and
-   verifies them, and they are used from the next start. Nothing is downloaded
-   or restarted without your click.
-4. Sign in with GitHub when prompted (the screen states exactly what you
-   authorize), create your copy of the city, and import it. Viewing the data
+   verifies them, and they are used from the next start. Viewing the data
    itself needs no account: open the city repository or the portal.
 
 Nothing is ever changed directly: every edit becomes a pull request, reviewed

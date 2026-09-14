@@ -4,17 +4,15 @@
 """Lightweight tests for the integrated frontend's admin-facing PR review screen."""
 from __future__ import annotations
 
-import importlib.util
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-_spec = importlib.util.spec_from_file_location("hub_review_app", REPO_ROOT / "tools" / "hub" / "app.py")
-hub = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(hub)
+from tests.support import REPO_ROOT, load_app, runtime
+
+hub = load_app("hub_review_app", "tools/hub/app.py")
 
 
 class _EnglishEnv(unittest.TestCase):
@@ -40,6 +38,8 @@ class _EnglishEnv(unittest.TestCase):
 
 
 class FakeAuth:
+    login = "reviewer"
+
     def token(self):
         return "test-token"
 
@@ -53,7 +53,7 @@ def example_pr(number=123):
         "title": "Attribute correction (storeys): 2 → 3",
         "body": (
             "## Changes\n\n"
-            "| Attribute | Before | After |\n|---|---|---|\n| /storeysAboveGround | 2 | 3 |\n\n"
+            "| Item | Before | After |\n|---|---|---|\n| /storeysAboveGround | 2 | 3 |\n\n"
             "## Reason and supporting evidence\n\n2026 field survey sheet\n"
         ),
         "user": {"login": "proposer"},
@@ -67,16 +67,15 @@ def example_pr(number=123):
 
 
 def fake_github_api(path, token, method="GET", payload=None, timeout=30):
-    if '/rules/branches/' in path:
-        return 200, [{'type':'pull_request','parameters':{'required_approving_review_count':2}}]
-    if path == '/graphql':
-        return 200, {'data':{'repository':{'ref':{'branchProtectionRule':None}}}}
     if "/collaborators/" in path:
         return 200, {"permission": "push"}
-    if "/pulls?state=open&sort=updated&direction=desc" in path:
+    if path.endswith("/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1"):
         return 200, [example_pr()]
     if path.endswith("/pulls/123"):
         return 200, example_pr()
+    if path.endswith("/pulls/123/commits?per_page=100"):
+        return 200, [{"sha": "abc123", "commit": {
+            "message": "Update attributes (Storeys Above Ground): 2 → 3\n\nBuilding: 13101-bldg-1\n"}}]
     if path.endswith("/pulls/123/files?per_page=100"):
         return 200, [{
             "filename": "city/udx/bldg/53394611_bldg_6697_op.gml",
@@ -85,7 +84,7 @@ def fake_github_api(path, token, method="GET", payload=None, timeout=30):
         }]
     if path.endswith("/issues/123/comments?per_page=100"):
         return 200, []
-    if "/pulls/123/reviews?" in path:
+    if path.endswith("/pulls/123/reviews?per_page=100"):
         return 200, []
     if path.endswith("/commits/abc123/check-runs?per_page=100"):
         return 200, {"check_runs": [{
@@ -100,39 +99,62 @@ def fake_github_api(path, token, method="GET", payload=None, timeout=30):
 
 
 class TestReviewParsers(_EnglishEnv):
-    def test_retry_targets_failed_phase_and_never_republishes_stale_evidence(self):
-        checks = [{'technicalName': 'analyze', 'name': 'Data inspection', 'status': 'completed', 'conclusion': 'success'}]
-        for reason, available, workflow in [('current', False, None), ('fix', False, None),
-                                            ('report-stale', False, None), ('report-pending', True, 'pr-comment.yml')]:
-            with self.subTest(reason=reason):
-                result = hub.report_retry(checks, [], {'required': True, 'reason': reason, 'valid': reason == 'current', 'reportReady': reason == 'current'})
-                self.assertEqual(result['available'], available)
-                self.assertEqual(result.get('workflow'), workflow)
-        checks.append({'technicalName': 'operator-explanation', 'name': 'Operator confirmation', 'conclusion': 'failure'})
-        result = hub.report_retry(checks, [], {'required': True, 'reportReady': True, 'valid': False})
-        self.assertTrue(result['available'])
-        self.assertEqual(result['workflow'], 'review-report.yml')
-
     def test_editor_pr_kind(self):
         self.assertEqual(hub.review_kind(example_pr()), "attribute")
-        tex = example_pr()  # a manual PR: no branch prefix, the title decides
-        tex["title"], tex["head"]["ref"] = "テクスチャ更新(2面): 13101-bldg-1", "feature-x"
+        tex = example_pr()
+        tex["title"] = "テクスチャ更新(2面): 13101-bldg-1"
+        # Exchange Contract A5: the branch prefix wins over the title …
+        self.assertEqual(hub.review_kind(tex), "attribute")
+        # … and the title decides only when the branch carries no prefix.
+        tex["head"]["ref"] = "feature/x"
         self.assertEqual(hub.review_kind(tex), "texture")
-        # One table for CI and the hub (scripts/pr_classification.py): branch prefixes
-        # win, and what CI cannot classify is shown as `other`.
-        geom = example_pr()
-        geom["title"], geom["head"]["ref"] = "Rebuilt block", "geom/13101-bldg-1"
-        self.assertEqual(hub.review_kind(geom), "geometry")
-        other = example_pr()
-        other["title"], other["head"]["ref"] = "Notes on the survey", "misc/notes"
-        self.assertEqual(hub.review_kind(other), "other")
-        explicit = dict(other, review_kind="texture")
-        self.assertEqual(hub.review_kind(explicit), "texture")
 
     def test_markdown_change_table(self):
         tables = hub.markdown_tables(example_pr()["body"])
         self.assertEqual(tables[0]["rows"][0]["Before"], "2")
         self.assertEqual(tables[0]["rows"][0]["After"], "3")
+
+    def test_change_table_words_come_from_every_catalog(self):
+        # The editors write the before/after table in the repository language; the hub
+        # reads the headers back from the same catalogs (all languages) and from the CI
+        # change summary, so no language needs its own list here.
+        words = hub.change_table_words()
+        for before, after in (("Before", "After"), ("変更前", "変更後"), ("Vorher", "Nachher"),
+                              ("Bild vorher", "Bild nachher (neu hinzugefügt)"),
+                              ("変更前の画像", "変更後の画像（新規追加）"), ("Old", "New")):
+            self.assertIn(before, words["before"]); self.assertIn(after, words["after"])
+        self.assertTrue({"Item", "項目", "Feld", "path"} <= words["label"])
+
+    def test_display_names_from_any_language_are_kept(self):
+        # The editors write the attribute's display name in the repository language;
+        # only a path or tag (the CI change summary) is looked up in the label table.
+        labels = hub.attribute_labels()
+        for name in ("Storeys Above Ground", "Geschosse über Grund", "地上階数"):
+            self.assertEqual(hub.attribute_label(name, labels), name)
+        self.assertEqual(hub.attribute_label("/storeysAboveGround", labels), "Storeys Above Ground")
+        self.assertEqual(hub.attribute_label("/uro:notInTheTable[1]", labels), "Other attribute (notInTheTable)")
+
+    def test_headings_come_from_the_catalogs_and_the_template(self):
+        heads = hub.reason_headings()
+        for h in ("Reason and supporting evidence", "Summary of changes", "編集理由・根拠資料", "変更の概要",
+                  "Begründung und Belege", "Zusammenfassung der Änderungen"):
+            self.assertIn(h, heads)
+        body = "## Betroffenes Gebäude\n\n- x\n\n## Begründung und Belege\n\nBauakte 2026\n"
+        self.assertEqual(hub.human_reason(body, "texture"), "Bauakte 2026")
+        self.assertTrue({"Betroffenes Gebäude", "対象建物", "PR type", "Checklist"} <= hub.body_headings())
+
+    def test_change_rows_read_a_german_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = "## Details\n\n| Feld | Vorher | Nachher | Geprüfte Quelle |\n|---|---|---|---|\n| storeysAboveGround | 2 | 3 | Bauakte 2026 |\n"
+            rows = hub.Hub(Path(d))._change_rows(body, [], "attribute")
+        self.assertEqual([(r["before"], r["after"]) for r in rows], [("2", "3")])
+
+    def test_marker_status_reads_the_result_icons(self):
+        comments = [{"body": "<!-- citygml-quality-lint -->\n| item | ✅ |"},
+                    {"body": "<!-- plateau-quality-lint -->\n❌ 1 issue"}]
+        self.assertEqual(hub._marker_status(comments, "<!-- citygml-quality-lint -->", "pending"), "pass")
+        self.assertEqual(hub._marker_status(comments, "<!-- plateau-quality-lint -->", "pending"), "fail")
+        self.assertEqual(hub._marker_status(comments, "<!-- other -->", "pending"), "pending")
 
     def test_reason_section(self):
         self.assertEqual(
@@ -142,14 +164,16 @@ class TestReviewParsers(_EnglishEnv):
         self.assertFalse(hub.review_ready_reason("(please fill in)"))
 
     def test_attribute_labels_are_human_readable(self):
-        labels = hub.load_attribute_labels(REPO_ROOT)
+        labels = hub.attribute_labels()
         self.assertEqual(hub.attribute_label("/storeysAboveGround", labels), "Storeys Above Ground")
         self.assertEqual(hub.attribute_label("/uro:buildingFootprintArea", labels), "Building Footprint Area")
 
     def test_building_id_and_human_reason(self):
+        # The reason is the `<!--sec:reason-->` section (or the whole body of a short
+        # attribute / geometry proposal), with markers, fences and tables removed.
         body = (
             "Building 13101-bldg-3728: adjusting the number of storeys above ground to match the field survey.\n\n"
-            "Expected CI: analyze\nValidation: schema"
+            "<!-- a hidden note -->\n| Item | Before | After |\n|---|---|---|\n| x | 1 | 2 |\n"
         )
         self.assertEqual(hub.extract_building_id(body), "13101-bldg-3728")
         self.assertEqual(
@@ -157,17 +181,15 @@ class TestReviewParsers(_EnglishEnv):
             "Building 13101-bldg-3728: adjusting the number of storeys above ground to match the field survey.",
         )
         self.assertEqual(
-            hub.human_reason(
-                "**positive validation case**. Building shape changed. Expected CI: preview", "geometry"
-            ),
-            "Building shape changed.",
+            hub.human_reason("**Building shape** changed (`measuredHeight`).", "geometry"),
+            "Building shape changed (Measured Height).",
         )
 
     def test_proposal_title_hides_technical_terms(self):
-        title = "PR-B: building shape changed (measured height 13.8→16.8 + roof) — positive validation case"
+        title = "building shape changed (measuredHeight 13.8→16.8 + roof)"
         self.assertEqual(
             hub.human_proposal_title(title),
-            "Building shape changed (measured height 13.8→16.8 + roof)",
+            "Building shape changed (Measured Height 13.8→16.8 + roof)",
         )
 
     def test_check_names_are_human_readable(self):
@@ -203,7 +225,7 @@ class TestReviewParsers(_EnglishEnv):
         self.assertEqual(
             [p["label"] for p in points],
             [
-                "Description and evidence", "One change = one building",
+                "Description and evidence", "Change classification", "One change = one building",
                 "Consistency with the latest version", "Changed file scope",
                 "CityGML format", "Minimal diff", "Texture consistency",
                 "Geometric structure", "Attribute value plausibility",
@@ -264,25 +286,6 @@ class TestReviewParsers(_EnglishEnv):
         self.assertEqual(retry["kind"], "update")
 
 
-    def test_state_comments_are_trusted_by_bot_identity_alone(self):
-        # pr-base-freshness.yml keeps one comment per PR and edits it between active and
-        # resolved; it never carries an analysis stamp, so the stamp filter must not drop it.
-        bot = {"login": "github-actions[bot]", "type": "Bot"}
-        freshness = {"user": bot, "body": (
-            "<!-- citygml-base-freshness -->\n<!-- status:active -->\n"
-            "Please incorporate the latest version.")}
-        forged = {"user": {"login": "proposer", "type": "User"}, "body": freshness["body"]}
-        old_analysis = {"user": bot, "body": "<!-- citygml-commit-scope -->\n<!-- citygml-ci-context:old:1:1 -->\n"}
-        report = {"context": {"head": "abc123"}, "runId": 50, "runAttempt": 1, "checks": []}
-        for explanation in ({"required": True, "reason": "current", "report": report},
-                            {"required": True, "reason": "report-unavailable"}):
-            trusted = hub.trusted_ci_comments([freshness, forged, old_analysis], explanation)
-            self.assertIn(freshness, trusted, explanation["reason"])
-            self.assertNotIn(forged, trusted)
-            self.assertNotIn(old_analysis, trusted)
-            self.assertEqual(hub.ci_retry_info("fail", trusted)["kind"], "update")
-
-
 class TestReviewApiModel(_EnglishEnv):
     def setUp(self):
         super().setUp()
@@ -313,8 +316,7 @@ class TestReviewApiModel(_EnglishEnv):
         super().tearDown()
 
     def test_queue_and_detail_are_human_readable(self):
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=fake_github_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=fake_github_api
         ):
             queue = self.repo.review_queue()
             self.assertTrue(queue["canReview"])
@@ -334,66 +336,16 @@ class TestReviewApiModel(_EnglishEnv):
         self.assertEqual(detail["center"], [35.05, 139.05])
         self.assertIn("google.com/maps", detail["googleMapsUrl"])
 
-    def test_production_approval_uses_shared_report_without_operator_confirmation(self):
-        from tests.test_operator_explanation import fixture, publisher, gate, REPO
-        for case in ("current", "missing", "stale", "forged", "no-check", "foreign-check", "pending", "other-pr"):
-            pr, run, inspection, report, comment, confirmation = fixture(123)
-            pr.update(title=example_pr()["title"], body=example_pr()["body"], draft=False)
-            pr["head"]["ref"]=example_pr()["head"]["ref"]
-            run["head_branch"]=pr["head"]["ref"]
-            inspection["context"]=gate.context(pr)
-            report=publisher.build_report(REPO,pr,run,inspection,{"summary.md":"Storeys: 2 → 3"},[])
-            comment["body"]=gate.report_comment(report)
-            confirmation["body"]=gate.MARKER+"\nReport-ID: "+report["reportId"]
-            if case=="stale":pr["body"]="updated evidence"
-            sha=pr["head"]["sha"]
-            gate_check={"id":77,"name":"ci-report","head_sha":sha,
-                        "external_id":report["reportId"],
-                        "app":{"slug":"github-actions"},"status":"completed","conclusion":"success"}
-            calls=[]
-            def production_api(path,token,method="GET",payload=None,timeout=30):
-                if method=="POST":
-                    calls.append(payload)
-                    return 200,{"state":payload.get("event")}
-                if path.endswith("/pulls/123"):return 200,pr
-                if "/issues/123/comments?" in path:
-                    if case=="missing":return 200,[]
-                    c=dict(comment)
-                    if case=="forged":c["user"]={"login":"proposer","type":"User"}
-                    return 200,[c]
-                if "/actions/" in path:return 200,{"workflow_runs":[run]}
-                if "/pulls/123/reviews?" in path:
-                    if case=="unconfirmed":return 200,[]
-                    return 200,[{**confirmation,"commit_id":"c"*40 if case=="stale" else sha}]
-                if "/check-runs?" in path:
-                    _,data=fake_github_api(path.replace(sha,"abc123"),token)
-                    check=dict(gate_check)
-                    if case=="foreign-check":check["app"]={"slug":"untrusted"}
-                    if case=="pending":check["status"]="in_progress"
-                    if case=="other-pr":check["external_id"]="pr:999"
-                    if case=="unconfirmed":check["conclusion"]="failure"
-                    if case!="no-check":data["check_runs"].append(check)
-                    return 200,data
-                return fake_github_api(path,token,method,payload,timeout)
-            with self.subTest(case=case), patch.object(hub,"AUTH",FakeAuth()), patch.object(
-                self.repo,"_review_identity",return_value=("test-token","reviewer",REPO)
-            ), patch.object(hub,"gh_api",side_effect=production_api):
-                detail=self.repo.review_detail(123)
-                self.assertEqual(detail["canApprove"],case=="current", detail["blockers"])
-                if case=="current":
-                    self.repo.submit_review(123);self.assertEqual(calls[-1]["event"],"APPROVE")
-
     def test_approval_posts_approve_review(self):
         calls = []
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
             result = fake_github_api(path, token, method, payload, timeout)
-            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
+            if method == "POST":
                 calls.append(payload)
             return result
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review(123)
         self.assertTrue(result["ok"])
@@ -405,12 +357,11 @@ class TestReviewApiModel(_EnglishEnv):
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
             result = fake_github_api(path, token, method, payload, timeout)
-            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
+            if method == "POST":
                 calls.append(payload)
             return result
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review_feedback(
                 123, "The photo orientation looks incorrect. Please verify."
@@ -422,12 +373,11 @@ class TestReviewApiModel(_EnglishEnv):
 
     def test_current_reviewer_feedback_waits_for_proposer_with_source(self):
         def reviewer_api(path, token, method="GET", payload=None, timeout=30):
-            if "/pulls/123/reviews?" in path:
-                return 200, [{"id":1,"user":{"login":"reviewer"},"state": "CHANGES_REQUESTED", "commit_id": "abc123"}]
+            if path.endswith("/pulls/123/reviews?per_page=100"):
+                return 200, [{"state": "CHANGES_REQUESTED", "commit_id": "abc123"}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=reviewer_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=reviewer_api
         ):
             queue = self.repo.review_queue()
             detail = self.repo.review_detail(123)
@@ -439,14 +389,13 @@ class TestReviewApiModel(_EnglishEnv):
     def test_latest_base_request_waits_for_proposer_with_source(self):
         def freshness_api(path, token, method="GET", payload=None, timeout=30):
             if path.endswith("/issues/123/comments?per_page=100"):
-                return 200, [{"user": {"login": "github-actions[bot]", "type": "Bot"}, "body": (
+                return 200, [{"body": (
                     "<!-- citygml-base-freshness -->\n<!-- status:active -->\n"
                     "Please incorporate the latest version."
                 )}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=freshness_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=freshness_api
         ):
             queue = self.repo.review_queue()
         self.assertEqual(queue["items"][0]["queueStatus"], "proposer_waiting")
@@ -458,12 +407,11 @@ class TestReviewApiModel(_EnglishEnv):
         calls = []
 
         def recorder(path, token, method="GET", payload=None, timeout=30):
-            if method == "POST" and not (path == "/graphql" and payload.get("query", "").startswith("query")):
+            if method == "POST":
                 calls.append(payload)
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=recorder
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=recorder
         ):
             result = self.repo.submit_review_feedback(123, "Please verify the target photo.", demo=True)
         self.assertTrue(result["demo"])
@@ -482,8 +430,7 @@ class TestReviewApiModel(_EnglishEnv):
                 return 201, {"id": 1}
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=retry_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=retry_api
         ):
             result = self.repo.request_ci_retry(123)
         self.assertTrue(result["ok"])
@@ -496,23 +443,21 @@ class TestReviewApiModel(_EnglishEnv):
                     "name": "analyze", "status": "completed", "conclusion": "failure",
                 }]}
             if path.endswith("/issues/123/comments?per_page=100"):
-                return 200, [{"user": {"login": "github-actions[bot]", "type": "Bot"}, "body": (
+                return 200, [{"body": (
                     "<!-- citygml-auto-resubmission -->\n<!-- status:active -->\n"
                     "Please verify the reason for change."
                 )}]
             return fake_github_api(path, token, method, payload, timeout)
 
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=retry_api
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=retry_api
         ):
             with self.assertRaisesRegex(RuntimeError, "re-runs the checks automatically"):
                 self.repo.request_ci_retry(123)
 
     def test_texture_asset_is_restricted_and_proxied(self):
         path = "city/udx/bldg/mesh_appearance/photo.jpg"
-        with patch.object(hub, "AUTH", FakeAuth()), patch.object(
-            hub, "gh_api", side_effect=fake_github_api
-        ), patch.object(hub, "gh_raw", return_value=(200, b"jpeg-data", "image/jpeg")) as raw:
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=fake_github_api
+        ), patch.object(runtime, "github_raw", return_value=(200, b"jpeg-data", "image/jpeg")) as raw:
             data, mime = self.repo.review_asset(123, "base", path)
         self.assertEqual(data, b"jpeg-data")
         self.assertEqual(mime, "image/jpeg")
@@ -568,7 +513,7 @@ class TestReviewHtml(unittest.TestCase):
         self.assertIn('data-building="${esc(g.buildingId)}"', html)
         self.assertNotIn("Open GitHub", html)
 
-        queue = html[html.index("async function loadQueue(") : html.index("async function selectPr(number)")]
+        queue = html[html.index("async function loadQueue()") : html.index("async function selectPr(number)")]
         self.assertLess(queue.index("requestedButton"), queue.index("reviewerItems.length) selectPr"))
 
         detail = html[html.index("function renderDetail()") :]

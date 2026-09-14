@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
 #
 # CityGML PR analysis driver (inspection summary) — shared CI logic, plan C.
 # Assembles the automatic inspection summary table and the resubmission-request

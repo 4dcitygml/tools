@@ -39,6 +39,15 @@ The macOS archives bundle no third-party binaries (they run on the
 system-provided `python3` and `git`). Only this repository's own files,
 `LICENSE`, `NOTICE`, and this document are included.
 
+## Loaded at run time by the editor screens (not bundled)
+
+### Leaflet 1.9.4
+
+- Source: `https://unpkg.com/leaflet@1.9.4/dist/leaflet.js` and `leaflet.css`, fetched by the
+  browser when the attribute or texture editor opens its map.
+- License: BSD-2-Clause (© Volodymyr Agafonkin and contributors). Nothing of Leaflet is
+  copied into this repository or its archives.
+
 ## Updating the pinned versions
 
 When bumping a bundled component, update the URL and SHA-256 both here and in
