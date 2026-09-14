@@ -258,9 +258,10 @@
       <a href="https://github.com/4dcitygml/sample-tokyo-station/blob/main/docs/data-contribution-policy.md"
          target="_blank" rel="noopener" data-i18n="tex.cc0_policy_link">data contribution policy</a><span data-i18n="tex.cc0_text_after">.</span>
     </label>
+    <div id="submitConfirm"></div>
     <div id="modalBtns">
       <button id="btnCancel" data-i18n="tex.btn_cancel">Cancel</button>
-      <button id="btnSubmit" class="primary" disabled data-i18n="tex.btn_create">Create</button>
+      <button id="btnSubmit" class="primary" disabled data-i18n="tex.btn_send_confirmed">Send as shown</button>
     </div>
     <div id="modalResult"></div>
   </div>
@@ -1270,9 +1271,38 @@ $('btnPr').onclick = () => {
   $('modalResult').innerHTML = '';
   $('ccAgree').checked = false;
   $('btnSubmit').disabled = true;
+  submitBlocked = true;
+  loadConfirm();
   $('modalBack').style.display = 'flex';
 };
-$('ccAgree').onchange = () => { $('btnSubmit').disabled = !$('ccAgree').checked; };
+// Confirmation before commit / push / PR (hub-v1.2.1): account, name, destination — shown
+// before the consent box; the send button stays off until both are in order.
+let submitBlocked = true;
+async function loadConfirm() {
+  const box = $('submitConfirm');
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px"><span class="spinner"></span> ' +
+    t('tex.confirm_loading', 'Collecting what this send will do…') + '</div>';
+  let s;
+  try { s = await api('/api/submission'); } catch (e) { box.innerHTML = `<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`; return; }
+  const idn = s.identity || {};
+  const row = (k, v) => `<tr><th style="text-align:left;padding:2px 10px 2px 0;white-space:nowrap">${k}</th><td style="padding:2px 0;word-break:break-all">${v}</td></tr>`;
+  submitBlocked = !s.account || !(idn.name || idn.email) || s.originOk === false;
+  box.innerHTML = `<div style="font-size:12px;margin-top:8px;${submitBlocked ? 'color:var(--danger)' : ''}"><b>${submitBlocked
+      ? ((s.account && (idn.name || idn.email) && s.originOk === false)
+          ? t('tex.confirm_origin_bad', 'Nothing can be sent yet: the upload target of this data folder is not your copy under this account. Open the hub and choose the account again (Settings → Change); the hub sets the upload target.')
+          : t('tex.confirm_blocked', 'Nothing can be sent yet. Open the hub, choose the GitHub account for this city (Settings → GitHub account), then open this screen again.'))
+      : t('tex.confirm_lead', 'This is what will happen when you press "Send as shown":')}</b></div>` +
+    `<table style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
+    row(t('tex.confirm_account', 'GitHub account'), s.account ? `<b>@${esc(s.account)}</b>` : `<span style="color:var(--danger)">${t('tex.confirm_no_account', 'none connected for this city')}</span>`) +
+    row(t('tex.confirm_identity', 'Name recorded with the change'), (idn.name || idn.email) ? `${esc(idn.name)} &lt;${esc(idn.email)}&gt;` : t('tex.confirm_identity_unset', '(not set — choose the account in the hub first)')) +
+    row(t('tex.confirm_origin', 'Uploaded to (your own copy)'), s.origin ? esc(s.origin) : '—') +
+    row(t('tex.confirm_upstream', 'Proposed to (the city)'), esc(s.upstream || '')) +
+    row(t('tex.confirm_faces', 'Faces changed'), String(changedFaces.size)) +
+    row(t('tex.confirm_proposal', 'Proposal'), s.autoPr ? t('tex.confirm_pr_auto', 'opened automatically after the upload') : t('tex.confirm_pr_manual', 'GitHub opens for the final step (one green button)')) +
+    `</table>`;
+  $('btnSubmit').disabled = submitBlocked || !$('ccAgree').checked;
+}
+$('ccAgree').onchange = () => { $('btnSubmit').disabled = submitBlocked || !$('ccAgree').checked; };
 $('btnCancel').onclick = () => { $('modalBack').style.display = 'none'; };
 
 function canvasToBase64(canvas) {

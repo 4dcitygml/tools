@@ -1,9 +1,5 @@
 # Integrated front-end (launcher)
 
-> **Which hub is this?** The hub that residents install (the `hub-v` releases) is built
-> from the branch `hub-1.x`; this page mirrors that branch's documentation. The hub code on
-> `main` is the development line and is not what the one-line command installs.
-
 > The app presents itself to users as **"Building Data Editing Tools"** (screen titles).
 > The distribution zip and its top folder are named **`citygml-hub`**; in code and issues
 > the integrated front-end is just called "hub".

@@ -13,7 +13,8 @@ and create PRs.
   order preserved byte-for-byte; consistent with the W6 minimal-diff gate).
 - Change proposals are created automatically via the GitHub API after
   branch → commit (Building: trailer) → push, reusing the OAuth connection saved
-  by the hub. Standalone use without the hub falls back to gh, then a compare URL.
+  by the hub. Standalone use without the hub ends at a compare URL on GitHub's own
+  screen (never the computer's GitHub CLI).
 
 Usage:
     python app.py --repo ~/sample-tokyo-station [--port 8765] [--no-browser]
@@ -21,8 +22,7 @@ Usage:
     # If no clone is found, the first-run setup screen (clone GUI) is shown
 
 Distributed as plain .py with a bundled Python (PythonPortable) on Windows
-(packaging/start-windows.bat; decision 2026-08-28 — no frozen executable). The
-frozen-mode fallbacks (_MEIPASS / sys.frozen) are kept as harmless no-ops.
+(packaging/start-windows.bat; decision 2026-08-28 — no frozen executable).
 The clone location is remembered in ~/.citygml_attr_editor.json.
 """
 from __future__ import annotations
@@ -31,57 +31,38 @@ import argparse
 import json
 import math
 import re
-import shutil
 import subprocess
 import sys
 import threading
 import urllib.error
-import urllib.request
-import webbrowser
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 from xml.etree import ElementTree as ET
 
 APP_DIR = Path(__file__).resolve().parent
-# The shared runtime (layout, files, git, python, city, packs) sits next to app.py in the
-# standalone zip, and one level up in the hub bundle (program/) and the source tree (tools/).
-for _d in (APP_DIR, APP_DIR.parent):
-    if (_d / "runtime.py").is_file():
-        if str(_d) not in sys.path:
-            sys.path.insert(0, str(_d))
-        break
+# The shared runtime (program/runtime.py in the bundle, tools/runtime.py in the source
+# tree) holds every fact the tools share and puts the other shared modules on sys.path.
+_SHARED = next((d for d in (APP_DIR, APP_DIR.parent) if (d / "runtime.py").is_file()), None)
+if _SHARED is None:
+    sys.exit("runtime.py is missing next to the editor: install the tools again with the one-line command")
+sys.path.insert(0, str(_SHARED))
 import runtime  # noqa: E402
+import accounts  # noqa: E402
+import git_sync  # noqa: E402
 
 
 def tr(key: str, default: str, **params) -> str:
-    """Translation of the editor's server-generated text (fail-open, see runtime.translate)."""
-    return runtime.translate("attr_editor", key, default, **params)
+    """Server-generated text of the editor in the display language (fail-open)."""
+    return runtime.tr("attr_editor", key, default, **params)
 
 
 def tr_lang(lang: str, key: str, default: str, **params) -> str:
-    """tr() with an explicit language, for repo-facing text (PR title/body): it follows
-    the repository's working language, not the UI language of the person editing."""
-    return runtime.translate("attr_editor", key, default, lang=lang, **params)
+    """tr() in an explicit language: repository-facing text (PR title / body) follows the
+    repository's working language, not the UI language of the person editing."""
+    return runtime.tr("attr_editor", key, default, lang=lang, **params)
 
-
-# First-run setup (clone from the browser): the shared manager with the editor's messages
-SETUP_MESSAGES = {
-    "clone_running": lambda **p: tr("setup.err_clone_running", "A clone is already running", **p),
-    "git_missing": lambda **p: tr("setup.err_git_missing", "git was not found. Install git by following the setup guide", **p),
-    "bad_url": lambda **p: tr("setup.err_bad_url", "The repository URL format is invalid", **p),
-    "dest_not_empty": lambda **p: tr("setup.err_dest_not_empty", "The destination is not empty: {dest}", **p),
-    "clone_start": lambda **p: tr("setup.clone_start", "Clone started: {url}", **p),
-    "clone_size_note": lambda **p: tr("setup.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)", **p),
-    "clone_done": lambda **p: tr("setup.clone_done", "Clone finished", **p),
-    "clone_failed": lambda **p: tr("setup.err_clone_failed", "git clone failed (exit {code})", **p),
-}
-
-
-class SetupManager(runtime.SetupManager):
-    def __init__(self) -> None:
-        super().__init__(SETUP_MESSAGES)
+# ---- Theme pack (tools/themes/theme_loader.py via runtime; a broken theme.json is ignored) ----
 
 
 def city_map_config(repo_root) -> dict:
@@ -126,6 +107,9 @@ def city_map_html(data: bytes, repo_root) -> bytes:
     return data[:i] + script + data[i:]
 
 
+# ---- Language pack (tools/i18n/i18n_loader.py via runtime; a broken catalog falls back to English) ----
+
+
 def norm_repo_lang(value: object) -> str:
     """Normalize 4dcitygml.json "lang" (BCP 47) to a catalog language; en if absent."""
     primary = str(value or "").split("-")[0].strip().lower()
@@ -158,37 +142,20 @@ def created_by_trailer(root: "Path | str", app: str) -> str:
     return f"Created-By: {app}/{tag}" if tag else f"Created-By: {app}"
 
 
-def load_hub_token() -> str:
-    """Read the GitHub token connected via the hub (empty string if none)."""
-    try:
-        token = json.loads(runtime.AUTH_PATH.read_text(encoding="utf-8")).get("token", "")
-        return str(token) if token else ""
-    except (OSError, ValueError):
-        return ""
+def sync_upstream_main(root) -> "str | None":
+    """Bring the machine-managed local main in line with the upstream city repo.
 
-
-def github_api(path: str, token: str, method: str = "GET",
-               payload: "dict | None" = None, timeout: int = 30) -> "tuple[int, dict]":
-    """Call the GitHub REST API with the saved OAuth connection (no gh command needed)."""
-    body = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request("https://api.github.com" + path, data=body, method=method)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("User-Agent", "citygml-attr-editor")
-    if body is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as res:
-            raw = res.read().decode("utf-8") or "{}"
-            return res.status, json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        try:
-            return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
-        except ValueError:
-            return exc.code, {}
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        return 0, {"message": tr("editor.api_conn_error", "Connection error: {reason}",
-                                 reason=exc.reason if hasattr(exc, "reason") else exc)}
+    Delegates to the shared git_sync module: one cheap ls-remote round trip, then a
+    fetch with git's progress-based abort (no wall-clock cut-off — a large annual
+    update may take minutes and must be allowed to finish). Fail-open: offline or
+    not a clone leaves the data as it is. Returns the new main commit when an
+    update happened, else None.
+    """
+    if not runtime.git_exe():
+        return None
+    result = git_sync.sync_main(Path(root).resolve(), runtime.upstream_url(root),
+                                runtime.git_args(net=True, store=accounts.store_for(accounts.login_for_clone(root))), log=print)
+    return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
 
 
 NS = {
@@ -1664,13 +1631,14 @@ class Repo:
         return span[: last.end()] + eol + indent + new_el + span[last.end() :], True
 
     # ---- git / PR ----
+    @property
+    def login(self) -> "str | None":
+        """The account this editor works as for this clone (accounts.login_for_clone)."""
+        return accounts.login_for_clone(self.root)
+
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         net = bool(args) and args[0] in ("push", "fetch", "pull")
-        r = subprocess.run(
-            [*runtime.git_base_args(net=net), "-C", str(self.root), *args],
-            capture_output=True,
-            text=True,
-        )
+        r = runtime.git(self.root, *args, net=net, store=accounts.store_for(self.login) if net else None)
         if check and r.returncode != 0:
             raise RuntimeError(tr(
                 "editor.err_git_failed", "git {args} failed:\n{stderr}",
@@ -1683,10 +1651,8 @@ class Repo:
 
         Runs right before a submission, so it is allowed to take as long as the
         transfer needs; only a stalled transfer is cut (git_sync's low-speed abort)."""
-        mod = runtime.git_sync_module()
-        if mod is None:
-            return None
-        return mod.fetch_main(self.root, runtime.upstream_url(self.root), runtime.git_base_args(net=True), log=print)
+        return git_sync.fetch_main(self.root, runtime.upstream_url(self.root),
+                                   runtime.git_args(net=True, store=accounts.store_for(self.login)), log=print)
 
     def _fresh_pr_base(self, rel: str) -> "str | None":
         """Commit to cut the edit branch from, so the PR base is never stale.
@@ -1702,7 +1668,7 @@ class Repo:
             return None
         diff = self._git("diff", "--name-only", "HEAD", base, "--", rel, check=False)
         if diff.stdout.strip():
-            runtime.sync_upstream_main(self.root)
+            sync_upstream_main(self.root)
             self._tile_cache.clear()
             raise ValueError(tr(
                 "editor.err_upstream_advanced",
@@ -1731,6 +1697,29 @@ class Repo:
         ]
         return {"branch": branch, "dirty": dirty}
 
+    def submission_info(self) -> dict:
+        """What a send would do, for the confirmation shown before commit / push / PR (hub-v1.2.1).
+
+        Everything here is read from the clone and the account store; nothing is
+        guessed from the computer's global Git configuration."""
+        login = self.login
+        identity = accounts.clone_identity(self.root)
+        upstream = runtime.upstream_nwo(self.root)
+        origin = self._origin_nwo()            # the seam tests use for the GitHub-facing name
+        origin_url = self._origin_url()
+        origin_ok = bool(login and origin and origin_url.startswith("https://github.com/")
+                         and origin.split("/")[0].lower() == login.lower())
+        return {
+            "ok": True,
+            "account": login,
+            "identity": identity,
+            "origin": origin,
+            "originOk": origin_ok,
+            "upstream": upstream,
+            "branchPattern": "edit/<building id>-<date>-<time>",
+            "autoPr": bool(accounts.token_for(self.login)),
+        }
+
     def revert_file(self, code: str) -> dict:
         path = self.tile_files().get(code)
         if path is None:
@@ -1740,14 +1729,18 @@ class Repo:
         self._tile_cache.pop(code, None)
         return {"ok": True, "relpath": rel}
 
-    def _origin_nwo(self) -> "str | None":
+    def _origin_url(self) -> str:
         r = self._git("remote", "get-url", "origin", check=False)
-        if r.returncode != 0:
-            return None
-        url = r.stdout.strip()
-        m = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
-        m = m or re.match(r"https://github\.com/(.+?)(?:\.git)?$", url)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    @staticmethod
+    def _nwo_of(url: str) -> "str | None":
+        m = (re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
+             or re.match(r"https://github\.com/(.+?)(?:\.git)?$", url))
         return m.group(1) if m else None
+
+    def _origin_nwo(self) -> "str | None":
+        return self._nwo_of(self._origin_url())
 
     def _compare_url(self, branch: str) -> "str | None":
         """GitHub screen for proposing changes upstream. Never a fork-internal-only compare."""
@@ -1759,34 +1752,30 @@ class Repo:
             f"https://github.com/{runtime.upstream_nwo(getattr(self, 'root', None))}/compare/main...{owner}:{branch}?expand=1"
         )
 
-    def _draft_proposal(self) -> bool:
-        # Standard GitHub proposal flow. Authors can opt into Draft on GitHub;
-        # CI failures block merging without a separate human confirmation stage.
-        return False
-
     def _create_pr_api(self, branch: str, title: str,
                        body: str) -> "tuple[str | None, str | None]":
         """Reuse the hub's OAuth connection to create the proposal without a GitHub screen."""
-        token = load_hub_token()
+        token = accounts.token_for(self.login)
         origin = self._origin_nwo()
         if not token or not origin:
             return None, None
         owner = origin.split("/", 1)[0]
-        code, data = github_api(
-            f"/repos/{runtime.upstream_nwo(getattr(self, 'root', None))}/pulls",
-            token,
-            method="POST",
-            payload={
-                "title": title,
-                "head": f"{owner}:{branch}",
-                "base": "main",
-                "body": body,
-                "draft": self._draft_proposal(),
-            },
-        )
+        try:
+            code, data = runtime.github_api(
+                f"/repos/{runtime.upstream_nwo(self.root)}/pulls", token, method="POST",
+                payload={"title": title, "head": f"{owner}:{branch}", "base": "main", "body": body})
+        except (urllib.error.URLError, OSError) as exc:
+            code, data = 0, {"message": tr("editor.api_conn_error", "Connection error: {reason}",
+                                           reason=getattr(exc, "reason", exc))}
         if code == 201 and data.get("html_url"):
             return str(data["html_url"]), None
         message = str(data.get("message") or f"HTTP {code}")
+        if accounts.is_org_restriction(code, data):
+            message = tr("editor.err_org_restricted",
+                         "The organization that hosts this city has not approved this tool yet. "
+                         "Ask an organization owner to grant it access (GitHub → Settings → "
+                         "Applications → this app → Organization access). Your upload is kept; "
+                         "the proposal can be opened later.")
         return None, tr(
             "editor.err_pr_auto_failed",
             "Could not automatically create the change proposal for the maintainer"
@@ -1840,8 +1829,7 @@ class Repo:
         try:
             meta = json.loads((self.root / "4dcitygml.json").read_text(encoding="utf-8"))
             names = meta.get("name") or {}
-            mod = runtime.i18n_module()
-            ui = mod.resolve_lang(runtime.load_config().get("lang")) if mod else "en"
+            ui = runtime.ui_lang()
             if isinstance(names, dict):
                 city = str(names.get(ui) or names.get("en") or meta.get("id") or "")
             else:
@@ -2031,6 +2019,12 @@ class Repo:
                 self._git("checkout", prev, check=False)
                 self._git("branch", "-D", branch, check=False)
                 self._tile_cache.pop(code, None)
+                if not self.login:
+                    raise RuntimeError(tr(
+                        "editor.err_push_no_account",
+                        "No GitHub account is connected for this city, so nothing can be sent."
+                        " Your edits remain on this screen. Open the hub, choose the account"
+                        " (Settings → GitHub account), then press Send again."))
                 raise RuntimeError(tr(
                     "editor.err_push_failed",
                     "Could not send to GitHub. Your edits remain on this screen."
@@ -2093,32 +2087,10 @@ class Repo:
                     f"{_md_text(reason) or tr_lang(rlang, 'pr.no_notes', 'No additional notes.')}\n"
                 )
             pr_url, api_note = self._create_pr_api(branch, pr_title, pr_body)
+            # hub-v1.2.1: the proposal is opened with the city's account or by the person on
+            # GitHub's own screen — never through the computer's GitHub CLI (another identity).
             if pr_url:
                 result["prUrl"] = pr_url
-            elif shutil.which("gh"):
-                gh = subprocess.run(
-                    [
-                        "gh", "pr", "create",
-                        *(["--draft"] if self._draft_proposal() else []),
-                        "--head", branch,
-                        "--title", pr_title,
-                        "--body", pr_body,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(self.root),
-                )
-                if gh.returncode == 0:
-                    result["prUrl"] = gh.stdout.strip().splitlines()[-1]
-                else:
-                    result["compareUrl"] = self._compare_url(branch)
-                    result["note"] = (
-                        (api_note + "\n" if api_note else "")
-                        + tr("editor.note_confirm_github",
-                             "Complete the submission on the GitHub confirmation screen.")
-                        + "\n"
-                        + gh.stderr.strip()
-                    )
             else:
                 # Standalone use without the hub keeps a fallback of confirming via the GitHub screen.
                 result["compareUrl"] = self._compare_url(branch)
@@ -2131,122 +2103,42 @@ class Repo:
             return result
 
 
-SETUP_HTML = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title data-i18n="setup.doc_title">Initial setup — CityGML Attribute Editor</title>
-<style>
-  body {{ font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f5f6f8;
-         color: #1c2733; display: flex; justify-content: center; padding: 40px 16px; }}
-  main {{ background: #fff; border: 1px solid #dde1e6; border-radius: 12px;
-          padding: 28px 32px; max-width: 640px; width: 100%; }}
-  h1 {{ font-size: 18px; margin: 0 0 6px; }}
-  p.sub {{ color: #6b7785; font-size: 13px; margin-top: 0; }}
-  ol {{ font-size: 13px; padding-left: 20px; line-height: 1.8; }}
-  label {{ display: block; font-weight: 600; font-size: 13px; margin: 14px 0 4px; }}
-  input {{ width: 100%; box-sizing: border-box; font: inherit; padding: 8px;
-           border: 1px solid #dde1e6; border-radius: 6px; }}
-  button {{ margin-top: 18px; font: inherit; font-weight: 600; color: #fff;
-            background: #1f883d; border: none; border-radius: 6px;
-            padding: 10px 22px; cursor: pointer; }}
-  button:disabled {{ opacity: .5; cursor: default; }}
-  #log {{ background: #24292f; color: #c9d1d9; border-radius: 6px; padding: 10px 12px;
-          font: 12px ui-monospace, monospace; white-space: pre-wrap; margin-top: 16px;
-          min-height: 90px; display: none; }}
-  .warn {{ background: #fff8e5; border: 1px solid #eed888; border-radius: 6px;
-           padding: 8px 12px; font-size: 12px; margin-top: 12px; }}
-  a {{ color: #0969da; }}
-</style></head><body><main>
-  <h1 data-i18n="setup.title">Initial setup</h1>
-  <p class="sub" data-i18n="setup.lead">There is no clone of the building data (sample-tokyo-station) yet. It will be fetched to this computer.</p>
-  <ol>
-    <li><span data-i18n="setup.step1_pre">Log in with your GitHub account and </span><a href="{upstream}/fork" target="_blank" rel="noopener" data-i18n="setup.step1_link">create a fork from here</a><span data-i18n="setup.step1_post"> (your own copy).</span></li>
-    <li><span data-i18n="setup.step2_pre">Paste the URL of the created fork (</span><code data-i18n="setup.step2_code">https://github.com/YOUR-ID/sample-tokyo-station</code><span data-i18n="setup.step2_post">) below and press [Run clone].</span></li>
-  </ol>
-  <label data-i18n="setup.url_label">Repository URL (your fork)</label>
-  <input id="url" data-i18n-placeholder="setup.url_placeholder" placeholder="https://github.com/<your-id>/sample-tokyo-station.git">
-  <label data-i18n="setup.dest_label">Destination folder</label>
-  <input id="dest" value="{default_dest}">
-  <div class="warn" id="gitWarn" style="display:none" data-i18n="setup.git_warn">⚠ git was not found. First install git by following the steps in the setup guide.</div>
-  <button id="go" data-i18n="setup.btn_clone">Run clone</button>
-  <div id="log"></div>
-<script>
-const $ = id => document.getElementById(id);
-async function poll() {{
-  const s = await fetch('/api/setup/status').then(r => r.json());
-  if (!s.gitAvailable) $('gitWarn').style.display = 'block';
-  if (s.running || s.done || s.error) {{
-    $('log').style.display = 'block';
-    $('log').textContent = s.log.join('\\n') + (s.error ? '\\n\\n❌ ' + s.error : '');
-    $('go').disabled = s.running;
-  }}
-  if (s.done) {{ location.href = '/'; return; }}
-  if (s.running) setTimeout(poll, 800);
-}}
-$('go').onclick = async () => {{
-  $('go').disabled = true;
-  const r = await fetch('/api/setup', {{
-    method: 'POST', headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{url: $('url').value, dest: $('dest').value}}),
-  }}).then(r => r.json());
-  if (r.ok === false) {{ alert(r.error); $('go').disabled = false; return; }}
-  poll();
-}};
-poll();
-</script></main></body></html>"""
+# --------------------------------------------------------------------------
+# HTTP server (first-run setup while there is no clone: setup.html + git_sync.CloneJob)
+# --------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------
-# HTTP server
-# --------------------------------------------------------------------------
-_CONTENT_TYPES = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "text/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".xml": "application/xml; charset=utf-8",
-    ".gml": "application/xml; charset=utf-8",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".pdf": "application/pdf",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".csv": "text/csv; charset=utf-8",
+_CLONE_TEXTS = {
+    "running": ("setup.err_clone_running", "A clone is already running"),
+    "no_git": ("setup.err_git_missing", "git was not found. Install git by following the setup guide"),
+    "bad_url": ("setup.err_bad_url", "The repository URL format is invalid"),
+    "not_empty": ("setup.err_dest_not_empty", "The destination is not empty: {dest}"),
+    "start": ("setup.clone_start", "Clone started: {url}"),
+    "size_note": ("setup.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)"),
+    "done": ("setup.clone_done", "Clone finished"),
+    "failed": ("setup.err_clone_failed", "git clone failed (exit {code})"),
 }
 
 
-def write_launcher(repo_root: Path) -> Path | None:
-    """Write a double-click launcher to the desktop (macOS).
-
-    Locally generated files carry no quarantine attribute, so they launch on
-    double-click without a Gatekeeper warning. An existing one is left untouched.
-    """
-    if sys.platform != "darwin":
-        return None
-    app_in_clone = repo_root / "tools" / "attr_editor" / "app.py"
-    if not app_in_clone.is_file():
-        return None
-    desktop = Path.home() / "Desktop"
-    target = (desktop if desktop.is_dir() else repo_root) / "Attribute Editor.command"
-    if target.exists():
-        return target
-    try:
-        target.write_text(
-            "#!/bin/zsh\n"
-            f'exec /usr/bin/env python3 "{app_in_clone}"\n',
-            encoding="utf-8",
-        )
-        target.chmod(0o755)
-        print(f"Launcher created: {target} (double-click to launch next time)")
-        return target
-    except OSError:
-        return None
+def clone_text(event: str, **params) -> str:
+    """The editor's wording for the clone job's events (git_sync.CloneJob)."""
+    key, default = _CLONE_TEXTS[event]
+    return tr(key, default, **params)
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(runtime.LocalHandler):
     APP_ID = "attr_editor"  # selects the language catalog (tex_editor overrides in its subclass)
     repo: Repo | None = None  # set at startup (None = first-run setup mode)
-    setup_mgr = SetupManager()
+    setup_mgr = git_sync.CloneJob(
+        clone_text, lambda: runtime.git_args(net=True, store=accounts.store_for(accounts.login_for_clone(None))),
+        runtime.git_exe)
+
+    @property
+    def root(self) -> "Path | None":
+        return self.repo.root if self.repo is not None else None
+
+    def page_transform(self, data: bytes) -> bytes:
+        return city_map_html(data, self.root)
 
     @classmethod
     def _try_activate(cls) -> None:
@@ -2256,93 +2148,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             cls.repo = Repo(Path(st.dest))
-            runtime.save_config({"repo": st.dest})
-            write_launcher(cls.repo.root)
+            runtime.remember_clone(runtime.clone_city(st.dest), st.dest)
         except RuntimeError as e:
             st.done = False
             st.error = tr("setup.err_verify_failed",
                           "Verification of the cloned destination failed: {error}", error=e)
 
-    # ---- Response helpers ----
-    def _json(self, obj, status: int = 200) -> None:
-        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _error(self, msg: str, status: int = 400) -> None:
-        self._json({"ok": False, "error": msg}, status)
-
-    def _ui_path(self, name: str) -> Path:
-        """Locate UI files: next to app.py (normal / PyInstaller bundle), then inside the clone.
-
-        In the bootstrap style where only the single app.py is downloaded and
-        run, files are served from tools/attr_editor/ inside the clone once
-        cloning completes.
-        """
-        local = APP_DIR / name
-        if local.is_file():
-            return local
-        if self.repo is not None:
-            return self.repo.root / "tools" / "attr_editor" / name
-        return local
-
-    def _file(self, path: Path) -> None:
-        if not path.is_file():
-            self._error("not found", 404)
-            return
-        data = path.read_bytes()
-        if path.suffix.lower() == ".html":
-            root = self.repo.root if self.repo is not None else None
-            data = runtime.themed_html(data, root)
-            data = city_map_html(data, root)
-            data = runtime.localized_html(data, self.APP_ID)
-        self.send_response(200)
-        self.send_header(
-            "Content-Type",
-            _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream"),
-        )
-        self.send_header("Content-Length", str(len(data)))
-        # UI (HTML) is never cached so updates reliably arrive. Images etc. cache for 1 hour
-        cache = "no-cache" if path.suffix.lower() == ".html" else "max-age=3600"
-        self.send_header("Cache-Control", cache)
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _city_logo(self) -> None:
-        """Municipality logo (logo in the clone's 4dcitygml.json). Resolution is fail-closed.
-
-        Validation (relative path, raster extension, under the root, ≤ 1 MiB) is
-        done by theme_loader's resolve_logo(); if unmet, 404 (the page keeps it
-        hidden via onerror).
-        """
-        mod = runtime.theme_module()
-        got = None
-        if mod is not None and self.repo is not None and hasattr(mod, "resolve_logo"):
-            try:
-                got = mod.resolve_logo(self.repo.root)
-            except Exception:  # any resolution failure is 404 (the logo is decoration, not functionality)
-                got = None
-        if got is None:
-            self._error("not found", 404)
-            return
-        path, ctype = got
-        data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)  # fixed from the extension (no sniffing)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "max-age=3600")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _safe_child(self, base: Path, rel: str) -> Path | None:
-        p = (base / unquote(rel)).resolve()
-        return p if p.is_relative_to(base.resolve()) else None
-
-    def log_message(self, fmt, *args):  # quiet (errors only, to the standard stderr)
-        pass
+    def _file(self, path: Path, values: "dict | None" = None) -> None:
+        self.serve_file(path, values)
 
     # ---- Routing ----
     def do_GET(self) -> None:
@@ -2356,20 +2169,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.repo is None:
                 # First-run setup mode: every GET returns the setup screen
-                html = runtime.localized_html(SETUP_HTML.format(
-                    upstream=runtime.UPSTREAM_URL,
-                    default_dest=str(Path.home() / "Documents" / "sample-tokyo-station"),
-                ).encode("utf-8"), self.APP_ID)
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(html)))
-                self.end_headers()
-                self.wfile.write(html)
+                self._file(APP_DIR / "setup.html", {"UPSTREAM": runtime.DEFAULT_CITY_URL,
+                                                    "DEFAULT_DEST": str(runtime.home() / "Documents" / "sample-tokyo-station")})
                 return
             if path in ("/", "/index.html"):
-                self._file(self._ui_path("index.html"))
+                self._file(APP_DIR / "index.html")
             elif path == "/viewer.html":
-                self._file(self._ui_path("viewer.html"))
+                self._file(APP_DIR / "viewer.html")
             elif path == "/city-logo":
                 self._city_logo()
             elif path == "/api/tiles":
@@ -2384,6 +2190,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.repo.codelists())
             elif path == "/api/status":
                 self._json({"ok": True, **self.repo.git_status()})
+            elif path == "/api/submission":
+                self._json(self.repo.submission_info())
             elif path == "/api/repo":
                 # Self-report so the hub can check which city the editor on this port serves
                 self._json({"ok": True, "root": str(self.repo.root),
@@ -2424,7 +2232,7 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001 — returned as an API response
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
 
     def do_POST(self) -> None:
         try:
@@ -2471,26 +2279,12 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
-
-
-def create_server(repo_root, port: int, *, data: "str | None" = None,
-                  textures=None) -> ThreadingHTTPServer:
-    """Entry point for external callers (e.g. the integrated frontend) to assemble this server.
-
-    Even in a frozen build (an exe without a Python runtime), the integrated
-    frontend can start this editor via `create_server(...).serve_forever()`.
-    Performs the same Handler.repo setup as main() and does not open a browser.
-    """
-    runtime.sync_upstream_main(repo_root)
-    Handler.repo = Repo(Path(repo_root), data)
-    if textures:
-        Handler.repo.tex_override = Path(textures).resolve()
-    return ThreadingHTTPServer(("127.0.0.1", int(port)), Handler)
+            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
 
 
 def main() -> None:
-    runtime.make_console_safe()
+    runtime.console_safe()
+    accounts.scrub_git_env()   # the shell's git overrides never reach the clone
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (can be omitted when run from inside clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
@@ -2500,15 +2294,15 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    repo_root = args.repo or runtime.detect_repo(APP_DIR)
+    repo_root = args.repo or runtime.detect_repo()
     if repo_root is None:
-        cfg = runtime.load_config()
+        cfg = runtime.read_config()
         saved = cfg.get("repo")
         if saved and runtime.has_building_data(Path(saved)):
             repo_root = Path(saved)
 
     if repo_root is not None:
-        runtime.sync_upstream_main(repo_root)
+        sync_upstream_main(repo_root)
         try:
             Handler.repo = Repo(repo_root, args.data)
         except RuntimeError as e:
@@ -2516,25 +2310,12 @@ def main() -> None:
         if args.textures:
             Handler.repo.tex_override = args.textures.resolve()
             print(f"  Texture replacement: {Handler.repo.tex_override}")
-        # Users who came via setup (config file present) always get a launcher
-        saved = runtime.load_config().get("repo")
-        if saved and Path(saved).resolve() == Handler.repo.root:
-            write_launcher(Handler.repo.root)
     # Without repo_root, start in first-run setup mode (the clone runs from the browser)
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    url = f"http://localhost:{args.port}/"
-    print(f"CityGML attribute editor: {url}")
-    if Handler.repo is not None:
-        print(f"  Data: {Handler.repo.bldg_dir}")
-    else:
-        print("  Clone not found → perform first-run setup in browser")
-    if not args.no_browser:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nExiting")
+    banner = ["CityGML attribute editor: {url}",
+              f"  Data: {Handler.repo.bldg_dir}" if Handler.repo is not None
+              else "  Clone not found → perform first-run setup in browser"]
+    runtime.serve(Handler, args.port, banner, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

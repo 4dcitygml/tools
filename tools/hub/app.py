@@ -1,37 +1,31 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""sample-tokyo-station integrated front-end (launcher) — local server.
+"""4dcitygml hub — the local screen a contributor starts from.
 
-From a single screen:
-- **Launch by button** the attribute editor (attr_editor) / texture editor (tex_editor)
-  (each tool's local server starts as a child process and its URL opens)
-- Check the GitHub account / git status (entry point of the guided support; detailed tools are #59)
-- **List of your own Pull Requests / Issues** (with reply/review indicators)
-- **Merged PR count and achievement badges** (gamification)
-- "I'm stuck / suggest" in-hub form (creates a UX feedback Issue with the connected token)
+One process serves one city clone: it keeps the clone's main in line with the city
+repository (git_sync), launches the attribute and texture editors as child processes,
+holds the GitHub account the city is bound to (accounts), lists the person's own
+proposals, offers the review screen, and announces newer tool versions (applied at
+the next start). Everything it needs travels in its own folder (runtime.py and the
+other shared modules); a city clone carries no code.
 
-Depends only on the Python 3.9+ standard library. **The GitHub authentication for the
-initial setup implements the OAuth device flow itself**, so neither gh nor a terminal
-is needed (if gh is present, its token is reused).
-The post-launch dashboard (PR / Issue lists) uses the `gh` CLI as before.
+Standard library only. GitHub is reached over HTTPS with the account's token (OAuth
+device flow for a new sign-in); the GitHub CLI is consulted only when the person
+explicitly chooses "use this computer's GitHub".
 
 Usage:
-    python3 tools/hub/app.py            # no arguments needed inside a clone → http://localhost:8760
-    python3 tools/hub/app.py --repo ~/sample-tokyo-station [--port 8760] [--no-browser]
+    python3 hub.py                                  # started by the launcher (CITYGML_UPSTREAM selects the clone)
+    python3 tools/hub/app.py --repo <clone> [--port 8760] [--no-browser]
 """
 from __future__ import annotations
 
 import argparse
-import ast
 from concurrent.futures import ThreadPoolExecutor
-import importlib.util
 import json
 import mmap
 import os
 import re
-import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -39,58 +33,195 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 APP_DIR = Path(__file__).resolve().parent
-# The shared runtime (layout, files, git, python, city, packs) sits next to hub.py in the
-# installed tree (program/) and one level up in the source tree (tools/).
-for _d in (APP_DIR, APP_DIR.parent):
-    if (_d / "runtime.py").is_file():
-        if str(_d) not in sys.path:
-            sys.path.insert(0, str(_d))
-        break
+# The shared runtime (program/runtime.py in the bundle, tools/runtime.py in the source
+# tree) holds every fact the tools share and puts the other shared modules on sys.path.
+_SHARED = next((d for d in (APP_DIR, APP_DIR.parent) if (d / "runtime.py").is_file()), None)
+if _SHARED is None:
+    sys.exit("runtime.py is missing next to the hub: install the tools again with the one-line command")
+sys.path.insert(0, str(_SHARED))
 import runtime  # noqa: E402
+import accounts  # noqa: E402
+import git_sync  # noqa: E402
+import pr_classification  # noqa: E402
+import shortcuts  # noqa: E402
+
 DEFAULT_PORT = 8760
 
 
 def tr(key: str, default: str, **params) -> str:
-    """Translation of the hub's server-generated text (fail-open, see runtime.translate)."""
-    return runtime.translate("hub", key, default, **params)
+    """Server-generated text of the hub in the display language (fail-open)."""
+    return runtime.tr("hub", key, default, **params)
 
 
-# First-run setup (clone from the browser): the shared manager with the hub's messages
-SETUP_MESSAGES = {
-    "clone_running": lambda **p: tr("hub.err_clone_running", "A clone is already running", **p),
-    "git_missing": lambda **p: tr("hub.err_git_missing_setup", "git was not found. Prepare git by following the setup guide", **p),
-    "bad_url": lambda **p: tr("hub.err_bad_repo_url", "The repository URL format is invalid", **p),
-    "dest_not_empty": lambda **p: tr("hub.err_dest_not_empty", "The destination is not empty: {dest}", **p),
-    "clone_start": lambda **p: tr("hub.clone_start", "Clone started: {url}", **p),
-    "clone_size_note": lambda **p: tr("hub.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)", **p),
-    "clone_done": lambda **p: tr("hub.clone_done", "Clone finished", **p),
-    "clone_failed": lambda **p: tr("hub.err_clone_failed", "git clone failed (exit {code})", **p),
-}
+def current_login() -> "str | None":
+    """The account this hub process works as (the one bound to its city), or None."""
+    return SESSION.login
 
 
-class SetupManager(runtime.SetupManager):
-    def __init__(self) -> None:
-        super().__init__(SETUP_MESSAGES)
+# ---- One clone per city (hub-v1.2.0) ----
+# The environment variable set by the city's start script only selects WHICH clone
+# to use; the clone's own 4dcitygml.json defines the city (sync target, fork target,
+# logo, theme). The two must agree, otherwise the clone is not adopted. Clones are
+# remembered per city under `cities[<owner/repo>]`; the legacy single `repo` key is
+# kept as "last used" for the standalone attribute editor.
 
+
+# ---- Tool updates (hub-v1.2.0): check automatically, fetch on request, apply at the next start ----
+# The version of the hub is decided by 4dcitygml/tools releases (cities distribute no
+# code and pin no client version). At start the hub asks the releases API once; a
+# newer version is announced in a banner. "Get it now" runs the launcher's fetch mode
+# (runtime.fetch_latest_hub: download, SHA-256 digest check, unpack into the versioned
+# folder next to the running one). Nothing is downloaded without that click, and the
+# running hub is never modified; the launcher picks the newest installed version at
+# the next start. A city may declare `min_hub` in 4dcitygml.json (data, advisory):
+# the banner then says why the update matters.
+HUB_RELEASES_API = "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30"
+
+
+def latest_hub_release(releases: list) -> "dict | None":
+    """The newest published hub-v release from the releases API payload: {tag, notesUrl}, or None."""
+    best = None
+    for rel in releases if isinstance(releases, list) else []:
+        key = runtime.version_tuple(rel.get("tag_name"))
+        if not key or rel.get("draft") or rel.get("prerelease"):
+            continue
+        if best is None or key > runtime.version_tuple(best["tag_name"]):
+            best = rel
+    return {"tag": best["tag_name"], "notesUrl": best.get("html_url") or ""} if best else None
+
+
+def fetch_releases(url: str = HUB_RELEASES_API) -> list:
+    status, raw, _ = runtime.request(url, headers={"Accept": "application/vnd.github+json"}, timeout=20)
+    if status != 200:
+        raise RuntimeError(f"GitHub releases API answered HTTP {status}")   # rate limit, outage: named, not "up to date"
+    data = json.loads(raw.decode("utf-8"))
+    return data if isinstance(data, list) else []
+
+
+def min_hub_of(clone_root) -> "str | None":
+    try:
+        value = json.loads((Path(clone_root) / "4dcitygml.json").read_text(encoding="utf-8")).get("min_hub")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return str(value) if runtime.version_tuple(value) else None
+
+
+class UpdateManager:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = {
+            "running": runtime.running_hub_tag(), "latest": None, "available": False, "checked": False,
+            "notesUrl": "", "minHub": None, "minHubOk": True, "error": "",
+            "fetch": {"state": "idle", "tag": None, "message": ""},
+        }
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return json.loads(json.dumps(self._state))
+
+    def _set(self, **kw) -> None:
+        with self._lock:
+            self._state.update(kw)
+
+    def check_async(self, min_hub: "str | None" = None, fetch_json=None) -> None:
+        def work():
+            try:
+                latest = latest_hub_release((fetch_json or fetch_releases)())
+            except Exception as e:  # offline etc.: silently keep the running version
+                self._set(checked=True, error=str(e))
+                return
+            running = runtime.version_tuple(self._state["running"])
+            newest = runtime.version_tuple(latest["tag"]) if latest else None
+            available = bool(newest and (running is None or newest > running))
+            min_ok = True
+            if min_hub and runtime.version_tuple(min_hub) and running and runtime.version_tuple(min_hub) > running:
+                min_ok = False
+                available = available or bool(newest and newest >= runtime.version_tuple(min_hub))
+            fetch = dict(self._state["fetch"])
+            if latest and (runtime.hubs_dir() / latest["tag"] / "program" / "hub.py").is_file() and available:
+                fetch = {"state": "done", "tag": latest["tag"], "message": ""}
+            self._set(checked=True, latest=latest["tag"] if latest else None,
+                      notesUrl=(latest or {}).get("notesUrl", ""), available=available,
+                      minHub=min_hub, minHubOk=min_ok, fetch=fetch)
+        threading.Thread(target=work, name="citygml-update-check", daemon=True).start()
+
+    def fetch_async(self, fetch=None) -> dict:
+        """Start the launcher's fetch of the newest version (runtime.fetch_latest_hub); the
+        state reports running / done / failed. fetch is a test seam."""
+        with self._lock:
+            tag = self._state.get("latest")
+            if self._state["fetch"]["state"] == "running":
+                return dict(self._state["fetch"])
+            if not tag:
+                return {"state": "failed", "tag": None, "message": "No newer version is known"}
+            self._state["fetch"] = {"state": "running", "tag": tag, "message": ""}
+
+        def work():
+            try:
+                got = (fetch or runtime.fetch_latest_hub)()
+                self._set(fetch={"state": "done", "tag": got or tag, "message": ""})
+            except Exception as e:
+                self._set(fetch={"state": "failed", "tag": tag, "message": runtime.public_message(e)})
+        threading.Thread(target=work, name="citygml-update-fetch", daemon=True).start()
+        return {"state": "running", "tag": tag, "message": ""}
+
+
+def create_city_shortcut(clone_root: Path) -> dict:
+    """A desktop launcher for the clone's city: only the city id is embedded (see tools/shortcuts.py)."""
+    city = runtime.clone_city(clone_root)
+    if not city:
+        raise RuntimeError("The clone does not name its city (4dcitygml.json repo)")
+    try:
+        cfg = json.loads((Path(clone_root) / "4dcitygml.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    name = cfg.get("name")
+    lang = str(cfg.get("lang") or "en").split("-")[0]
+    if isinstance(name, dict):
+        display = name.get(lang) or name.get("en") or next(iter(name.values()), city)
+    else:
+        display = name or city.split("/")[-1]
+    logo = Path(clone_root) / str(cfg.get("logo") or "logo.png")
+    shortcuts.ensure_launcher()
+    path = shortcuts.create_shortcut(runtime.tools_dir(), str(display), city, logo if logo.is_file() else None)
+    shortcuts.reveal(path)
+    return {"ok": True, "path": str(path), "name": path.name}
+
+
+def running_hub_for(root, start: int = DEFAULT_PORT, step: int = 2, tries: int = 20) -> "tuple[str, str | None] | None":
+    """(URL, version tag) of a hub already serving this clone, or None. The caller decides
+    whether to open it (same version) or to start anyway (another version left running)."""
+    root = Path(root).resolve()
+    port = start
+    for _ in range(tries):
+        if runtime.port_open(port):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                if Path(str(data.get("repo") or "")).resolve() == root:
+                    return f"http://localhost:{port}/", data.get("hubTag") or None
+            except Exception:
+                pass
+        port += step
+    return None
 
 # Child tools that can be launched (relative path to app.py, default port)
 TOOLS = {
     "attr_editor": {
         "label": "Attribute Editor",
         "desc": "View and edit building attributes from the map and submit a PR",
-        "path": "tools/attr_editor/app.py",
+        "path": "attr_editor/app.py",
         "port": 8765,
         "icon": "🏢",
     },
     "tex_editor": {
         "label": "Texture Editor",
         "desc": "Replace facade photos (LOD2 textures) and submit a PR",
-        "path": "tools/tex_editor/app.py",
+        "path": "tex_editor/app.py",
         "port": 8766,
         "icon": "🖼️",
     },
@@ -164,45 +295,56 @@ def badge_for(merged: int) -> dict:
             "merged": merged, "next": None}
 
 
-# ---- PR classification (shares scripts/pr_classification.py, the one A5 table CI uses) ----
-_classification_mod = None
-
-
-def classification_module():
-    """The Exchange Contract A5 classification table: program/pr_classification.py in the
-    distribution, scripts/pr_classification.py in the source tree. Fail-open: without it
-    every proposal is shown as `other` (a packaging error, reported once on stderr)."""
-    global _classification_mod
-    if _classification_mod is not None:
-        return _classification_mod or None
-    for cand in (APP_DIR / "pr_classification.py",
-                 APP_DIR.parent.parent / "scripts" / "pr_classification.py"):
-        if cand.is_file():
-            spec = importlib.util.spec_from_file_location("pr_classification", cand)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            _classification_mod = mod
-            return mod
-    print("Warning: pr_classification.py not found; proposals are shown as 'other'", file=sys.stderr)
-    _classification_mod = False
-    return None
-
-
 def review_kind(pr: dict) -> str:
-    """The admin-screen display kind of a proposal: its Exchange Contract A5 class by
-    branch prefix or title (the table shared with CI), else `other`."""
+    """The PR's class for the review screen — Exchange Contract A5, decided by the shared table.
+
+    `other` is a class like any other: it changes how the item is rendered, never
+    whether it is shown (A5: review clients show every open PR)."""
     explicit = str(pr.get("review_kind") or "")
     if explicit in ("attribute", "texture", "geometry"):
         return explicit
     title = str(pr.get("title") or "")
     head = str((pr.get("head") or {}).get("ref") or pr.get("headRefName") or "")
-    mod = classification_module()
-    return (mod.classify_by_name(head, title) if mod is not None else None) or "other"
+    return pr_classification.classify_by_name(head, title) or "other"
+
+
+_TRAILER_ID_RE = re.compile(r"^(?:Building|Building-Added|Building-Deleted):[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+
+
+def building_id_from_commit_messages(messages: "list[str]") -> str:
+    """The building declared by the A2 trailers (the contract's canonical identity), or ''."""
+    for message in messages:
+        hit = _TRAILER_ID_RE.search(str(message or ""))
+        if hit:
+            return hit.group(1)
+    return ""
+
+
+def building_id_from_commits(token: str, nwo: str, number: int) -> str:
+    code, commits = runtime.github_api(f"/repos/{nwo}/pulls/{number}/commits?per_page=100", token)
+    if code != 200 or not isinstance(commits, list):
+        return ""
+    return building_id_from_commit_messages(
+        [str((c.get("commit") or {}).get("message") or "") for c in commits])
+
+
+def latest_reviews(reviews: list) -> dict:
+    """One current opinion per account: a later APPROVED / CHANGES_REQUESTED / DISMISSED
+    review replaces the earlier one; plain comments neither add nor erase a vote."""
+    latest: dict = {}
+    for index, review in enumerate(reviews):
+        if review.get("state") not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            continue
+        # GitHub always names the reviewer; a record without one cannot be merged with another.
+        login = str((review.get("user") or {}).get("login") or "").lower() or f"#{review.get('id') or index}"
+        if int(review.get("id") or 0) >= int(latest.get(login, {}).get("id") or 0):
+            latest[login] = review
+    return latest
 
 
 _BUILDING_ID_REVIEW_RE = re.compile(r"(?<![\w-])(\d{5}-bldg-[A-Za-z0-9_-]+)")
 
-# Even in standalone distributions/tests without attr_editor, the main items always get readable English labels.
+# Even in tests without the attribute editor's dictionary, the main items get readable English labels.
 _CORE_ATTRIBUTE_LABELS = {
     "class": "Classification",
     "usage": "Usage",
@@ -228,23 +370,19 @@ def extract_building_id(*texts: object) -> str:
     return ""
 
 
-def load_attribute_labels(root: Path) -> dict[str, str]:
-    """Read the attribute editor's Japanese-name dictionary without executing it, shared with the confirmation screen."""
+def attr_editor_module():
+    """The attribute editor, bundled next to the hub (imported on first use: the review
+    screen borrows its attribute names and its 3D model of a building)."""
+    from attr_editor import app
+    return app
+
+
+def attribute_labels() -> dict[str, str]:
+    """Display names of attributes: the core set plus the attribute editor's dictionary."""
     labels = dict(_CORE_ATTRIBUTE_LABELS)
-    source = root / "tools" / "attr_editor" / "app.py"
     try:
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        for node in tree.body:
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if not any(isinstance(t, ast.Name) and t.id == "LABELS" for t in targets):
-                continue
-            value = ast.literal_eval(node.value)
-            if isinstance(value, dict):
-                labels.update({str(k): str(v) for k, v in value.items()})
-            break
-    except (OSError, SyntaxError, ValueError):
+        labels.update({str(k): str(v) for k, v in attr_editor_module().LABELS.items()})
+    except Exception:   # a broken editor module must not stop the hub
         pass
     return labels
 
@@ -257,10 +395,15 @@ def attribute_local_name(path: str) -> str:
     return tail.rsplit(":", 1)[-1]
 
 
+_PATH_LIKE = re.compile(r"^[/A-Za-z0-9_:.\[\]-]+$")
+
+
 def attribute_label(path: str, labels: "dict[str, str] | None" = None) -> str:
-    """Convert an attribute path to a Japanese name for municipal staff. Keep it if already Japanese."""
+    """The display name of a table item: an attribute path or tag (the CI change
+    summary) becomes its label; a display name the editor already wrote in the
+    repository language is kept as it is."""
     raw = str(path or "").strip().strip("`")
-    if re.search(r"[ぁ-んァ-ヶ一-龠々]", raw):
+    if raw and not _PATH_LIKE.match(raw):
         return raw
     local = attribute_local_name(raw)
     known = (labels or _CORE_ATTRIBUTE_LABELS).get(local)
@@ -277,14 +420,8 @@ def _replace_attribute_terms(text: str, labels: "dict[str, str] | None" = None) 
 
 
 def human_proposal_title(title: str, labels: "dict[str, str] | None" = None) -> str:
-    """Strip validation/GitHub markers and format as a building-ledger heading."""
+    """Format the proposal title as a building-ledger heading."""
     value = str(title or tr("hub.proposal_title_fallback", "Change record"))
-    value = re.sub(r"^PR-[A-Z0-9]+\s*[:：]\s*", "", value, flags=re.IGNORECASE)
-    value = re.sub(
-        r"\s*[—–-]\s*positive\s+validation\s+case.*$", "", value,
-        flags=re.IGNORECASE,
-    )
-    value = value.replace("属性のみ変更", "属性の変更").replace("幾何変更", "建物形状の変更")
     value = _replace_attribute_terms(value, labels)
     value = value.strip()
     # Capitalize the first letter after stripping validation prefixes (English titles
@@ -298,20 +435,10 @@ def human_reason(
     body: str, kind: str = "other", labels: "dict[str, str] | None" = None
 ) -> str:
     """Extract from the PR body only the explanation staff need for their decision."""
-    reason = section_by_key(
-        body, "reason",
-        "Reason and supporting evidence", "Summary of changes",
-        "編集理由・根拠資料", "変更の概要",
-    )
+    reason = section_by_key(body, "reason", *reason_headings())
     if not reason and kind in ("attribute", "geometry"):
         reason = body
     reason = re.sub(r"<!--.*?-->", "", reason, flags=re.DOTALL)
-    reason = re.split(
-        r"(?:#{1,6}\s*)?(?:期待\s*CI|Expected\s+CI|検証項目|確認項目|再現手順)\s*[:：]?",
-        reason,
-        maxsplit=1,
-        flags=re.MULTILINE | re.IGNORECASE,
-    )[0]
     useful: list[str] = []
     in_fence = False
     for line in reason.splitlines():
@@ -323,26 +450,71 @@ def human_reason(
             continue
         if stripped.startswith("#"):
             stripped = re.sub(r"^#+\s*", "", stripped)
-        if stripped in ("変更内容", "対象建物", "変更種別",
-                        "PR type", "Target buildings / scope", "Change type",
-                        "Checklist", "Related issues", "Additional notes (optional)",
-                        "Source / manifest (source-update / schema / layout etc.)"):
+        if stripped in body_headings():
             continue
         useful.append(stripped)
     result = "\n".join(useful).strip()
-    result = re.sub(
-        r"\**positive\s+validation\s+case(?:（[^）]*）)?\**[。.]?",
-        "", result, flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"`?bldg_[A-Za-z0-9_.…-]+`?\s*\((\d{5}-bldg-[A-Za-z0-9_-]+)\)",
-        r"\1", result,
-    )
     result = re.sub(r"\*\*(.*?)\*\*|__(.*?)__", lambda m: m.group(1) or m.group(2), result)
-    result = result.replace("`", "").replace("幾何変更", "建物形状の変更")
+    result = result.replace("`", "")
     result = _replace_attribute_terms(result, labels)
-    result = re.sub(r"^[\s。・]+", "", result)
     return result.strip()
+
+
+# The PR body is written by the editors in the repository language (their catalogs)
+# or by a person from the city template (English). The hub reads it back with the
+# same words, so no language has its own list here.
+_CATALOG_APPS = ("attr_editor", "tex_editor")
+_TEMPLATE_HEADINGS = ("PR type", "Target buildings / scope", "Summary of changes", "Change type",
+                      "Image rights", "Source / manifest (source-update / schema / layout etc.)",
+                      "Checklist", "Related issues", "Additional notes (optional)")
+_catalog_cache: dict[str, dict] = {}
+
+
+def _catalog_values(prefix: str) -> dict[str, set[str]]:
+    """Catalog values by key, over both editors and every language, for keys starting with prefix."""
+    if prefix not in _catalog_cache:
+        found: dict[str, set[str]] = {}
+        for app in _CATALOG_APPS:
+            for lang in runtime.i18n_loader.SUPPORTED:
+                path = runtime.i18n_loader.CATALOG_DIR / app / f"{lang}.json"
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                for key, value in data.items():
+                    if key.startswith(prefix) and isinstance(value, str) and value.strip():
+                        found.setdefault(key, set()).add(value.strip())
+        _catalog_cache[prefix] = found
+    return _catalog_cache[prefix]
+
+
+def change_table_words() -> dict[str, set[str]]:
+    """Header cells of the before/after tables: label | before | after [| source]
+    (or before | after for textures) as the editors write them, and path | Old | New
+    as the CI change summary writes them."""
+    words = {"label": {"path"}, "before": {"Old"}, "after": {"New"}}
+    columns = _catalog_values("pr.details_columns") | _catalog_values("pr.tex_columns")
+    for rows in columns.values():
+        for row in rows:
+            cells = [c.strip() for c in row.strip().strip("|").split("|") if c.strip()]
+            if len(cells) >= 3:
+                words["label"].add(cells[0]); words["before"].add(cells[1]); words["after"].add(cells[2])
+            elif len(cells) == 2:
+                words["before"].add(cells[0]); words["after"].add(cells[1])
+    return words
+
+
+def reason_headings() -> tuple[str, ...]:
+    """Headings under which the reason stands when a body has no `<!--sec:reason-->` anchor."""
+    values = _catalog_values("pr.heading_")
+    return tuple(sorted(values.get("pr.heading_reason", set()) | values.get("pr.heading_summary", set())
+                        | {"Summary of changes"}))
+
+
+def body_headings() -> set[str]:
+    """Every section heading an editor or the city template writes (dropped from a reason
+    that had to fall back to the whole body)."""
+    return set().union(*_catalog_values("pr.heading_").values()) | set(_TEMPLATE_HEADINGS)
 
 
 def evidence_links(markdown: str) -> list[dict]:
@@ -363,109 +535,10 @@ def evidence_links(markdown: str) -> list[dict]:
     return links
 
 
-def _review_contract():
-    # Included in portable releases; no imports from the city checkout.
-    spec = importlib.util.spec_from_file_location("_hub_review_contract", APP_DIR / "operator_explanation.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def operator_explanation(token: str, nwo: str, pr: dict, check_runs: list) -> dict:
-    """Historical function name; validates the shared CI report, no human gate."""
-    try:
-        result = _review_contract().evaluate(lambda endpoint: gh_api(endpoint, token), nwo, pr)
-        if result.get('required') and result.get('valid'):
-            runs = [c for c in check_runs if c.get('name') == 'ci-report'
-                    and (c.get('app') or {}).get('slug') == 'github-actions']
-            latest = max(runs, key=lambda c: int(c.get('id') or 0)) if runs else {}
-            if (latest.get('head_sha') != pr['head']['sha'] or latest.get('external_id') != result['reportId']
-                    or latest.get('status') != 'completed' or latest.get('conclusion') != 'success'):
-                result = {**result, 'valid':False, 'reason':'checking'}
-        return result
-    except (OSError, ImportError, AttributeError, TypeError, ValueError, KeyError):
-        return {'required':True, 'valid':False, 'reason':'unavailable'}
-
-
-def approval_policy(token, nwo, branch):
-    return _review_contract().approval_policy(
-        lambda path, method='GET', payload=None: gh_api(path, token, method, payload), nwo, branch)
-
-
-def approval_progress(token, nwo, pr, login, policy):
-    return _review_contract().approval_progress(lambda path: gh_api(path, token), nwo, pr, login, policy)
-
-
-def machine_checks(checks: list) -> list:
-    """Approval/confirmation workflows are not data failures or retry targets."""
-    return [c for c in checks if c.get("technicalName", c.get("name")) in ("analyze", "ci-report")]
-
-
-def report_retry(checks: list, comments: list, explanation: dict) -> dict:
-    """Retry the failed phase, never a human acknowledgement by rerunning data CI."""
-    data = [c for c in checks if c.get("technicalName", c.get("name")) == "analyze"]
-    retry = ci_retry_info(_overall_check_status(data), comments)
-    if not explanation.get("required"):
-        return retry
-    reason = explanation.get("reason")
-    if reason == "report-stale":
-        return {"available": False, "kind": "update", "label": tr("hub.retry_stale_label", "Wait for a report of the updated proposal"),
-                "reason": tr("hub.retry_stale_reason", "The proposal or base changed. Complete the update and wait for fresh checks; republishing the old run cannot update its evidence.")}
-    if reason == "fix":
-        return {**retry, "available": False, "kind": "fix"}
-    if explanation.get("reportReady") and explanation.get("valid"):
-        return {"available": False, "kind": "none", "label": "", "reason": tr("hub.retry_none_reason", "No re-run is needed")}
-    if explanation.get("reportReady") and not explanation.get("valid"):
-        return {**ci_retry_info("fail", []), "workflow": "review-report.yml"}
-    if _overall_check_status(data) == "pass" and not explanation.get("reportReady"):
-        return {**retry, "available": True, "kind": "system", "workflow": "pr-comment.yml",
-                "label": tr("hub.retry_report_label", "Retry report generation and delivery"),
-                "reason": tr("hub.retry_report_reason", "Data checks completed; retry the report process.")}
-    return {**retry, "workflow": "pr-analysis.yml"}
-
-
-# Comments CI keeps as state — one per PR, edited between <!-- status:active --> and
-# <!-- status:resolved --> — rather than posting as the result of one analysis run.
-# No analysis stamp can name the run they belong to, so they are trusted by the bot
-# identity alone (Exchange Contract A10).
-_STATE_COMMENT_MARKERS = ("<!-- citygml-base-freshness -->",)
-
-
-def _bot_comment(comment: dict) -> bool:
-    user = comment.get("user") or {}
-    return user.get("login") == "github-actions[bot]" and user.get("type") == "Bot"
-
-
-def trusted_ci_comments(comments: list, explanation: dict) -> list:
-    """The CI comments a client may act on: analysis comments stamped with the current
-    report's context, plus the state comments, all from the bot identity."""
-    if not explanation.get("required"):
-        # Practice reports predate versioned reports. Still require the bot identity.
-        return [c for c in comments if (c.get("user") or {}).get("login") == "github-actions[bot]"]
-    state = [c for c in comments if _bot_comment(c)
-             and any(m in str(c.get("body") or "") for m in _STATE_COMMENT_MARKERS)]
-    report = explanation.get("report")
-    if not report or explanation.get("reason") in ("report-stale", "report-pending", "report-unavailable"):
-        return state
-    raw = json.dumps(report["context"], sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    import hashlib
-    stamp = f"<!-- citygml-ci-context:{hashlib.sha256(raw.encode()).hexdigest()}:{report['runId']}:{report['runAttempt']} -->"
-    selected = [c for c in comments if _bot_comment(c) and stamp in str(c.get("body") or "")]
-    # Checkpoint statuses come from the verified structured report, never arbitrary Markdown.
-    statuses = {"pass": "✅", "fail": "❌", "na": "−", "pending": "…"}
-    selected = [c for c in selected if "<!-- citygml-automatic-inspection -->" not in str(c.get("body") or "")]
-    selected.append({"user": {"login": "github-actions[bot]", "type": "Bot"}, "body":
-                     "<!-- citygml-automatic-inspection -->\n" + "\n".join(
-                     f"| {r['key']} <!--cp:{r['key']}--> | {statuses[r['status']]} |" for r in report["checks"])})
-    return state + selected
-
-
 def check_display_name(name: str) -> str:
     """Convert internal CI/check-run names to display names (selected language) that convey what is judged."""
     key = str(name or "").strip().lower()
     rules = (
-        (("operator-explanation",),
-         tr("hub.check_operator_explanation", "Operator explanation for the current changes")),
         (("preview", "cesium", "3d"),
          tr("hub.check_preview", "3D view necessity and generation check")),
         (("texture", "appearance"),
@@ -548,7 +621,7 @@ def _marker_status(comments: list, marker: str, fallback: str) -> str:
         body = str(comment.get("body") or "")
         if marker not in body:
             continue
-        if "❌" in body or "⚠️" in body or "不合格" in body:
+        if "❌" in body or "⚠️" in body:
             return "fail"
         if "✅" in body:
             return "pass"
@@ -652,6 +725,13 @@ def review_checkpoints(
                  "The reason for the change and the evidence can be confirmed"),
               tr("hub.cp_reason_ng",
                  "The reason for the change or the evidence is not filled in")),
+        point("classification", "Change classification",
+              tr("hub.cp_classification_label", "Change classification"),
+              summary.get("classification", "na"),
+              tr("hub.cp_classification_ok",
+                 "The kind of change is declared (branch prefix or title)"),
+              tr("hub.cp_classification_ng",
+                 "The kind of change is not declared; CI posted how to fix it")),
         point("commit-scope", "One change = one building",
               tr("hub.cp_commit_scope_label", "One change = one building"), commit_scope,
               tr("hub.cp_commit_scope_ok", "The change is contained to one building"),
@@ -764,47 +844,19 @@ def section_by_key(markdown: str, key: str, *headings: str) -> str:
 
 def review_ready_reason(reason: str) -> bool:
     normalized = reason.strip()
-    return bool(normalized and "記入してください" not in normalized
-                and "please fill in" not in normalized.lower())
+    return bool(normalized and "please fill in" not in normalized.lower())
 
 
-def port_open(port: int, host: str = "127.0.0.1") -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.25)
-        return s.connect_ex((host, port)) == 0
+# ---- Theme pack (shares tools/themes/theme_loader.py; runs without themes if missing) ----
 
 
-def serve_tool(root: Path, key: str, port: int) -> None:
-    """Load tools/<key>/app.py inside the clone and start its server (blocking).
-
-    In the frozen distribution the hub exe itself takes this path via `--serve-tool`,
-    so each editor launches without a python interpreter. The tools actually live in
-    the clone (tools/…), so the same path resolves for both source and frozen runs.
-    """
-    t = TOOLS.get(key)
-    if t is None:
-        sys.exit(f"Unknown tool: {key}")
-    app = root / t["path"]
-    if not app.is_file():
-        sys.exit(f"Tool not found: {app}")
-    spec = importlib.util.spec_from_file_location(f"_tool_{key}", str(app))
-    mod = importlib.util.module_from_spec(spec)
-    # Put tools/ on the import path for relative-import compatibility (for tex, which inherits attr)
-    tools_dir = str(root / "tools")
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    spec.loader.exec_module(mod)
-    if not hasattr(mod, "create_server"):
-        sys.exit(f"{key} has no create_server (update required)")
-    server = mod.create_server(root, port)
-    print(f"Launched {t['label']}: http://localhost:{port}/")
-    server.serve_forever()
+# ---- Language pack (shares tools/i18n/i18n_loader.py; runs with the original text if missing) ----
 
 
 class Hub:
     def __init__(self, root: Path):
         self.root = root.resolve()
-        self._attribute_labels = load_attribute_labels(self.root)
+        self._attribute_labels = attribute_labels()
         self._attr_repo = None
         self._attr_repo_lock = threading.Lock()
         self._procs: dict[str, subprocess.Popen] = {}
@@ -815,13 +867,27 @@ class Hub:
 
     # ---- Repository / account status ----
     def _git(self, *args: str) -> str:
-        exe, _ = runtime.git_cmd()
-        if exe is None:
-            return ""
-        r = subprocess.run(
-            [exe, "-C", str(self.root), *args], capture_output=True, text=True
-        )
-        return r.stdout.strip() if r.returncode == 0 else ""
+        return runtime.git_output(self.root, *args)
+
+    def ensure_origin(self, fork_nwo: str) -> bool:
+        """Point `origin` at the account's fork (hub-v1.2.1: the account may change after the clone).
+
+        The upstream city is never touched (sync uses the clone's 4dcitygml.json);
+        only where edits are uploaded follows the chosen account. Returns True when changed."""
+        current = (self.nwo() or "").lower()
+        if not fork_nwo or not current or current == fork_nwo.lower():
+            return False   # unknown / non-GitHub remote (e.g. an SSH alias): never touched
+        if current.split("/")[-1] != fork_nwo.lower().split("/")[-1]:
+            return False   # another repository: not a copy of this city
+        # A clone made straight from the city (origin = the city, any transport) is repointed
+        # as well: with an account chosen, uploads go to that account's copy over HTTPS only.
+        if not runtime.git_exe():
+            return False
+        r = runtime.git(self.root, "remote", "set-url", "origin", f"https://github.com/{fork_nwo}.git")
+        if r.returncode == 0:
+            print(f"  origin → {fork_nwo} (the account's copy)")
+            return True
+        return False
 
     def nwo(self) -> "str | None":
         """origin's owner/repo (for GitHub links and gh)."""
@@ -832,8 +898,8 @@ class Hub:
         return m.group(1) if m else None
 
     def status(self) -> dict:
-        git_exe, git_bundled = runtime.git_cmd()
-        py_exe, py_bundled = runtime.python_cmd()
+        git_exe, git_bundled = runtime.git_exe(), runtime.git_bundled()
+        py_exe, py_bundled = runtime.python_exe(), runtime.python_bundled()
         return {
             "ok": True,
             "repo": str(self.root),
@@ -841,6 +907,9 @@ class Hub:
             "gitUser": self._git("config", "user.name"),
             "gitEmail": self._git("config", "user.email"),
             "nwo": self.nwo(),
+            "account": current_login(),
+            "hubTag": runtime.running_hub_tag(),
+            "sync": SESSION.sync.state if SESSION.sync is not None else None,
             "runtime": {
                 "git": {"path": git_exe, "bundled": git_bundled},
                 "python": {"path": py_exe, "bundled": py_bundled},
@@ -848,12 +917,10 @@ class Hub:
         }
 
     def _tool_app(self, t: dict) -> "Path | None":
-        """Actual tool app.py, always from the hub bundle (program/<editor>/) or the tools source tree.
-
-        Cities distribute no code: a `tools/` folder inside a city clone is never
-        executed (the earlier clone-first lookup is gone).
-        """
-        cand = runtime.PROGRAM_DIR / Path(t["path"]).relative_to("tools")  # program/<editor>/app.py
+        """The editor's app.py next to the hub (program/<editor>/ in the bundle, tools/<editor>/
+        in the source tree). Cities distribute no code: nothing is ever run from a clone."""
+        rel = Path(t["path"])
+        cand = runtime.SHARED_DIR / rel
         return cand if cand.is_file() else None
 
     def _port_serves_our_repo(self, port: int) -> bool:
@@ -883,7 +950,7 @@ class Hub:
             return allocated
         port = t["port"]
         for _ in range(20):
-            if not port_open(port) or self._port_serves_our_repo(port):
+            if not runtime.port_open(port) or self._port_serves_our_repo(port):
                 break
             port += 2
         self._ports[key] = port
@@ -894,11 +961,11 @@ class Hub:
         for key, t in TOOLS.items():
             exists = self._tool_app(t) is not None
             port = self._ports.get(key)
-            if port is None and port_open(t["port"]) and self._port_serves_our_repo(t["port"]):
+            if port is None and runtime.port_open(t["port"]) and self._port_serves_our_repo(t["port"]):
                 # Adopt a manually launched editor of our own city
                 port = self._ports[key] = t["port"]
             display = port or t["port"]
-            running = port is not None and port_open(port)
+            running = port is not None and runtime.port_open(port)
             out.append({
                 "key": key, "label": tool_label(key, t), "desc": tool_desc(key, t),
                 "icon": t["icon"],
@@ -908,10 +975,9 @@ class Hub:
         return out
 
     def _launch_cmd(self, key: str, t: dict, port: "int | None" = None) -> list:
-        """Child-tool launch command: the bundled (or source-tree) python runs the tool's app.py."""
-        port = port or t["port"]
-        return [runtime.python_cmd()[0], str(self._tool_app(t) or (self.root / t["path"])),
-                "--repo", str(self.root), "--port", str(port), "--no-browser"]
+        """Child-tool launch command: the bundled (or system) python runs the editor's app.py."""
+        return [runtime.python_exe(), str(self._tool_app(t)), "--repo", str(self.root),
+                "--port", str(port or t["port"]), "--no-browser"]
 
     def launch(self, key: str) -> dict:
         t = TOOLS.get(key)
@@ -922,13 +988,15 @@ class Hub:
             raise FileNotFoundError(t["path"])
         port = self._tool_port(key, t)
         url = f"http://localhost:{port}/"
-        if port_open(port):
+        if runtime.port_open(port):
             return {"ok": True, "url": url, "port": port, "already": True}
-        proc = subprocess.Popen(self._launch_cmd(key, t, port), cwd=str(self.root))
+        # The editors work as the same account as this hub (token and credential store by login).
+        env = {**accounts.scrub_git_env(os.environ), "CITYGML_ACCOUNT": current_login() or ""}
+        proc = subprocess.Popen(self._launch_cmd(key, t, port), cwd=str(self.root), env=env)
         self._procs[key] = proc
         # Wait a bit until the server listens (up to ~6 seconds)
         for _ in range(30):
-            if port_open(port):
+            if runtime.port_open(port):
                 break
             if proc.poll() is not None:
                 raise RuntimeError(tr(
@@ -937,7 +1005,7 @@ class Hub:
                     label=tool_label(key, t), code=proc.returncode,
                 ))
             time.sleep(0.2)
-        if not port_open(port):
+        if not runtime.port_open(port):
             raise RuntimeError(tr(
                 "hub.err_launch_no_response", "{label} is not responding (port {port})",
                 label=tool_label(key, t), port=port,
@@ -970,19 +1038,18 @@ class Hub:
     }"""
 
     def _fetch_contributions(self) -> dict:
-        nwo = self.nwo()
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login")
-        if not token or not login or not nwo:
-            reason = (
-                tr("hub.err_origin_not_github",
-                   "The repository remote (origin) does not point to GitHub") if not nwo
-                else tr("hub.err_gh_not_connected",
+        # Proposals and issues live on the city repository (upstream); the clone's origin is
+        # the person's copy, where no PR ever exists.
+        nwo = runtime.upstream_nwo(self.root)
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login")
+        if not token or not login:
+            reason = tr("hub.err_gh_not_connected",
                         'GitHub is not connected (you can connect from "Connect to GitHub" '
-                        "in the account section)"))
+                        "in the account section)")
             return {"ok": False, "reason": reason, "login": None,
                     "prs": [], "issues": [], "merged": 0, "badge": badge_for(0)}
-        code, data = gh_api("/graphql", token, method="POST", payload={
+        code, data = runtime.github_api("/graphql", token, method="POST", payload={
             "query": self._CONTRIB_QUERY,
             "variables": {"qPr": f"repo:{nwo} author:{login} type:pr sort:updated",
                           "qIssue": f"repo:{nwo} author:{login} type:issue sort:updated"},
@@ -1012,21 +1079,11 @@ class Hub:
             )
             retry = ci_retry_info(check_status, [])
             if p.get("state") == "OPEN" and check_status == "fail":
-                c_code, c_data = gh_api(
+                c_code, c_data = runtime.github_api(
                     f"/repos/{nwo}/issues/{p['number']}/comments?per_page=100", token
                 )
                 comments = c_data if c_code == 200 and isinstance(c_data, list) else []
                 retry = ci_retry_info(check_status, comments)
-            if nwo.lower() not in {f"4dcitygml/sample-{city}-station" for city in ("tokyo", "munich", "newyork")} and p.get("state") == "OPEN":
-                pr_code, live_pr = gh_api(f"/repos/{nwo}/pulls/{p['number']}", token)
-                if pr_code == 200:
-                    r_code, r_data = gh_api(f"/repos/{nwo}/commits/{live_pr['head']['sha']}/check-runs?per_page=100", token)
-                    runs = r_data.get("check_runs", []) if r_code == 200 else []
-                    explanation = operator_explanation(token, nwo, live_pr, runs)
-                    check_status = _overall_check_status(machine_checks(runs))
-                    c_code, c_data = gh_api(f"/repos/{nwo}/issues/{p['number']}/comments?per_page=100", token)
-                    comments = trusted_ci_comments(c_data if c_code == 200 else [], explanation)
-                    retry = report_retry(runs, comments, explanation)
             prs.append({
                 "number": p["number"], "title": p["title"], "state": p["state"],
                 "url": p["url"], "draft": p.get("isDraft", False),
@@ -1052,8 +1109,8 @@ class Hub:
 
     # ---- PR review for administrators ----
     def _review_identity(self) -> tuple[str, str, str]:
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login") or ""
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
         nwo = runtime.upstream_nwo(getattr(self, "root", None))
         if not token or not login:
             raise RuntimeError(tr("hub.err_connect_first", "Connect to GitHub first"))
@@ -1061,7 +1118,7 @@ class Hub:
 
     def reviewer_permission(self) -> dict:
         token, login, nwo = self._review_identity()
-        code, data = gh_api(f"/repos/{nwo}/collaborators/{login}/permission", token)
+        code, data = runtime.github_api(f"/repos/{nwo}/collaborators/{login}/permission", token)
         permission = str(data.get("permission") or "none") if code == 200 else "none"
         return {
             "login": login,
@@ -1159,26 +1216,11 @@ class Hub:
         return str(self._building_ref_from_local_files(files, comments).get("buildingId") or "")
 
     def _attribute_repo(self):
-        """Lazily reuse the existing attribute editor's 3D-model loading for the confirmation screen too."""
-        if self._attr_repo is not None:
-            return self._attr_repo
-        with self._attr_repo_lock:
-            if self._attr_repo is not None:
-                return self._attr_repo
-            app = self.root / "tools" / "attr_editor" / "app.py"
-            if not app.is_file():
-                raise FileNotFoundError(
-                    tr("hub.err_viewer_missing", "The 3D view component was not found"))
-            spec = importlib.util.spec_from_file_location("_hub_attr_editor", str(app))
-            if spec is None or spec.loader is None:
-                raise RuntimeError(
-                    tr("hub.err_viewer_load", "The 3D view component could not be loaded"))
-            mod = importlib.util.module_from_spec(spec)
-            tools_dir = str(self.root / "tools")
-            if tools_dir not in sys.path:
-                sys.path.insert(0, tools_dir)
-            spec.loader.exec_module(mod)
-            self._attr_repo = mod.Repo(self.root)
+        """The attribute editor's model of the clone (the 3D view of the review screen), built once."""
+        if self._attr_repo is None:
+            with self._attr_repo_lock:
+                if self._attr_repo is None:
+                    self._attr_repo = attr_editor_module().Repo(self.root)
         return self._attr_repo
 
     def review_building_model(self, tile: str, gid: str) -> dict:
@@ -1213,50 +1255,51 @@ class Hub:
         number = int(pr.get("number") or 0)
         if number < 1:
             return ""
-        c_status, comments = gh_api(f"/repos/{nwo}/issues/{number}/comments?per_page=100", token)
-        f_status, files = gh_api(f"/repos/{nwo}/pulls/{number}/files?per_page=100", token)
+        c_status, comments = runtime.github_api(f"/repos/{nwo}/issues/{number}/comments?per_page=100", token)
+        f_status, files = runtime.github_api(f"/repos/{nwo}/pulls/{number}/files?per_page=100", token)
         comments = comments if c_status == 200 and isinstance(comments, list) else []
         files = files if f_status == 200 and isinstance(files, list) else []
         return extract_building_id(*[c.get("body") for c in comments]) or self._building_id_from_local_files(
             files, comments
         )
 
-    def _review_queue_item(self, token: str, nwo: str, pr: dict, policy=None, login=None) -> "dict | None":
-        """Build one list item with its review stage and native approval progress."""
-        if login is None:
-            login = self._review_identity()[1]
-        if policy is None:
-            policy = approval_policy(token, nwo, (pr.get('base') or {}).get('ref', 'main'))
-        approvals = approval_progress(token, nwo, pr, login, policy)
+    def _review_queue_item(self, token: str, nwo: str, pr: dict) -> "dict | None":
+        """Build one list item, with two states based on who works on it next.
+
+        Every open PR against main is listed whatever its class (A5); `other`
+        and unclassified proposals are shown as plain items."""
         kind = review_kind(pr)
-        if kind == "other" or str((pr.get("base") or {}).get("ref") or "") != "main":
+        if str((pr.get("base") or {}).get("ref") or "") != "main":
             return None
         number = int(pr.get("number") or 0)
         body = str(pr.get("body") or "")
+        # Pre-CI preview only: as soon as CI has posted its `reason` row, that verdict wins (A6).
         reason_ok = review_ready_reason(human_reason(body, kind, self._attribute_labels))
         head_sha = str((pr.get("head") or {}).get("sha") or "")
         check_runs: list = []
         if head_sha:
-            status, data = gh_api(
+            status, data = runtime.github_api(
                 f"/repos/{nwo}/commits/{head_sha}/check-runs?per_page=100", token
             )
             if status == 200 and isinstance(data, dict):
                 check_runs = data.get("check_runs") or []
-        check_status = _overall_check_status(machine_checks(check_runs))
-        explanation = operator_explanation(token, nwo, pr, check_runs)
+        check_status = _overall_check_status(check_runs)
 
-        c_status, comment_data = gh_api(
+        c_status, comment_data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
-        comments = trusted_ci_comments(comment_data if c_status == 200 and isinstance(comment_data, list) else [], explanation)
-        r_status, review_data = gh_api(
+        comments = comment_data if c_status == 200 and isinstance(comment_data, list) else []
+        ci_rows = _inspection_summary_statuses(comments)
+        if "reason" in ci_rows:
+            reason_ok = ci_rows["reason"] == "pass"
+        r_status, review_data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews?per_page=100", token
         )
         reviews = review_data if r_status == 200 and isinstance(review_data, list) else []
         reviewer_feedback = any(
             r.get("state") == "CHANGES_REQUESTED"
             and str(r.get("commit_id") or "") == head_sha
-            for r in _review_contract().latest_reviews(reviews).values()
+            for r in latest_reviews(reviews).values()
         )
         freshness_feedback = any(
             "<!-- citygml-base-freshness -->" in str(c.get("body") or "")
@@ -1286,25 +1329,14 @@ class Hub:
         if reviewer_feedback:
             adjustment_reasons.append(
                 tr("hub.adjust_reviewer_comment", "The reviewer has posted a comment to confirm"))
-        if not explanation["valid"]:
-            adjustment_reasons.append(tr("hub.blocker_explanation", "Waiting for the operator’s explanation of the current changes"))
         if pr.get("draft"):
             adjustment_reasons.append(tr("hub.adjust_draft", "The proposer is still drafting"))
         ready = (
             reason_ok and check_status == "pass" and not pr.get("draft")
-            and not reviewer_feedback and not auto_resubmit and explanation["valid"]
+            and not reviewer_feedback and not auto_resubmit
             and (str(pr.get("state") or "").lower() == "open" or pr.get("example"))
         )
         queue_status = "reviewer_waiting" if ready else "proposer_waiting"
-        if not ready and explanation.get("required"):
-            if explanation.get("reason") in ("system", "report-unavailable"):
-                queue_status = "system_waiting"
-            elif explanation.get("reason") in ("report-pending", "report-stale") or check_status == "pending":
-                queue_status = "checking"
-
-        if ready and approvals.get('known') and approvals['remaining'] == 0:
-            queue_status = 'approval_complete'
-
         if ready:
             waiting_source = ""
         elif reviewer_feedback:
@@ -1313,16 +1345,17 @@ class Hub:
             waiting_source = "latest"
         elif check_status == "pending":
             waiting_source = "checking"
-        elif not explanation["valid"]:
-            waiting_source = "checking"
         elif pr.get("draft"):
             waiting_source = "draft"
         else:
             waiting_source = "ci"
-        building_id = extract_building_id(
-            pr.get("title"), body, (pr.get("head") or {}).get("ref"),
-            *[c.get("body") for c in comments],
-        )
+        # Identity: the A2 trailer first (tool-independent), then the title/body/comment patterns.
+        building_id = building_id_from_commits(token, nwo, number) if number else ""
+        if not building_id:
+            building_id = extract_building_id(
+                pr.get("title"), body, (pr.get("head") or {}).get("ref"),
+                *[c.get("body") for c in comments],
+            )
         if not building_id:
             building_id = self._queue_building_id(token, nwo, pr)
         return {
@@ -1337,7 +1370,6 @@ class Hub:
             "updated": pr.get("updated_at") or "",
             "url": pr.get("html_url") or "",
             "example": bool(pr.get("example")),
-            "approvals": approvals,
             "queueStatus": queue_status,
             "waitingSource": waiting_source,
             "adjustmentReasons": adjustment_reasons,
@@ -1347,31 +1379,41 @@ class Hub:
 
     def review_queue(self, include_examples: bool = False) -> dict:
         token, login, nwo = self._review_identity()
-        pulls = _review_contract().pages(
-            lambda path: gh_api(path, token),
-            f"/repos/{nwo}/pulls?state=open&sort=updated&direction=desc")
+        # All open PRs, paged; a failing later page keeps what was read (fail-soft),
+        # a failing first page is an error the screen shows.
+        pulls: list = []
+        for page in range(1, 11):
+            code, data = runtime.github_api(
+                f"/repos/{nwo}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}",
+                token,
+            )
+            if code != 200 or not isinstance(data, list):
+                if page == 1:
+                    raise RuntimeError(str(getattr(data, "get", lambda *_: "")("message") or f"HTTP {code}"))
+                break
+            pulls.extend(data)
+            if len(data) < 100:
+                break
 
         if include_examples and not any(int(p.get("number") or 0) == 6 for p in pulls):
-            ex_code, example = gh_api(f"/repos/{nwo}/pulls/6", token)
+            ex_code, example = runtime.github_api(f"/repos/{nwo}/pulls/6", token)
             if ex_code == 200 and isinstance(example, dict):
                 example = {**example, "example": True, "review_kind": "attribute"}
                 pulls.append(example)
 
         candidates = [
             pr for pr in pulls
-            if review_kind(pr) != "other"
-            and str((pr.get("base") or {}).get("ref") or "") == "main"
+            if str((pr.get("base") or {}).get("ref") or "") == "main"
         ]
-        policy = approval_policy(token, nwo, "main")
         workers = min(8, max(1, len(candidates)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             items = [
                 item for item in pool.map(
-                    lambda pr: self._review_queue_item(token, nwo, pr, policy, login), candidates
+                    lambda pr: self._review_queue_item(token, nwo, pr), candidates
                 ) if item is not None
             ]
         perm = self.reviewer_permission()
-        return {"ok": True, "nwo": nwo, "login": login, **perm, "approvalPolicy": policy, "items": items}
+        return {"ok": True, "nwo": nwo, "login": login, **perm, "items": items}
 
     def _change_rows(self, body: str, comments: list, kind: str) -> list[dict]:
         sources = [body]
@@ -1379,22 +1421,15 @@ class Hub:
             str(c.get("body") or "") for c in comments
             if "<!-- citygml-change-summary -->" in str(c.get("body") or "")
         ]
+        words = change_table_words()
         for source in sources:
             for table in markdown_tables(source):
                 heads = table["headers"]
-                before_key = next((h for h in heads if h in (
-                    "Before", "Old", "Before image",
-                    "変更前", "旧", "変更前画像")), None)
-                after_key = next((h for h in heads if h in (
-                    "After", "New", "After image (newly added)",
-                    "変更後", "新", "変更後画像（新規追加）")), None)
+                before_key = next((h for h in heads if h in words["before"]), None)
+                after_key = next((h for h in heads if h in words["after"]), None)
                 if not before_key or not after_key:
                     continue
-                label_key = next(
-                    (h for h in heads if h in ("Item", "Attribute", "path",
-                                               "属性", "項目", "変更箇所")),
-                    None,
-                )
+                label_key = next((h for h in heads if h in words["label"]), None)
                 rows = []
                 for i, row in enumerate(table["rows"], 1):
                     raw_label = row.get(label_key, "") if label_key else ""
@@ -1424,7 +1459,7 @@ class Hub:
                 "q": f'repo:{nwo} is:pr "{building_id}"',
                 "sort": "updated", "order": "desc", "per_page": "20",
             })
-            code, result = gh_api(f"/search/issues?{query}", token)
+            code, result = runtime.github_api(f"/search/issues?{query}", token)
             if code == 200 and isinstance(result, dict):
                 found = [x for x in (result.get("items") or []) if isinstance(x, dict)]
         if not any(int(x.get("number") or 0) == current_number for x in found):
@@ -1476,37 +1511,38 @@ class Hub:
         if number < 1:
             raise ValueError(tr("hub.err_bad_pr_number", "Invalid PR number"))
 
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         endpoints = {
             "files": f"/repos/{nwo}/pulls/{number}/files?per_page=100",
             "comments": f"/repos/{nwo}/issues/{number}/comments?per_page=100",
             "reviews": f"/repos/{nwo}/pulls/{number}/reviews?per_page=100",
+            "commits": f"/repos/{nwo}/pulls/{number}/commits?per_page=100",
             "checks": f"/repos/{nwo}/commits/{(pr.get('head') or {}).get('sha', '')}/check-runs?per_page=100",
         }
         fetched: dict = {}
         for key, endpoint in endpoints.items():
-            status, data = gh_api(endpoint, token)
+            status, data = runtime.github_api(endpoint, token)
             fetched[key] = data if status == 200 else ([] if key != "checks" else {})
 
         files = fetched["files"] if isinstance(fetched["files"], list) else []
         comments = fetched["comments"] if isinstance(fetched["comments"], list) else []
         reviews = fetched["reviews"] if isinstance(fetched["reviews"], list) else []
         check_runs = (fetched["checks"].get("check_runs") or []) if isinstance(fetched["checks"], dict) else []
-        explanation = operator_explanation(token, nwo, pr, check_runs)
-        comments = trusted_ci_comments(comments, explanation)
         kind = review_kind(pr)
         body = str(pr.get("body") or "")
 
-        reason_source = section_by_key(
-            body, "reason",
-            "Reason and supporting evidence", "Summary of changes",
-            "編集理由・根拠資料", "変更の概要",
-        ) or body
+        reason_source = section_by_key(body, "reason", *reason_headings()) or body
         reason = human_reason(body, kind, self._attribute_labels)
         reason_ok = review_ready_reason(reason)
-        building_id = extract_building_id(
+        ci_rows = _inspection_summary_statuses(comments)
+        if "reason" in ci_rows:   # CI's verdict wins over the local preview (A6)
+            reason_ok = ci_rows["reason"] == "pass"
+        commits = fetched["commits"] if isinstance(fetched["commits"], list) else []
+        building_id = building_id_from_commit_messages(
+            [str((c.get("commit") or {}).get("message") or "") for c in commits]
+        ) or extract_building_id(
             pr.get("title"), body, (pr.get("head") or {}).get("ref"),
             *[c.get("body") for c in comments],
         )
@@ -1525,18 +1561,15 @@ class Hub:
             "status": c.get("status") or "",
             "conclusion": c.get("conclusion") or "",
             "url": c.get("details_url") or "",
-        } for c in machine_checks(check_runs)]
+        } for c in check_runs]
         checks_ok = bool(checks) and all(
             c["status"] == "completed" and c["conclusion"] in ("success", "neutral")
             for c in checks
         )
-        retry = report_retry(checks, comments, explanation)
+        retry = ci_retry_info(_overall_check_status(checks), comments)
         preview_url = ""
-        lint_ok = None
         for comment in comments:
             cbody = str(comment.get("body") or "")
-            if "<!-- citygml-reviewability-lint -->" in cbody:
-                lint_ok = "✅" in cbody and "警告はありません" in cbody
             if not preview_url:
                 hit = re.search(r"\]\((https://[^)\s]+citygml-viewer[^)\s]*)\)", cbody)
                 if hit:
@@ -1598,7 +1631,7 @@ class Hub:
         manual_changes_requested = any(
             r.get("state") == "CHANGES_REQUESTED"
             and str(r.get("commit_id") or "") == str((pr.get("head") or {}).get("sha") or "")
-            for r in _review_contract().latest_reviews(reviews).values()
+            for r in latest_reviews(reviews).values()
         )
         changes_requested = (
             manual_changes_requested or auto_resubmit
@@ -1614,12 +1647,8 @@ class Hub:
             adjustment_owner="reviewer" if manual_changes_requested else "ci",
         )
         inspection_ready = all(c["status"] in ("pass", "na") for c in checkpoints)
-        if explanation.get("required") and not explanation.get("reportReady"):
-            inspection_ready = False
         failed_inspections = [c["label"] for c in checkpoints if c["status"] == "fail"]
         blockers = []
-        if not explanation["valid"]:
-            blockers.append(tr("hub.blocker_explanation", "Waiting for the operator’s explanation of the current changes"))
         if str(pr.get("state") or "").lower() != "open":
             blockers.append(tr("hub.blocker_not_open", "This proposal is not open"))
         if pr.get("draft"):
@@ -1693,19 +1722,16 @@ class Hub:
             "autoResubmit": auto_resubmit,
             "reviewerFeedback": manual_changes_requested,
             "changesRequested": changes_requested,
-            "lintOk": lint_ok,
             "previewUrl": preview_url,
             "modelUrl": model_url,
             "modelIsComparison": bool(preview_url),
             "center": center,
             "googleMapsUrl": google_maps_url,
             "googleMapsEmbedUrl": google_maps_embed_url,
-            "approvals": approval_progress(token, nwo, pr, login, approval_policy(token, nwo, pr['base']['ref'])),
             "alreadyApproved": any(r.get("state") == "APPROVED" for r in reviews),
             "permission": permission["permission"],
             "selfAuthored": self_authored,
             "blockers": blockers,
-            "operatorExplanation": explanation,
             "canApprove": not blockers,
             # The walkthrough does not modify the real PR; the operation is experienced in the same screen.
             "canDemoApprove": inspection_ready,
@@ -1722,14 +1748,14 @@ class Hub:
         if not asset_path.match(path) or ".." in Path(path).parts:
             raise ValueError(tr("hub.err_not_texture", "Only texture images can be fetched"))
         token, _login, nwo = self._review_identity()
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         ref = str((pr.get(side) or {}).get("sha") or (pr.get(side) or {}).get("ref") or "")
         if not ref:
             raise RuntimeError(tr("hub.err_no_image_ref", "Could not resolve the image reference"))
         endpoint = f"/repos/{nwo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
-        status, data, mime = gh_raw(endpoint, token)
+        status, data, mime = runtime.github_raw(endpoint, token)
         if status != 200:
             raise FileNotFoundError(tr(
                 "hub.err_image_fetch", "Could not fetch the image (HTTP {status})",
@@ -1761,7 +1787,7 @@ class Hub:
                 "hub.err_cannot_approve", "Cannot approve: {blockers}",
                 blockers=tr("hub.blocker_separator", "; ").join(detail["blockers"])))
         token, login, nwo = self._review_identity()
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews",
             token,
             method="POST",
@@ -1806,7 +1832,7 @@ class Hub:
             raise RuntimeError(tr(
                 "hub.blocker_permission",
                 "Sign in with an account that has approval permission"))
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/pulls/{number}/reviews",
             token,
             method="POST",
@@ -1826,7 +1852,7 @@ class Hub:
     def request_ci_retry(self, number: int, *, demo: bool = False) -> dict:
         """Safely request a re-run, via a PR comment, for temporary inspection failures only."""
         token, login, nwo = self._review_identity()
-        code, pr = gh_api(f"/repos/{nwo}/pulls/{number}", token)
+        code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
             raise RuntimeError(str(getattr(pr, "get", lambda *_: "")("message") or f"HTTP {code}"))
         if str(pr.get("state") or "").lower() != "open":
@@ -1842,20 +1868,18 @@ class Hub:
                     "Only the proposer or a maintainer can request a re-run"))
 
         head_sha = str((pr.get("head") or {}).get("sha") or "")
-        c_code, c_data = gh_api(
+        c_code, c_data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
         comments = c_data if c_code == 200 and isinstance(c_data, list) else []
-        r_code, r_data = gh_api(
+        r_code, r_data = runtime.github_api(
             f"/repos/{nwo}/commits/{head_sha}/check-runs?per_page=100", token
         )
         check_runs = (
             r_data.get("check_runs") or []
             if r_code == 200 and isinstance(r_data, dict) else []
         )
-        explanation = operator_explanation(token, nwo, pr, check_runs)
-        comments = trusted_ci_comments(comments, explanation)
-        retry = report_retry(check_runs, comments, explanation)
+        retry = ci_retry_info(_overall_check_status(check_runs), comments)
         if not retry["available"]:
             raise RuntimeError(retry["reason"])
         if demo:
@@ -1864,13 +1888,12 @@ class Hub:
         marker = "<!-- citygml-ci-retry-request -->"
         comment = (
             f"{marker}\n"
-            f"<!-- citygml-retry-workflow:{retry.get('workflow', 'pr-analysis.yml')} -->\n"
             "## 🔄 Re-run automated inspection\n\n"
             f"Received a re-inspection request from @{login} for the current"
             f" version (`{head_sha[:12]}`).\n"
             "The data is unchanged; only the inspection runs again."
         )
-        post_code, data = gh_api(
+        post_code, data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments",
             token,
             method="POST",
@@ -1898,8 +1921,8 @@ class Hub:
 
     def feedback_defaults(self) -> dict:
         """Return the defaults and submitter info for the in-hub feedback form."""
-        token = AUTH.token()
-        login = ((AUTH.user() or {}) if token else {}).get("login") or ""
+        token = SESSION.token()
+        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
         contributions = self.contributions()
         badge = contributions.get("badge") if contributions.get("ok") else None
         categories = feedback_categories()
@@ -1981,7 +2004,7 @@ class Hub:
             "<sub>The achievement badge is background information about contribution"
             " experience; it does not decide issue priority.</sub>",
         ])
-        code, data = gh_api(
+        code, data = runtime.github_api(
             f"/repos/{nwo}/issues", token, method="POST",
             payload={"title": title, "body": body},
         )
@@ -1999,194 +2022,288 @@ class Hub:
 
 
 # --------------------------------------------------------------------------
-# Onboarding (#59 guided support): status diagnosis of the account/login/git config/fork.
-# Live diagnosis when gh is present; degrades to static guidance without it (gh is an optional dependency).
+# Initial setup (GUI shown when there is no clone; same approach as attr_editor)
 # --------------------------------------------------------------------------
-def _run(args: list, timeout: int = 10):
-    try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
-        return None
 
 
-def git_identity() -> dict:
-    """git user.name / user.email (empty string when unset)."""
-    exe, _ = runtime.git_cmd()
-    if not exe:
-        return {"name": "", "email": ""}
-
-    def cfg(key: str) -> str:
-        r = _run([exe, "config", "--get", key])
-        return r.stdout.strip() if r and r.returncode == 0 else ""
-
-    return {"name": cfg("user.name"), "email": cfg("user.email")}
+def load_preset() -> dict:
+    """preset.json next to the launcher (distribution defaults such as oauthClientId)."""
+    return runtime.read_json(APP_DIR / "preset.json")
 
 
-def git_config_set(name: str, email: str) -> "str | None":
-    """Set git user.name / user.email with --global (button-driven). Returns an error message or None."""
-    exe, _ = runtime.git_cmd()
-    if not exe:
-        return tr("hub.err_git_missing", "git was not found")
-    name, email = name.strip(), email.strip()
-    if not name or not email:
-        return tr("hub.err_git_identity_required", "Enter both a name and an email")
-    for key, val in (("user.name", name), ("user.email", email)):
-        r = _run([exe, "config", "--global", key, val])
-        if not r or r.returncode != 0:
-            return (r.stderr.strip() if r else "") or tr(
-                "hub.err_git_config_failed", "Running git config failed")
-    return None
-
-
+# --------------------------------------------------------------------------
+# GitHub authentication (OAuth device flow) — #86
+#
+# A beginner's Mac has neither gh nor git credentials. To finish authentication
+# with **just a button and an 8-digit code**, without opening a terminal, the
+# device flow is implemented with the standard library.
+#   1. POST /login/device/code       → get the user_code (8 digits) and the verification URL
+#   2. The user enters the code in the browser and approves (the only human step)
+#   3. Poll POST /login/oauth/access_token every `interval` seconds → token
+# client_id is public information (the device flow needs no client_secret). Provide
+# it via oauthClientId in preset.json or the CITYGML_OAUTH_CLIENT_ID environment
+# variable. If unset, fall back to gh.
+# --------------------------------------------------------------------------
 OAUTH_SCOPE = "public_repo"  # Necessary and sufficient for fork/push/PR on public repos (revert to "repo" when going private)
 DEVICE_CODE_URL = "https://github.com/login/device/code"
 ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
 
 
 def oauth_client_id() -> str:
-    return str(runtime.load_preset(APP_DIR).get("oauthClientId") or os.environ.get("CITYGML_OAUTH_CLIENT_ID", ""))
-
-
-def _post_form(url: str, fields: dict, timeout: int = 15) -> dict:
-    data = urlencode(fields).encode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Accept", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def gh_api(path: str, token: str, method: str = "GET", payload: "dict | None" = None,
-           timeout: int = 30) -> "tuple[int, dict]":
-    """Call GitHub REST v3 (no gh dependency). Returns (HTTP status, JSON)."""
-    body = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request("https://api.github.com" + path, data=body, method=method)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("User-Agent", "citygml-hub")
-    if body is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8") or "{}"
-            return r.status, json.loads(raw)
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode("utf-8") or "{}")
-        except ValueError:
-            return e.code, {}
-
-
-def gh_raw(path: str, token: str, timeout: int = 30) -> "tuple[int, bytes, str]":
-    """Fetch a private image as bytes from the GitHub Contents API."""
-    req = urllib.request.Request("https://api.github.com" + path, method="GET")
-    req.add_header("Accept", "application/vnd.github.raw")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("User-Agent", "citygml-hub")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, response.read(), response.headers.get_content_type()
-    except urllib.error.HTTPError as exc:
-        return exc.code, b"", "application/octet-stream"
-
-
-def save_token(token: str) -> None:
-    try:
-        runtime.AUTH_PATH.write_text(json.dumps({"token": token}), encoding="utf-8")
-        os.chmod(runtime.AUTH_PATH, 0o600)
-    except OSError:
-        pass
-
-
-def load_token() -> str:
-    """Look for a saved token first, then gh's token (empty string if neither exists)."""
-    try:
-        tok = json.loads(runtime.AUTH_PATH.read_text(encoding="utf-8")).get("token", "")
-        if tok:
-            return str(tok)
-    except (OSError, ValueError):
-        pass
-    # CITYGML_HUB_NO_GH=1 disables reusing gh (to check the same "Connect" screen beginners see)
-    if shutil.which("gh") and os.environ.get("CITYGML_HUB_NO_GH") != "1":
-        r = _run(["gh", "auth", "token"])
-        if r and r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    return ""
-
-
-def github_user(token: str) -> "dict | None":
-    if not token:
-        return None
-    code, user = gh_api("/user", token)
-    return user if code == 200 and user.get("login") else None
-
-
-def write_git_credentials(token: str) -> None:
-    """Write the credential store for the bundled Git.
-
-    The origin URL can stay plain, so the token is not visible during screen
-    sharing or in `git remote -v`. When the existing Git is chosen, the user's
-    credential helpers are not changed.
-    """
-    exe, bundled = runtime.git_cmd()
-    if not exe or not bundled:
-        return
-    try:
-        runtime.GIT_CRED_PATH.write_text(f"https://x-access-token:{token}@github.com\n", encoding="utf-8")
-        os.chmod(runtime.GIT_CRED_PATH, 0o600)
-    except OSError:
-        return
-
-
-def apply_git_identity(user: dict) -> None:
-    """Auto-configure the git name/email from the GitHub info (only when unset).
-
-    This spares the user from typing. For accounts without a public email, build
-    GitHub's noreply address (an official address that is fine to use in commits).
-    """
-    cur = git_identity()
-    if cur["name"] and cur["email"]:
-        return
-    login = user.get("login") or ""
-    name = cur["name"] or user.get("name") or login
-    email = cur["email"] or user.get("email") or f"{user.get('id')}+{login}@users.noreply.github.com"
-    if name and email:
-        git_config_set(name, email)
+    return str(load_preset().get("oauthClientId") or os.environ.get("CITYGML_OAUTH_CLIENT_ID", ""))
 
 
 class AuthManager:
-    """Progress state of the device flow (one session per machine)."""
+    """The account of this hub process: the one its city is bound to (hub-v1.2.1).
+
+    One process serves one city, so one bound account. Nothing is used before the
+    person has chosen an account on the account screen (a saved one, this computer's
+    GitHub CLI sign-in, or a new device-flow sign-in); the choice is remembered per
+    city in the shared settings and is never made silently. The computer's own Git
+    configuration and credential helpers are left alone.
+    """
 
     # The screen polls the state every 2 seconds, so queries to GitHub are throttled
     # with a TTL (avoiding API rate limits and a sluggish screen).
     USER_TTL = 20
+    MACHINE_TTL = 300
 
-    def __init__(self) -> None:
+    def __init__(self, session: "Session") -> None:
+        self.session = session
         self.lock = threading.RLock()
         self.user_code = ""
         self.verify_url = ""
         self.waiting = False
         self.error: "str | None" = None
+        self.certificate_report: "str | None" = None
+        self.login: "str | None" = None
         self._token = ""
-        self._reused_auth = False
         self._user: "dict | None" = None
         self._user_at = 0.0
+        self._machine: "dict | None" = None
+        self._machine_at = 0.0
+        self._machine_busy = False
+        self._legacy: "dict | None" = None
+        self._migrated = False
+
+    # ---- binding to the city ----
+    @property
+    def city(self) -> "str | None":
+        return self.session.city
+
+    @property
+    def clone_root(self) -> "Path | None":
+        return self.session.hub.root if self.session.hub is not None else None
+
+    def attach(self) -> None:
+        """Adopt the account recorded for the session's city (at start; nothing is chosen silently)."""
+        city = self.city
+        with self.lock:
+            self.login = accounts.city_login(city) if city else None
+            self._token = accounts.token_for(self.login) if self.login else ""
+            self._user, self._user_at = None, 0.0
+        if self.login:
+            self._apply_identity()
+        threading.Thread(target=self._migrate_legacy, name="citygml-auth-migrate", daemon=True).start()
+
+    def _migrate_legacy(self) -> None:
+        """Move the single token of earlier versions into an account file (needs one API call)."""
+        if self._migrated:
+            return
+        self._migrated = True
+        try:
+            accounts.migrate_legacy_token()
+        except Exception:
+            pass
+
+    def _apply_identity(self) -> None:
+        root = self.clone_root
+        if not root or not self.login:
+            return
+        rec = accounts.load_account(self.login) or {}
+        accounts.apply_clone_identity(root, self.login, rec.get("id"))
+
+    def clone_opened(self) -> None:
+        """A clone is served from now on: record the binding when the account was chosen
+        before the clone existed (setup), and write the identity into the clone."""
+        if self.city and self.login:
+            accounts.bind_city_login(self.city, self.login)
+        self._apply_identity()
+
+    def _bind(self, login: str, token: str) -> None:
+        with self.lock:
+            self.login, self._token = login, token
+            self._user, self._user_at = None, 0.0
+            self.waiting, self.user_code, self.error = False, "", None
+            self.certificate_report = None
+        if self.city:
+            accounts.bind_city_login(self.city, login)
+        self._apply_identity()
+        self.session.account_changed()
+
+    def token(self) -> str:
+        with self.lock:
+            return self._token
 
     def user(self) -> "dict | None":
-        """Authenticated user (TTL cache). Also fixes up the git config on first fetch."""
+        """Authenticated user (TTL cache). A token GitHub rejects unbinds the account."""
         with self.lock:
             if self._user_at > time.time() - self.USER_TTL:
                 return self._user
-        token = self.token()
-        user = github_user(token) if token else None
-        if user:
-            apply_git_identity(user)
-            write_git_credentials(token)
+            token, login = self._token, self.login
+        code, user = runtime.github_user_status(token) if token else (0, None)
         with self.lock:
-            self._user, self._user_at = user, time.time()
+            if (self._token, self.login) != (token, login):
+                return self._user   # the binding changed while GitHub was asked: that answer is stale
+        if token and code == 401:
+            self._drop_dead_account(login, token)
+        with self.lock:
+            # unchanged binding, or unbound meanwhile (the account was just dropped): remember the
+            # answer so the screen's polling does not ask GitHub again within the TTL
+            if (self._token, self.login) == (token, login) or self.login is None:
+                self._user, self._user_at = user, time.time()
         return user
 
+    def _drop_dead_account(self, login, token) -> None:
+        """Forget the account whose token GitHub rejected — only if it is still the bound one."""
+        with self.lock:
+            if (self.login, self._token) != (login, token):
+                return
+            self.login, self._token = None, ""
+            self.error = tr("hub.err_auth_revoked",
+                            "GitHub no longer accepts the connection of @{login} (revoked or expired). "
+                            "It was removed from this computer. Choose one of the options on this "
+                            "screen: a new sign-in with the 8-digit code, or another account.",
+                            login=login or "")
+        if login:
+            accounts.delete_account(login)
+        if self.city:
+            accounts.bind_city_login(self.city, None)
+
+    def forget_user(self) -> None:
+        with self.lock:
+            self._user_at = 0.0
+
+    @staticmethod
+    def _save_failed(exc: Exception) -> str:
+        where = str(runtime.auth_dir())
+        return tr("hub.err_account_save_failed",
+                  "The connection could not be saved on this computer ({where}: {reason}). "
+                  "Check that the folder can be written to, then choose again.", where=where, reason=str(exc))
+
+    # ---- the choices on the account screen ----
+    def use_saved(self, login: str) -> "str | None":
+        """Use a stored account for this city. Returns an error message or None."""
+        try:
+            login = accounts.safe_login(login)
+        except ValueError:
+            return tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen.")
+        token = accounts.token_for(login)
+        if not token:
+            return tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen.")
+        code, user = runtime.github_user_status(token)
+        if code == 401:
+            accounts.delete_account(login)
+            return tr("hub.err_auth_revoked",
+                      "GitHub no longer accepts the connection of @{login} (revoked or expired). "
+                      "It was removed from this computer. Choose one of the options on this "
+                      "screen: a new sign-in with the 8-digit code, or another account.", login=login)
+        if not user:
+            return tr("hub.err_auth_check_failed",
+                      "GitHub could not be reached to check the connection; nothing was changed. "
+                      "Check the internet connection and press the same choice again.")
+        try:
+            accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+        except OSError as e:
+            return self._save_failed(e)
+        if user["login"] != login:
+            # Renamed or differently cased: keep one file per account. On a case-insensitive
+            # file system (macOS, Windows) the two names are already the same file.
+            try:
+                same = os.path.samefile(accounts.account_path(login), accounts.account_path(user["login"]))
+            except OSError:
+                same = False
+            if not same:
+                accounts.delete_account(login)
+        self._bind(user["login"], token)
+        return None
+
+    def use_machine(self) -> "str | None":
+        """Use this computer's GitHub CLI sign-in (only on an explicit click)."""
+        token = accounts.machine_token()
+        if not token:
+            return tr("hub.err_machine_missing",
+                      "This computer's GitHub CLI is not signed in (any more). Choose one of the other options.")
+        code, user = runtime.github_user_status(token)
+        if not user:
+            return tr("hub.err_auth_check_failed",
+                      "GitHub could not be reached to check the connection; nothing was changed. "
+                      "Check the internet connection and press the same choice again.")
+        try:
+            accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+        except OSError as e:
+            return self._save_failed(e)
+        self._bind(user["login"], token)
+        return None
+
+    def disconnect(self, delete: bool = False) -> None:
+        """Unbind this city's account (and optionally delete the stored account)."""
+        login = self.login
+        with self.lock:
+            self.login, self._token, self._user, self._user_at = None, "", None, 0.0
+            self.waiting, self.user_code, self.error = False, "", None
+            self.certificate_report = None
+            root = self.clone_root
+        if self.city:
+            accounts.bind_city_login(self.city, None)
+        if delete and login:
+            accounts.delete_account(login)
+        if root:
+            accounts.clear_clone_identity(root)
+        self.session.account_changed()
+
+    def machine(self) -> "dict | None":
+        """This computer's GitHub CLI login, read from the CLI's own config file.
+
+        Nothing is sent to GitHub and no token is read until the person presses the
+        button (use_machine). CITYGML_HUB_NO_GH=1 hides the option."""
+        with self.lock:
+            if self._machine_at > time.time() - self.MACHINE_TTL:
+                return self._machine
+        try:
+            login = accounts.machine_login_from_config()
+        except Exception:
+            login = ""
+        found = {"login": login} if login else None
+        with self.lock:
+            self._machine, self._machine_at, self._machine_busy = found, time.time(), False
+        return found
+
+    def legacy(self) -> dict:
+        """What earlier versions left on this computer (found once per process)."""
+        with self.lock:
+            if self._legacy is not None:
+                return self._legacy
+        found = accounts.legacy_traces()
+        with self.lock:
+            self._legacy = found
+        return found
+
+    def review_legacy(self, remove: bool) -> list:
+        """The hand-over screen was read; optionally remove what an earlier version wrote."""
+        removed = []
+        if remove:
+            removed = accounts.remove_legacy_traces()
+        accounts.acknowledge_legacy()
+        with self.lock:
+            self._legacy = None
+        return removed
+
     def state(self) -> dict:
-        user = self.user()
+        user = self.user() if self.login else None
+        legacy = self.legacy()
+        if not self.login:
+            self.machine()
         with self.lock:
             return {
                 "clientId": bool(oauth_client_id()),
@@ -2194,28 +2311,19 @@ class AuthManager:
                 "userCode": self.user_code,
                 "verifyUrl": self.verify_url,
                 "error": self.error,
-                "login": (user or {}).get("login"),
-                # Returned to explain that the 8-digit code screen was skipped by reusing a saved connection.
-                "reusedAuth": bool(user and self._reused_auth),
+                "certificateReport": self.certificate_report,
+                "login": (user or {}).get("login") if user else None,
+                "chosen": bool(self.login),
+                "bound": self.login,
+                "city": self.city,
+                "accounts": [a["login"] for a in accounts.list_accounts()],
+                "machine": self._machine,
+                "machineChecking": bool(self._machine_busy),
+                "legacy": legacy if legacy.get("any") else None,
+                "legacyReviewed": bool(accounts.is_legacy_acknowledged()),
             }
 
-    def token(self) -> str:
-        with self.lock:
-            if self._token:
-                return self._token
-        token = load_token()
-        if token:
-            with self.lock:
-                # If _poll put in a new token concurrently, prefer that one.
-                if self._token:
-                    return self._token
-                self._reused_auth = True
-        return token
-
-    def forget_user(self) -> None:
-        with self.lock:
-            self._user_at = 0.0
-
+    # ---- a new sign-in (device flow) ----
     def start(self) -> dict:
         cid = oauth_client_id()
         if not cid:
@@ -2225,7 +2333,22 @@ class AuthManager:
         with self.lock:
             if self.waiting:
                 return {"userCode": self.user_code, "verifyUrl": self.verify_url}
-            r = _post_form(DEVICE_CODE_URL, {"client_id": cid, "scope": OAUTH_SCOPE})
+            self.certificate_report = None
+            self.error = None
+            try:
+                r = runtime.post_form(DEVICE_CODE_URL, {"client_id": cid, "scope": OAUTH_SCOPE})
+            except (urllib.error.URLError, OSError) as exc:
+                if runtime.is_certificate_error(exc):
+                    self.certificate_report = runtime.certificate_diagnostics()
+                    self.error = tr(
+                        "hub.err_auth_certificate",
+                        "GitHub's HTTPS certificate could not be verified. The connection was stopped "
+                        "before sign-in. Please report this message and the tool version to the distributor.")
+                    raise RuntimeError(self.error) from None
+                raise RuntimeError(tr(
+                    "hub.err_auth_offline",
+                    "GitHub could not be reached to start the sign-in. Check the internet "
+                    "connection and press the button again."))
             if "device_code" not in r:
                 raise RuntimeError(r.get("error_description") or tr(
                     "hub.err_device_start", "Could not start connecting to GitHub"))
@@ -2241,23 +2364,43 @@ class AuthManager:
         while time.time() < deadline:
             time.sleep(interval)
             try:
-                r = _post_form(ACCESS_TOKEN_URL, {
+                r = runtime.post_form(ACCESS_TOKEN_URL, {
                     "client_id": cid, "device_code": device_code,
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 })
-            except OSError:
+            except OSError as exc:
+                if runtime.is_certificate_error(exc):
+                    with self.lock:
+                        self.waiting = False
+                        self.certificate_report = runtime.certificate_diagnostics()
+                        self.error = tr(
+                            "hub.err_auth_certificate",
+                            "GitHub's HTTPS certificate could not be verified. The connection was stopped "
+                            "before sign-in. Please report this message and the tool version to the distributor.")
+                    return
                 continue  # keep waiting through temporary network errors
             if r.get("access_token"):
                 token = r["access_token"]
-                save_token(token)
-                write_git_credentials(token)
-                user = github_user(token)
+                user = runtime.github_user_status(token)[1]
+                save_error = None
                 if user:
-                    apply_git_identity(user)
-                with self.lock:
-                    self._token, self.waiting, self.user_code = token, False, ""
-                    self._reused_auth = False
-                    self._user, self._user_at = user, time.time()
+                    try:
+                        accounts.save_account(user["login"], token, user.get("id"), user.get("name") or "")
+                    except ValueError:
+                        user = None
+                    except OSError as e:
+                        save_error = self._save_failed(e)
+                if save_error:
+                    with self.lock:
+                        self.waiting, self.error = False, save_error
+                elif user:
+                    self._bind(user["login"], token)
+                else:
+                    with self.lock:
+                        self.waiting = False
+                        self.error = tr("hub.err_auth_user_failed",
+                                        "GitHub accepted the sign-in, but could not be asked who you are "
+                                        "(offline?). Check the internet connection and start the sign-in again.")
                 return
             err = r.get("error")
             if err == "authorization_pending":
@@ -2280,20 +2423,202 @@ class AuthManager:
             self.error = tr("hub.err_auth_expired", "The time limit expired. Please try again.")
 
 
-# One authentication state per process (shared by the setup screen and the dashboard).
-AUTH = AuthManager()
+class Session:
+    """Everything this hub process knows about the one city it serves (contract §1): the
+    city, its clone (once there is one), the account the city is bound to, the clone job
+    of the setup screen, the background data sync and the version check. What GitHub said
+    about the account's copy of the city (fork) and about reaching the city (access) is
+    remembered until an event — account chosen or dropped, copy created — clears it."""
+
+    def __init__(self) -> None:
+        self.city: "str | None" = None
+        self.hub: "Hub | None" = None
+        self.account = AuthManager(self)
+        self.setup = git_sync.CloneJob(clone_text, self.net_git_args, runtime.git_exe)
+        self.sync = None
+        self.updates = UpdateManager()
+        self.fork = runtime.Memo()
+        self.access = runtime.Memo()
+
+    # ---- the account ----
+    @property
+    def login(self) -> "str | None":
+        return self.account.login
+
+    def token(self) -> str:
+        return self.account.token()
+
+    def net_git_args(self) -> list:
+        """git arguments for a network command as the city's account (or anonymously)."""
+        return runtime.git_args(net=True, store=accounts.store_for(self.login))
+
+    def account_changed(self) -> None:
+        """The account was chosen or dropped: what was known about its copy is stale. With
+        a clone open, uploads must go to the new account's copy before anything else
+        happens (an editor may be launched right after this click), so the lookup and
+        the origin change run now, not in the background."""
+        self.fork.clear()
+        self.access.clear()
+        if self.hub is not None and self.login:
+            try:
+                self.fork_nwo(fresh=True)
+            except (urllib.error.URLError, OSError):
+                pass   # offline: origin is checked again on the next lookup
+
+    # ---- the clone ----
+    def open_clone(self, root, *, sync: bool = False) -> "Hub":
+        """Serve this clone from now on: remember it for its city, hand it to the account,
+        and (at start) keep its main in line with the city and look for newer tools.
+        Nothing is downloaded unasked."""
+        root = Path(root).resolve()
+        self.hub = Hub(root)
+        self.city = runtime.clone_city(root) or self.city
+        runtime.remember_clone(self.city, root)
+        self.account.clone_opened()
+        if sync:
+            if runtime.git_exe():
+                self.sync = git_sync.BackgroundSync(
+                    root, lambda: runtime.upstream_url(root, ignore_env=True), self.net_git_args, log=print).start()
+            self.updates.check_async(min_hub=min_hub_of(root))
+        return self.hub
+
+    def start(self, root, city: "str | None", *, sync: bool = True) -> None:
+        """What main() knows: the city the launcher asked for and the clone found for it (or None)."""
+        self.city = city
+        if root is not None:
+            self.open_clone(root, sync=sync)
+        self.account.attach()
+        if runtime.running_hub_tag():
+            try:
+                shortcuts.ensure_launcher()   # the person's launcher keeps up with the installed version
+            except OSError:
+                pass
+
+    def try_activate(self) -> None:
+        """After the setup screen's clone finished: serve it (the screen keeps polling until then)."""
+        st = self.setup
+        if self.hub is not None or not st.done or st.dest is None:
+            return
+        if runtime.has_building_data(Path(st.dest)):
+            self.open_clone(st.dest)
+        else:
+            st.done = False
+            st.error = tr("hub.err_clone_no_bldg",
+                          "No building data (udx/bldg) was found in the cloned destination")
+
+    def default_dest(self) -> str:
+        """Clone destination (decided without asking). Named after the city so several
+        cities' folders are told apart in the file manager; only steps aside with a
+        sequence number when it already exists and is not empty."""
+        name = f"CityGML Data ({self.city.split('/')[-1]})" if self.city else "CityGML Data"
+        return str(next_available_dest(runtime.home() / "Documents" / name))
+
+    # ---- what GitHub knows about the account and the city ----
+    def upstream_ok(self) -> "bool | None":
+        """Whether the city repository is reachable (None when no account is chosen). Asked
+        from the setup screen's polling, so a "no" is kept for 5 seconds; a "yes" is kept
+        until the account changes (access disappearing mid-way is not expected)."""
+        if not self.login:
+            return None
+        fresh, val = self.access.get()
+        if val:
+            return True
+        if fresh:
+            return False
+        return self.access.set(upstream_access(self.token()), 5)
+
+    def fork_nwo(self, *, fresh: bool = False) -> "str | None":
+        """The account's copy of the city (owner/repo), or None. Kept for a minute when
+        found, 10 seconds when not (the person may create it on GitHub meanwhile);
+        fresh=True asks again. A found copy becomes the clone's origin."""
+        if not self.login:
+            return None
+        valid, val = self.fork.get()
+        if valid and not fresh:
+            return val
+        found = find_fork(self.token(), self.login)
+        self.fork.set(found, 60 if found else 10)
+        if found and self.hub is not None:
+            self.hub.ensure_origin(found)
+        return found
+
+    def fork_or_none(self) -> "str | None":
+        """The account's copy, or None when GitHub cannot be asked right now (offline)."""
+        try:
+            return self.fork_nwo()
+        except (urllib.error.URLError, OSError):
+            return None
+
+    def copy_missing(self) -> bool:
+        """GitHub answered that the bound account has no copy of the city yet (offline: False,
+        the dashboard stays usable). The account screen then offers to create it."""
+        if not self.login or self.fork_or_none():
+            return False
+        fresh, val = self.fork.get()
+        return bool(fresh and val is None)
+
+    def setup_state(self) -> dict:
+        """The whole setup-screen state (account, copy, clone job) as one payload."""
+        auth = self.account.state()
+        fork_checked = True
+        try:
+            # Both only for a verified sign-in (auth["login"]); a saved but unverified account
+            # (offline) is shown as "bound", nothing is asked.
+            fork = self.fork_nwo() if auth["login"] else None
+            # If the fork already exists, upstream is reachable too (avoid extra API calls)
+            access = True if fork else (self.upstream_ok() if auth["login"] else None)
+        except (urllib.error.URLError, OSError):
+            fork, access, fork_checked = None, None, False   # offline: the screen stays usable
+        return {
+            "ok": True,
+            **auth,
+            "fork": fork,
+            "forkChecked": fork_checked,
+            "access": access,
+            "clone": self.setup.state(),
+            "dest": self.default_dest(),
+            "active": self.hub is not None,
+            # "account": the clone exists, the city only needs its account chosen (hub-v1.2.1)
+            "mode": "account" if self.hub is not None else "setup",
+        }
+
+    def settings_payload(self) -> dict:
+        """Everything the settings screen shows (hub-v1.2.1): effective values, read-only paths."""
+        auth = self.account.state()
+        root = self.hub.root if self.hub is not None else None
+        return {
+            "ok": True,
+            "city": self.city,
+            "login": auth.get("login"),
+            "chosen": auth.get("chosen"),
+            "fork": self.fork_or_none() if auth.get("login") else None,
+            "clone": str(root) if root else None,
+            "identity": accounts.clone_identity(root) if root else {"name": "", "email": ""},
+            "machineIdentity": accounts.machine_identity(),
+            "accounts": accounts.list_accounts(),
+            "hubTag": runtime.running_hub_tag(),
+            "update": {k: v for k, v in self.updates.snapshot().items() if not k.startswith("_")},
+            "paths": {
+                "config": str(runtime.config_path()),
+                "auth": str(runtime.auth_dir()),
+                "tools": str(runtime.tools_dir()),
+                "hubs": str(runtime.hubs_dir()),
+            },
+            "legacy": auth.get("legacy"),
+        }
+
 
 
 def upstream_access(token: str) -> bool:
     """Whether this token can reach upstream (the source data). Always 200 for a public repo."""
-    code, _ = gh_api(f"/repos/{runtime.upstream_nwo()}", token)
+    code, _ = runtime.github_api(f"/repos/{runtime.upstream_nwo()}", token)
     return code == 200
 
 
 def find_fork(token: str, login: str) -> "str | None":
     """The upstream fork owned by login (owner/repo), or None if absent."""
     repo = runtime.upstream_nwo().split("/")[-1]
-    code, data = gh_api(f"/repos/{login}/{repo}", token)
+    code, data = runtime.github_api(f"/repos/{login}/{repo}", token)
     if code == 200 and data.get("fork"):
         return data.get("full_name")
     return None
@@ -2304,17 +2629,23 @@ def create_fork(token: str) -> "tuple[str | None, str | None]":
 
     Fork creation is asynchronous, so wait briefly and confirm the fork materialized.
     """
-    user = github_user(token)
+    user = runtime.github_user_status(token)[1]
     if not user:
         return None, tr("hub.err_connect_first", "Connect to GitHub first")
     login = user["login"]
     existing = find_fork(token, login)
     if existing:
         return existing, None
-    code, data = gh_api(f"/repos/{runtime.upstream_nwo()}/forks", token, method="POST", payload={})
+    code, data = runtime.github_api(f"/repos/{runtime.upstream_nwo()}/forks", token, method="POST", payload={})
     if code not in (200, 201, 202):
         msg = data.get("message") or f"HTTP {code}"
-        if code == 404:
+        if accounts.is_org_restriction(code, data):
+            msg = tr("hub.err_org_restricted",
+                     "The organization that hosts this city has not approved this tool yet. "
+                     "Ask an organization owner to grant it access (GitHub → Settings → "
+                     "Applications → this app → Organization access). You can keep editing "
+                     "meanwhile; sending waits until then.")
+        elif code == 404:
             msg = tr("hub.err_upstream_unreachable",
                      "The source data repository was not found on GitHub. It may "
                      "not be published yet — contact the data maintainer")
@@ -2327,384 +2658,18 @@ def create_fork(token: str) -> "tuple[str | None, str | None]":
     return data.get("full_name"), None
 
 
-# --------------------------------------------------------------------------
-# Setup screen (#86 redesign from scratch)
-#
-# The principle is the same "one screen, one action" as the entry page (getting-started.html).
-# In addition, there are **zero input fields**: neither the fork URL, name, email, nor
-# save location is asked (all are information the tool determines).
-# The only thing the user types is the 8-digit number entered on GitHub's browser page.
-#   1 Connect (device flow) → 2 Create your own copy → 3 Import the data → done
-# Approval and clone completion are auto-detected by polling and the screen advances
-# (the user is never made to press "Next").
-# To avoid JS/CSS braces, values are filled by %%TOKEN%% replacement, not .format.
-# --------------------------------------------------------------------------
-SETUP_HTML = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title data-i18n="hub.setup_doc_title">Initial setup — Building Data Editing Tools</title>
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg:#eef1f5; --card:#fff; --border:#dde1e6; --text:#1c2733; --muted:#6b7785;
-    --ok:#1f883d; --okbg:#eaf6ec; --okborder:#a9dfbb; --link:#0969da; --figbg:#f6f8fa; --err:#b32020;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#9aa5b1;
-      --ok:#3fb950; --okbg:#12261a; --okborder:#2ea04326; --link:#58a6ff; --figbg:#0d1117; --err:#ff7b72; }
-  }
-  * { box-sizing:border-box; }
-  html { height:100%; }
-  body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-size:16px;
-    font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
-    display:flex; align-items:flex-start; justify-content:center; padding:12px 16px; }
-  main { background:var(--card); border:1px solid var(--border); border-radius:16px;
-    width:100%; max-width:600px; padding:24px 30px 20px; margin:auto 0; }
-  .prog { display:flex; align-items:center; gap:8px; margin-bottom:14px; min-height:8px; }
-  .prog i { flex:1; height:6px; border-radius:3px; background:var(--border); }
-  .prog i.on { background:var(--ok); }
-  .prog span { font-size:13px; color:var(--muted); margin-left:4px; white-space:nowrap; }
-  h1 { font-size:23px; line-height:1.45; margin:0 0 8px; }
-  p.lead { font-size:15.5px; line-height:1.75; color:var(--muted); margin:0 0 4px; }
-  /* 8-digit code */
-  .code { font-family:ui-monospace,Menlo,monospace; font-size:38px; font-weight:700;
-    letter-spacing:.14em; text-align:center; background:var(--figbg); border:1px solid var(--border);
-    border-radius:12px; padding:16px 10px; margin:14px 0 10px; user-select:all; }
-  .safe { background:var(--okbg); border:1px solid var(--okborder); border-radius:10px;
-    padding:11px 14px; font-size:14.5px; line-height:1.7; }
-  .safe b { color:var(--ok); }
-  .safe + .safe, .log + .safe { margin-top:10px; }
-  .steps { margin:14px 0 12px; padding:10px 12px 10px 38px; background:var(--figbg);
-    border:1px solid var(--border); border-radius:10px; font-size:14.5px; line-height:1.7; }
-  .steps li + li { margin-top:6px; }
-  .err { color:var(--err); font-size:14px; line-height:1.7; margin-top:10px; }
-  /* progress log */
-  .log { background:var(--figbg); border:1px solid var(--border); border-radius:10px;
-    padding:10px 12px; font-size:12.5px; line-height:1.6; color:var(--muted);
-    font-family:ui-monospace,Menlo,monospace; height:104px; overflow:hidden; margin-top:12px; }
-  .bar { height:8px; background:var(--border); border-radius:5px; overflow:hidden; margin-top:12px; }
-  .bar > i { display:block; height:100%; background:var(--ok); width:30%;
-    animation:slide 1.6s ease-in-out infinite; }
-  @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
-  details { margin-top:14px; font-size:14px; line-height:1.8; color:var(--muted); }
-  details summary { cursor:pointer; color:var(--link); font-size:14px; }
-  details .in { padding:10px 2px 0; }
-  input { font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--border);
-    border-radius:8px; width:100%; margin-top:6px; background:var(--card); color:var(--text); }
-  code { background:var(--figbg); border:1px solid var(--border); padding:1px 6px;
-    border-radius:4px; font-size:13px; }
-  .nav { display:flex; align-items:center; gap:12px; margin-top:18px; }
-  button { font:inherit; font-weight:700; cursor:pointer; border-radius:10px; border:none;
-    background:var(--ok); color:#fff; padding:11px 24px; font-size:16px; }
-  button:disabled { background:#b7bdc4; cursor:default; }
-  button.ghost { background:transparent; color:var(--muted); font-weight:500;
-    border:1px solid var(--border); padding:10px 16px; font-size:14px; }
-  .hint { font-size:13px; color:var(--muted); margin-left:auto; text-align:right; }
-  a { color:var(--link); }
-  .spin { display:inline-block; width:14px; height:14px; border:2px solid var(--border);
-    border-top-color:var(--ok); border-radius:50%; animation:spin .8s linear infinite;
-    vertical-align:-2px; margin-right:6px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-</style></head><body><main>
-  <div class="prog" id="prog"></div>
-  <div id="screen"></div>
-  <div class="nav" id="nav"></div>
-<script>
-'use strict';
-const $ = id => document.getElementById(id);
-// Fallback so the English originals work even without an injected language pack (no i18n module)
-const t = window.t || ((k, d, p) => {
-  let s = d;
-  if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]);
-  return s;
-});
-const UPSTREAM = "%%UPSTREAM%%";
-const DEFAULT_DEST = "%%DEST%%";
-const STEPS = [t('hub.setup_step_connect', 'Connect'),
-  t('hub.setup_step_fork', 'Create a copy'),
-  t('hub.setup_step_clone', 'Import')];
-
-let st = null;        // state coming from the server
-let busy = false;     // a button action is running
-let dest = DEFAULT_DEST;
-let returnTabTitle = false; // do not change the return-tab title even while the GitHub tab is being used
-let pollError = '';
-
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? undefined : {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)});
-  return r.json();
-}
-
-// Which screen we are on (0=connect / 1=copy / 2=import / 3=done)
-function stepOf(s) {
-  if (!s) return 0;
-  if (s.active || (s.clone && s.clone.done)) return 3;
-  if (!s.login) return 0;
-  if (!s.fork) return 1;
-  return 2;
-}
-
-function renderProg(i) {
-  $('prog').innerHTML = i >= 3 ? '' :
-    STEPS.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('') +
-    `<span>${i + 1} / ${STEPS.length}</span>`;
-}
-
-// ---- Screen 1: connect to GitHub ----
-function screenConnect(s) {
-  if (!s.clientId) {
-    return {
-      html: `<h1>${t('hub.setup_noclient_title', 'Connect to GitHub')}</h1>
-        <p class="lead">${t('hub.setup_noclient_lead',
-          "This tool's GitHub connection settings are not configured yet. Please contact the distributor.")}</p>
-        <details open><summary>${t('hub.setup_noclient_diy_summary', 'If you configure it yourself')}</summary><div class="in">
-          ${t('hub.setup_noclient_diy_body',
-            'Place <code>preset.json</code> next to the launcher file (in the Program folder) and write <code>{"oauthClientId": "…"}</code>. On a machine already signed in with the GitHub CLI (<code>gh</code>), you can continue as is.')}
-        </div></details>`,
-      nav: `<button onclick="recheck()">${t('hub.setup_recheck', 'Check again')}</button>`,
-    };
-  }
-  if (s.waiting && s.userCode) {
-    return {
-      html: `<h1>${t('hub.setup_device_title', 'Connect to GitHub in another tab')}</h1>
-        <p class="lead">${t('hub.setup_device_lead',
-          'First check the number below. Pressing the next button opens <b>a new GitHub tab</b>.')}</p>
-        <div class="code" id="uc">${esc(s.userCode)}</div>
-        <ol class="steps">
-          <li>${t('hub.setup_device_step1', 'Enter the number on GitHub and press <b>Continue</b>.')}</li>
-          <li>${t('hub.setup_device_step2', 'On the next screen, press <b>Authorize</b>.')}</li>
-          <li>${t('hub.setup_device_step3',
-            'When finished, <b>close the GitHub tab</b>. Return to the "← Return here" tab on the left.')}</li>
-        </ol>
-        <div class="safe"><span class="spin"></span>${t('hub.setup_device_return',
-          '<b>This screen is where you return.</b> When you finish on GitHub, it advances automatically.')}</div>
-        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-      nav: `<button onclick="openVerification()">${t('hub.setup_btn_open_github', 'Copy the number and open GitHub')}</button>
-        <button class="ghost" onclick="copyCode()">${t('hub.setup_btn_copy_code', 'Copy the number only')}</button>`,
-    };
-  }
-  return {
-    html: `<h1>${t('hub.setup_connect_title', 'Connect this computer to GitHub')}</h1>
-      <p class="lead">${t('hub.setup_connect_lead',
-        'To fix and propose building data, you need a GitHub account. Pressing the button below first shows an <b>8-digit number</b>. Read the next screen, then open GitHub in another tab.')}</p>
-      <div class="safe">${t('hub.setup_connect_scope',
-        '<b>What you will authorize:</b> this tool asks GitHub for the <b>public_repo</b> permission — read and write access to the <b>public</b> repositories of your account. It is used only to create your own copy of the city data, upload your edits, and open change proposals (pull requests); private repositories are not covered. The connection key is stored only on this computer (in a file readable by your account alone) and you can revoke it anytime under GitHub → Settings → Applications.')}</div>
-      <div class="safe">${t('hub.setup_connect_note',
-        'If you do not have an account, you can <b>create one for free</b> from the page that opens (just an email address and a password). After finishing on GitHub, <b>return to this "Initial setup" tab</b>.')}</div>
-      ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-    nav: `<button id="go" onclick="doConnect()">${t('hub.setup_step_connect', 'Connect')}</button>`,
-  };
-}
-
-// ---- Screen 2: create your own copy ----
-function screenFork(s) {
-  const reusedNotice = s.reusedAuth
-    ? `<div class="safe">${t('hub.setup_reused_notice',
-        '<b>Your previous GitHub connection was carried over.</b><br> The connection is saved on this computer, so the 8-digit code screen was skipped and setup advanced to here automatically. This is not a malfunction or a mistake.')}</div>`
-    : '';
-  const authNotice = `<div class="safe">${t('hub.setup_auth_notice',
-    '<b>The GitHub connection is complete.</b><br> An email with the subject "[GitHub] A third-party OAuth application has been added to your account" is a normal notification of this connection. It is unrelated to any Mac prompt; no reply or action inside the email is needed.')}</div>`;
-  // Guided support when invite-only and the source data is not reachable yet (#96).
-  // The server auto-accepts pending invitations, so the only thing the user does is "tell the administrator their username".
-  if (s.access === false) {
-    return {
-      html: `<h1>${t('hub.setup_noaccess_title', 'The source data cannot be reached')}</h1>
-        <p class="lead">${t('hub.setup_noaccess_lead',
-          'The GitHub connection is done, but the data repository <b>{url}</b> could not be reached. It may not be published yet, or the network may be down. Contact the data maintainer, or try again later.',
-          {url: esc(UPSTREAM)})}</p>
-        ${reusedNotice}
-        ${authNotice}
-        ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
-      nav: `<button onclick="poll()">${t('hub.setup_btn_recheck', 'Check again')}</button>`,
-    };
-  }
-  return {
-    html: `<h1>${t('hub.setup_fork_title', 'Create your own copy')}</h1>
-      <p class="lead">${t('hub.setup_fork_lead',
-        'The source data stays as is; <b>your own working copy</b> is created on GitHub. You will use it later when proposing "I fixed this".<br> Just press the button (usually a few seconds, up to about a minute).')}</p>
-      ${reusedNotice}
-      ${authNotice}
-      <div class="safe">${t('hub.setup_fork_connected', 'Connected to GitHub as <b>{login}</b>.', {login: esc(s.login)})}</div>
-      ${s.forkError ? `<div class="err">${t('hub.setup_fork_error',
-        '<b>Could not create the copy.</b><br>{error}<br> Check your internet connection and try again with the button below.',
-        {error: esc(s.forkError)})}</div>` : ''}
-      `,
-    nav: busy
-      ? `<button disabled><span class="spin"></span>${t('hub.setup_btn_forking', 'Creating (up to 1 minute)…')}</button>`
-      : `<button onclick="doFork()">${s.forkError ? t('hub.setup_btn_fork_retry', 'Create the copy again') : t('hub.setup_step_fork', 'Create a copy')}</button>`,
-  };
-}
-
-// ---- Screen 3: import the data ----
-function screenClone(s) {
-  const c = s.clone || {};
-  if (c.gitAvailable === false) {
-    return {
-      html: `<h1>${t('hub.setup_git_missing_title', 'A component needed for the import was not found')}</h1>
-        <p class="lead">${t('hub.setup_git_missing_lead',
-          'Close the browser and the terminal for now, check the guide in "READ-ME-FIRST.html" on installing the component, and then open the same launcher file again.')}</p>
-        <div class="err">${t('hub.setup_git_missing_win',
-          'If this screen appears on the Windows edition, the distributed files are incomplete; please contact the distributor.')}</div>`,
-      nav: `<span class="hint">${t('hub.setup_git_missing_hint', 'After preparing, setup resumes where you left off')}</span>`,
-    };
-  }
-  if (c.running) {
-    return {
-      html: `<h1>${t('hub.setup_cloning_title', 'Importing the data')}</h1>
-        <p class="lead">${t('hub.setup_cloning_lead',
-          'The building data is large, so this takes <b>minutes to tens of minutes</b>. Please keep this screen open and wait.')}</p>
-        <div class="bar"><i></i></div>
-        <div class="log">${(c.log || []).map(esc).join('<br>')}</div>
-        <div class="safe">${t('hub.setup_cloning_note',
-          'The progress text may not change for several minutes. This is not abnormal. Keep your internet connection and wait <b>without closing this screen or the terminal</b>.')}</div>`,
-      nav: `<span class="hint">${t('hub.setup_cloning_hint', 'When it finishes, this advances to "Ready to go"')}</span>`,
-    };
-  }
-  const retry = Boolean(c.error);
-  const lastLog = (c.log || []).length
-    ? `<details><summary>${t('hub.setup_last_log_summary', 'Check the last progress')}</summary><div class="in log">${c.log.map(esc).join('<br>')}</div></details>`
-    : '';
-  return {
-    html: `<h1>${retry ? t('hub.setup_clone_retry_title', 'Try importing the data again')
-        : t('hub.setup_clone_title', 'Import the data to this computer')}</h1>
-      <p class="lead">${t('hub.setup_clone_lead_head',
-        'Your working copy on GitHub was confirmed (<b>{fork}</b>).', {fork: esc(s.fork)})}<br>
-        ${retry
-          ? t('hub.setup_clone_lead_retry', 'The previous attempt stopped partway. Next time, the tool automatically uses an empty save location.')
-          : t('hub.setup_clone_lead_first', 'Finally, the data is imported to this computer. The save location is decided automatically, so there is no need to change it.')}<br>
-        ${t('hub.setup_clone_takes', 'It takes <b>minutes to tens of minutes</b>.')}</p>
-      ${retry ? `<div class="err">${t('hub.setup_clone_error',
-        '<b>The previous import could not be completed.</b><br>{error}<br> The partial data is kept, not deleted, and the import safely restarts in an empty location.',
-        {error: esc(c.error)})}</div>` : ''}
-      <div class="safe">${t('hub.setup_clone_keep_open',
-        'While importing, keep your internet connection and do not close the browser or the terminal.')}</div>
-      ${lastLog}
-      <details><summary>${t('hub.setup_change_dest_summary', 'Change the save location')}</summary><div class="in">
-        <input id="dest" value="${esc(dest)}">
-      </div></details>`,
-    nav: `<button onclick="doClone()">${retry ? t('hub.setup_btn_clone_retry', 'Import again to an empty location') : t('hub.setup_step_clone', 'Import')}</button>`,
-  };
-}
-
-// ---- Screen 4: done ----
-function screenDone() {
-  return {
-    html: `<h1>${t('hub.setup_done_title', 'Ready to go')}</h1>
-      <p class="lead">${t('hub.setup_done_lead', 'Well done. Your working copy and the building data import are complete.')}</p>
-      <div class="safe">${t('hub.setup_done_next',
-        '<b>On the next screen, first press "Launch" on the Attribute Editor.</b><br> The editing screen opens in a new tab. The Texture Editor is for fixing facade photos of buildings.')}</div>
-      <div class="safe">${t('hub.setup_done_reuse',
-        '<b>From next time, just open the same launcher file</b> to use the tools without this preparation.')}</div>`,
-    nav: `<button onclick="location.href='/?welcome=1'">${t('hub.setup_btn_start', 'Start')}</button>`,
-  };
-}
-
-function render() {
-  const i = stepOf(st);
-  const c = (st && st.clone) || {};
-  if (i === 2 && c.error && st.dest && st.dest !== c.dest) dest = st.dest;
-  document.title = (i === 0 && st && st.waiting) ||
-      (returnTabTitle && document.visibilityState === 'hidden')
-    ? t('hub.setup_return_tab_title', '← Return here — Building Data Editing Tools')
-    : t('hub.setup_doc_title', 'Initial setup — Building Data Editing Tools');
-  renderProg(i);
-  const v = [screenConnect, screenFork, screenClone, screenDone][i](st || {});
-  $('screen').innerHTML = v.html + (pollError
-    ? `<div class="err">${esc(pollError)}</div>` : '');
-  $('nav').innerHTML = v.nav;
-}
-
-// ---- Actions ----
-async function doConnect() {
-  const b = $('go'); if (b) { b.disabled = true;
-    b.innerHTML = '<span class="spin"></span>' + t('hub.setup_preparing', 'Preparing…'); }
-  const r = await api('/api/auth/start', {});
-  if (r.ok === false) { st = {...st, error: r.error}; render(); return; }
-  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null};
-  render();
-  await poll();
-}
-function copyCode() {
-  const t = $('uc'); if (!t) return;
-  navigator.clipboard && navigator.clipboard.writeText(t.textContent.trim());
-}
-function openVerification() {
-  copyCode();
-  returnTabTitle = true;
-  if (st && st.verifyUrl) window.open(st.verifyUrl, '_blank', 'noopener');
-}
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') returnTabTitle = false;
-  render();
-});
-async function doFork() {
-  busy = true; render();
-  try {
-    const r = await api('/api/setup/fork', {});
-    busy = false;
-    st = {...(r.status || st), forkError: r.ok === false ? r.error : null};
-    render();
-  } catch (e) {
-    busy = false;
-    st = {...st, forkError: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')};
-    render();
-  }
-}
-async function doClone() {
-  const el = $('dest'); if (el && el.value.trim()) dest = el.value.trim();
-  try {
-    const r = await api('/api/setup/clone', {dest});
-    if (r.ok === false) { st = {...st, clone: {...(st.clone || {}), error: r.error}}; render(); return; }
-    await poll();
-  } catch (e) {
-    st = {...st, clone: {...(st.clone || {}), error: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')}};
-    render();
-  }
-}
-async function recheck() { await poll(); }
-
-// ---- State polling (always on; auto-detects approval and clone completion and advances the screen) ----
-let timer = null;
-async function poll() {
-  try {
-    const s = await api('/api/setup/status');
-    if (s.ok === false) throw new Error(s.error || t('hub.setup_status_unknown', 'Could not check the status'));
-    const before = stepOf(st);
-    st = {...s, forkError: st && st.forkError};
-    pollError = '';
-    if (stepOf(st) !== before) busy = false;
-    render();
-    if (st.active) { clearTimeout(timer); timer = null; return; }
-  } catch (e) {
-    pollError = t('hub.setup_poll_error',
-      'Checking the status is temporarily delayed. Check your internet connection and wait on this screen.');
-    if (st) {
-      render();
-    } else {
-      $('prog').innerHTML = '';
-      $('screen').innerHTML = `<h1>${t('hub.setup_checking_title', 'Checking the connection status')}</h1>
-        <p class="lead">${t('hub.setup_checking_lead', 'Please wait without closing the screen. It checks again automatically.')}</p>
-        <div class="err">${esc(pollError)}</div>`;
-      $('nav').innerHTML = `<span class="hint"><span class="spin"></span>${t('hub.setup_rechecking', 'Checking again')}</span>`;
-    }
-  }
-  clearTimeout(timer);
-  timer = setTimeout(poll, 2000);
-}
-poll();
-</script></main></body></html>"""
+# Settings screen (hub-v1.2.1): the effective values of THIS city, item by item.
+# There is no free-form editing of the settings file on purpose (each item has
+# invariants: the clone must belong to the city, the account must have a stored
+# connection); every change goes through an action that keeps them. The file's
+# location is shown for people who want to look at it.
 
 
 # --------------------------------------------------------------------------
 # HTTP server
 # --------------------------------------------------------------------------
+
+
 def next_available_dest(base: Path) -> Path:
     """Return the next candidate that avoids non-empty destinations and never overwrites partial data."""
     cand = base
@@ -2715,161 +2680,52 @@ def next_available_dest(base: Path) -> Path:
     return cand
 
 
-class Handler(BaseHTTPRequestHandler):
-    hub: "Hub | None" = None
-    setup_mgr = SetupManager()
-    auth_mgr = AUTH
+_CLONE_TEXTS = {
+    "running": ("hub.err_clone_running", "A clone is already running"),
+    "no_git": ("hub.err_git_missing_setup", "git was not found. Prepare git by following the setup guide"),
+    "bad_url": ("hub.err_bad_repo_url", "The repository URL format is invalid"),
+    "not_empty": ("hub.err_dest_not_empty", "The destination is not empty: {dest}"),
+    "start": ("hub.clone_start", "Clone started: {url}"),
+    "size_note": ("hub.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)"),
+    "done": ("hub.clone_done", "Clone finished"),
+    "failed": ("hub.err_clone_failed", "git clone failed (exit {code})"),
+}
 
-    @staticmethod
-    def default_dest() -> str:
-        """Clone destination (decided without asking). Only steps aside with a sequence number when it already exists."""
-        return str(next_available_dest(Path.home() / "Documents" / "CityGML Data"))
 
-    _fork_cache: "tuple[float, str | None]" = (0.0, None)
-    _access_cache: "tuple[float, bool]" = (0.0, False)
+def clone_text(event: str, **params) -> str:
+    """The hub's wording for the clone job's events (git_sync.CloneJob)."""
+    key, default = _CLONE_TEXTS[event]
+    return tr(key, default, **params)
 
-    @classmethod
-    def upstream_ok(cls, login: "str | None") -> "bool | None":
-        """Whether upstream is reachable (None when not connected).
 
-        Called from the 2-second polling, so throttled with a 5-second TTL. Once
-        reachable, never asks again (an operation where access disappears is not expected)."""
-        if not login:
-            return None
-        at, val = cls._access_cache
-        if val:
-            return True
-        if at > time.time() - 5:
-            return False
-        token = cls.auth_mgr.token()
-        ok = upstream_access(token)
-        cls._access_cache = (time.time(), ok)
-        return ok
+class Handler(runtime.LocalHandler):
+    APP_ID = "hub"
 
-    @classmethod
-    def fork_nwo(cls, login: "str | None", *, fresh: bool = False) -> "str | None":
-        """login's fork (TTL cache; re-fetch with fresh=True right after creation)."""
-        if not login:
-            return None
-        at, val = cls._fork_cache
-        if not fresh and at > time.time() - (60 if val else 10):
-            return val
-        val = find_fork(cls.auth_mgr.token(), login)
-        cls._fork_cache = (time.time(), val)
-        return val
+    @property
+    def root(self) -> "Path | None":
+        return SESSION.hub.root if SESSION.hub is not None else None
 
-    @classmethod
-    def setup_state(cls) -> dict:
-        """Return the whole setup-screen state (auth, fork, clone) as one payload."""
-        auth = cls.auth_mgr.state()
-        fork = cls.fork_nwo(auth["login"])
-        # If the fork already exists, upstream is reachable too (avoid extra API calls)
-        access = True if fork else cls.upstream_ok(auth["login"])
-        return {
-            "ok": True,
-            **auth,
-            "fork": fork,
-            "access": access,
-            "clone": cls.setup_mgr.state(),
-            "dest": cls.default_dest(),
-            "active": cls.hub is not None,
-        }
-
-    @classmethod
-    def _try_activate(cls) -> None:
-        """Activate the hub after the clone finishes and remember the clone destination in the config."""
-        st = cls.setup_mgr
-        if cls.hub is not None or not st.done or st.dest is None:
-            return
-        if runtime.has_building_data(Path(st.dest)):
-            cls.hub = Hub(Path(st.dest))
-            runtime.save_config({"repo": st.dest})
-        else:
-            st.done = False
-            st.error = tr("hub.err_clone_no_bldg",
-                          "No building data (udx/bldg) was found in the cloned destination")
-
-    def _json(self, obj, status: int = 200) -> None:
-        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _error(self, msg: str, status: int = 400) -> None:
-        self._json({"ok": False, "error": msg}, status)
-
-    def _file(self, name: str) -> None:
-        path = APP_DIR / name
-        if not path.is_file() and self.hub is not None:
-            path = self.hub.root / "tools" / "hub" / name
-        if not path.is_file():
-            self._error("not found", 404)
-            return
-        data = path.read_bytes()
-        if path.suffix.lower() == ".html":
-            data = runtime.themed_html(data, self.hub.root if self.hub is not None else None)
-            data = runtime.localized_html(data, "hub")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _city_logo(self) -> None:
-        """Municipal logo (the logo in the clone's 4dcitygml.json). Resolution is fail-closed.
-
-        Validation (relative path, raster extension, under the root, at most 1 MiB)
-        is done by theme_loader's resolve_logo(); when not satisfied, 404 (the
-        screen side stays hidden via onerror).
-        """
-        mod = runtime.theme_module()
-        got = None
-        if mod is not None and self.hub is not None and hasattr(mod, "resolve_logo"):
-            try:
-                got = mod.resolve_logo(self.hub.root)
-            except Exception:  # Any resolution failure is a 404 (the logo is decoration, not functionality)
-                got = None
-        if got is None:
-            self._error("not found", 404)
-            return
-        path, ctype = got
-        self._bytes(path.read_bytes(), ctype)  # Content-Type is fixed from the extension
-
-    def _bytes(self, data: bytes, content_type: str) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "private, max-age=300")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, fmt, *args):
-        pass
+    def _file(self, name: str, values: "dict | None" = None) -> None:
+        """One of the hub's screens (a file next to hub.py)."""
+        self.serve_file(APP_DIR / name, values)
 
     def do_GET(self) -> None:
         try:
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query)
-            if self.hub is None:
-                self._try_activate()
+            s = SESSION
+            if s.hub is None:
+                s.try_activate()
             if path == "/api/setup/status":
-                self._json(self.setup_state())
+                self._json(s.setup_state())
                 return
-            if self.hub is None:
-                # While there is no clone, return the setup screen for every GET.
-                html = (SETUP_HTML
-                        .replace("%%UPSTREAM%%", runtime.UPSTREAM_URL)
-                        .replace("%%DEST%%", self.default_dest()))
-                data = runtime.localized_html(html.encode("utf-8"), "hub")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+            if s.hub is None or (path in ("/", "/index.html") and (not s.login or s.copy_missing())):
+                # While there is no clone, return the setup screen for every GET. With a clone
+                # but no account chosen for this city — or an account without its copy yet —
+                # the same page shows the account screen (and its "create your copy" step).
+                self._file("setup.html", {"UPSTREAM": runtime.DEFAULT_CITY_URL, "DEFAULT_DEST": s.default_dest(),
+                                          "MODE": "setup" if s.hub is None else "account"})
                 return
             if path in ("/", "/index.html"):
                 self._file("index.html")
@@ -2878,7 +2734,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/city-logo":
                 self._city_logo()
             elif path == "/review-viewer.html":
-                viewer = self.hub.root / "tools" / "attr_editor" / "viewer.html"
+                viewer = runtime.SHARED_DIR / "attr_editor" / "viewer.html"
                 if not viewer.is_file():
                     self._error(tr("hub.err_viewer_missing",
                                    "The 3D view component was not found"), 404)
@@ -2887,87 +2743,161 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/status":
                 # Merge in the authentication progress (userCode / waiting / login)
                 # so the dashboard can also show "Connect" (the device flow).
-                self._json({**self.hub.status(), "github": self.auth_mgr.state()})
+                self._json({**s.hub.status(), "github": s.account.state()})
+            elif path == "/api/update":
+                self._json({"ok": True, **s.updates.snapshot()})
+            elif path == "/settings.html":
+                self._file("settings.html")
+            elif path == "/api/settings":
+                self._json(s.settings_payload())
             elif path == "/api/tools":
-                self._json({"ok": True, "tools": self.hub.tools()})
+                self._json({"ok": True, "tools": s.hub.tools()})
             elif path == "/api/feedback":
-                self._json(self.hub.feedback_defaults())
+                self._json(s.hub.feedback_defaults())
             elif path == "/api/contributions":
-                self._json({"ok": True, **self.hub.contributions()})
+                self._json({"ok": True, **s.hub.contributions()})
             elif path == "/api/reviews":
-                self._json(self.hub.review_queue(include_examples=query.get("demo") == ["1"]))
+                self._json(s.hub.review_queue(include_examples=query.get("demo") == ["1"]))
             elif re.fullmatch(r"/api/reviews/\d+/asset", path):
                 number = int(path.split("/")[3])
                 side = (query.get("side") or [""])[0]
                 asset_path = (query.get("path") or [""])[0]
-                data, mime = self.hub.review_asset(number, side, asset_path)
+                data, mime = s.hub.review_asset(number, side, asset_path)
                 self._bytes(data, mime)
             elif re.fullmatch(r"/api/building/\d{8,9}/[^/]+", path):
                 parts = path.split("/")
                 self._json({
                     "ok": True,
-                    "building": self.hub.review_building_model(parts[3], unquote(parts[4])),
+                    "building": s.hub.review_building_model(parts[3], unquote(parts[4])),
                 })
             elif path.startswith("/textures/"):
-                data, mime = self.hub.review_texture(unquote(path[len("/textures/"):]))
+                data, mime = s.hub.review_texture(unquote(path[len("/textures/"):]))
                 self._bytes(data, mime)
             elif re.fullmatch(r"/api/reviews/\d+", path):
-                self._json(self.hub.review_detail(int(path.rsplit("/", 1)[1])))
+                self._json(s.hub.review_detail(int(path.rsplit("/", 1)[1])))
             else:
                 self._error("not found", 404)
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
 
     def do_POST(self) -> None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
+            s = SESSION
             # Setup (pre-clone) button actions. Everything advances with just a press.
             if path == "/api/auth/start":
-                self._json({"ok": True, **self.auth_mgr.start()})
+                try:
+                    self._json({"ok": True, **s.account.start()})
+                except RuntimeError as e:
+                    self._json({"ok": False, "error": str(e),
+                                "certificateReport": s.account.certificate_report})
+                return
+            # Account screen (hub-v1.2.1): every choice is an explicit click.
+            if path == "/api/auth/use":
+                err = s.account.use_saved(str(body.get("login") or ""))
+                self._json({"ok": err is None, "error": err, "status": s.setup_state()})
+                return
+            if path == "/api/auth/machine":
+                err = s.account.use_machine()
+                self._json({"ok": err is None, "error": err, "status": s.setup_state()})
+                return
+            if path == "/api/auth/legacy":
+                removed = s.account.review_legacy(bool(body.get("remove")))
+                self._json({"ok": True, "removed": removed, "status": s.setup_state()})
+                return
+            if path == "/api/auth/disconnect":
+                s.account.disconnect(delete=bool(body.get("delete")))
+                self._json({"ok": True})
+                return
+            if path == "/api/accounts/delete":
+                login = str(body.get("login") or "")
+                if not login:
+                    self._error(tr("hub.err_account_unknown", "That account is not saved on this computer. Choose one of the options on this screen."))
+                    return
+                if login == s.account.login:
+                    s.account.disconnect(delete=True)
+                else:
+                    accounts.delete_account(login)
+                self._json({"ok": True})
+                return
+            if path == "/api/settings/forget":
+                # Forget this city's binding (account and clone registration). The clone folder stays.
+                city = s.city
+                s.account.disconnect(delete=False)
+                clone = str(s.hub.root) if s.hub is not None else None
+
+                def same_path(a, b) -> bool:
+                    try:
+                        return bool(a) and bool(b) and Path(a).expanduser().resolve() == Path(b).resolve()
+                    except OSError:
+                        return False
+
+                def forget(cfg: dict) -> None:
+                    cities = cfg.get("cities")
+                    if isinstance(cities, dict):
+                        cities.pop(city, None)
+                    if same_path(cfg.get("repo"), clone):
+                        cfg.pop("repo", None)   # the legacy "last used" pointer would re-adopt the clone
+                if city:
+                    runtime.update_config(forget)
+                self._json({"ok": True})
                 return
             if path == "/api/setup/fork":
-                nwo, err = create_fork(self.auth_mgr.token())
+                try:
+                    nwo, err = create_fork(s.account.token())
+                except (urllib.error.URLError, OSError):
+                    nwo, err = None, tr("hub.err_github_offline",
+                                        "GitHub could not be reached. Check the internet connection and try again.")
                 if nwo:
-                    Handler._fork_cache = (time.time(), nwo)
-                self._json({"ok": err is None, "error": err, "nwo": nwo,
-                            "status": self.setup_state()})
+                    s.fork.set(nwo, 60)
+                    if s.hub is not None:
+                        # account mode: the copy was just made for the chosen account — uploads go there
+                        s.hub.ensure_origin(nwo)
+                self._json({"ok": err is None, "error": err, "nwo": nwo, "status": s.setup_state()})
                 return
             if path == "/api/setup/clone":
-                if self.hub is not None:
+                if s.hub is not None:
                     self._error(tr("hub.err_setup_done", "Setup is already complete"), 409)
                     return
-                nwo = self.fork_nwo(self.auth_mgr.state().get("login"))
+                nwo = s.fork_nwo() if s.account.state().get("login") else None
                 if not nwo:
                     self._error(tr("hub.err_fork_first", "Create your own copy first"))
                     return
-                dest = (body.get("dest") or "").strip() or self.default_dest()
-                self.setup_mgr.start(f"https://github.com/{nwo}.git", dest)
+                dest = (body.get("dest") or "").strip() or s.default_dest()
+                s.setup.start(f"https://github.com/{nwo}.git", dest)
                 self._json({"ok": True})
                 return
-            if self.hub is None:
+            if s.hub is None:
                 self._error(tr("hub.err_setup_incomplete", "Setup is not complete"), 409)
                 return
             if path == "/api/launch":
-                self._json(self.hub.launch(body["tool"]))
+                self._json(s.hub.launch(body["tool"]))
             elif path == "/api/feedback":
-                self._json(self.hub.submit_feedback(body))
+                self._json(s.hub.submit_feedback(body))
+            elif path == "/api/update/fetch":
+                self._json({"ok": True, "fetch": s.updates.fetch_async()})
+            elif path == "/api/shortcut":
+                try:
+                    self._json(create_city_shortcut(s.hub.root))
+                except Exception as e:
+                    self._error(tr("hub.shortcut_failed", "Could not create the icon: {reason}", reason=str(e)))
             elif path == "/api/refresh":
-                self._json({"ok": True, **self.hub.contributions(force=True)})
+                self._json({"ok": True, **s.hub.contributions(force=True)})
             elif re.fullmatch(r"/api/reviews/\d+/decision", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.submit_review(number, demo=bool(body.get("demo"))))
+                self._json(s.hub.submit_review(number, demo=bool(body.get("demo"))))
             elif re.fullmatch(r"/api/reviews/\d+/feedback", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.submit_review_feedback(
+                self._json(s.hub.submit_review_feedback(
                     number, str(body.get("message") or ""), demo=bool(body.get("demo")),
                 ))
             elif re.fullmatch(r"/api/reviews/\d+/retry", path):
                 number = int(path.split("/")[3])
-                self._json(self.hub.request_ci_retry(
+                self._json(s.hub.request_ci_retry(
                     number, demo=bool(body.get("demo")),
                 ))
             else:
@@ -2977,7 +2907,11 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {e}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
+
+
+# One session per process (the setup screen, the dashboard and the editors it launches share it).
+SESSION = Session()
 
 
 def setup_console_messages(saved_auth: bool) -> list[str]:
@@ -2990,8 +2924,8 @@ def setup_console_messages(saved_auth: bool) -> list[str]:
     if saved_auth:
         lines.append("  " + tr(
             "hub.console_saved_auth",
-            "The previous GitHub connection is reused. "
-            "The 8-digit code screen may be skipped"))
+            "The account recorded for this city is used. "
+            "The account screen may be skipped"))
     lines += [
         "  " + tr("hub.console_follow_browser", "Follow the instructions in the browser"),
         "  " + tr("hub.console_terminal_waiting",
@@ -3003,47 +2937,59 @@ def setup_console_messages(saved_auth: bool) -> list[str]:
 
 
 def main() -> None:
-    runtime.make_console_safe()
+    runtime.console_safe()
+    # Nothing from the person's shell may steer git (identity overrides, askpass programs,
+    # repository routing): the clone's config and the city's account are the only sources.
+    accounts.scrub_git_env()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (auto-detected if omitted)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--serve-tool", dest="serve_tool", metavar="KEY",
-                        help="internal: launch specified tool (attr_editor/tex_editor) in this process")
     args = parser.parse_args()
 
-    # Clone location: explicit → ancestor detection → shared config (same as the attribute editor)
-    repo_root = args.repo or runtime.detect_repo(APP_DIR)
+    # Clone location: explicit → ancestor detection → the remembered clone OF THIS CITY.
+    # A remembered clone of another city is never adopted (the start script's city
+    # selects the clone; the clone's 4dcitygml.json defines the city).
+    city = runtime.requested_city()
+    repo_root = args.repo or runtime.detect_repo()
+    if repo_root is not None and args.repo is None and city and runtime.clone_city(repo_root) != city:
+        repo_root = None
     if repo_root is None:
-        saved = runtime.load_config().get("repo")
-        if saved and runtime.has_building_data(Path(saved)):
-            repo_root = Path(saved)
-
-    # Internal dispatch: the path where the hub exe itself launches a child tool in the frozen distribution
-    if args.serve_tool:
-        if repo_root is None:
-            sys.exit("Error: --serve-tool requires --repo")
-        serve_tool(Path(repo_root), args.serve_tool, args.port)
-        return
+        if city:
+            repo_root = runtime.saved_clone_for(city)
+        else:
+            saved = runtime.read_config().get("repo")
+            if saved and runtime.has_building_data(Path(saved)):
+                repo_root = Path(saved)
 
     if repo_root is not None and runtime.has_building_data(Path(repo_root)):
-        runtime.sync_upstream_main(repo_root)
-        Handler.hub = Hub(Path(repo_root))
-        print(f"  Repository: {Handler.hub.root}")
-    # Without a clone, start in initial-setup mode (the clone runs from the browser)
+        # Already running for this clone (the same starter double-clicked twice)? Open it instead —
+        # but only the same version: an older hub left running (an update, or hub-v1.0.x without a
+        # tag) must not swallow the start, or the person never sees the new version.
+        running = running_hub_for(repo_root, args.port)
+        if running and running[1] == runtime.running_hub_tag():
+            print(f"citygml-hub already running for this city: {running[0]}")
+            if not args.no_browser:
+                webbrowser.open(running[0])
+            return
+        if running:
+            print(f"Another version of the hub ({running[1] or 'before hub-v1.2.0'}) is still serving this city at "
+                  f"{running[0]}. Close it when you are done there; this version starts on another port.")
+    else:
+        repo_root = None   # start in initial-setup mode (the clone runs from the browser)
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    url = f"http://localhost:{args.port}/"
-    print(f"citygml-hub: {url}")
-    if Handler.hub is None:
-        for line in setup_console_messages(bool(AUTH.token())):
-            print(line)
-    if not args.no_browser:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nExiting")
+    # One session: the clone (data sync in the background, one version check) and the
+    # account recorded for the city — chosen on the account screen when none is recorded.
+    SESSION.start(repo_root, city)
+    if SESSION.hub is not None:
+        print(f"  Repository: {SESSION.hub.root}")
+
+    # Another city's hub may hold the default port: step to a free one (+2, like the child tools).
+    port = runtime.free_port(args.port)
+    if port != args.port:
+        print(f"Port {args.port} is in use (another city?); using {port}")
+    banner = ["citygml-hub: {url}"] + (setup_console_messages(bool(SESSION.token())) if SESSION.hub is None else [])
+    runtime.serve(Handler, port, banner, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

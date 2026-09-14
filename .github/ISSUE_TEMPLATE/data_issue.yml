@@ -1,4 +1,5 @@
 # Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
 # Building data issue report (misalignment, attribute/geometry errors, etc.).
 # The standard "Issue = report / PR = fix" model: you can report even if you cannot fix it (reporting != fixing).
 name: Building data issue report (misalignment etc.)

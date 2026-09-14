@@ -140,6 +140,8 @@ def _respond(handler_cls, **attrs) -> dict:
     h.send_header = lambda k, v: rec["headers"].__setitem__(k, v)
     h.end_headers = lambda: None
     h.wfile = io.BytesIO()
+    if handler_cls is hub.Handler:
+        hub.SESSION.hub = attrs.pop("hub", None)   # the hub keeps its clone in the session
     for k, v in attrs.items():
         setattr(h, k, v)
     h._city_logo()

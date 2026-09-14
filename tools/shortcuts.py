@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import runtime
+
 
 def safe_name(name: str, fallback: str = "CityGML") -> str:
     """A file-name-safe display name (keeps letters of any script, drops path separators etc.)."""
@@ -32,21 +34,19 @@ def safe_name(name: str, fallback: str = "CityGML") -> str:
     return cleaned[:60] or fallback
 
 
-def launcher_script(tools_dir: Path) -> Path:
-    return tools_dir / ("citygml.ps1" if sys.platform.startswith("win") else "citygml.sh")
-
-
-def ensure_launcher(tools_dir: Path, bundled_dir: Path) -> "Path | None":
-    """Make sure the per-user launcher exists (copied from the hub bundle when missing)."""
-    target = launcher_script(tools_dir)
-    if target.is_file():
-        return target
-    source = bundled_dir / target.name
+def ensure_launcher() -> "Path | None":
+    """Make sure the per-user launcher exists and, when this program runs as an installed
+    version, matches the copy shipped with it (the launcher is the program's, never edited
+    by hand; a stale copy would lack newer modes such as --fetch-latest). In a source tree
+    an existing launcher is left alone."""
+    target, source = runtime.launcher_path(), runtime.launcher_source()
     if not source.is_file():
-        return None
-    tools_dir.mkdir(parents=True, exist_ok=True)
+        return target if target.is_file() else None
+    if target.is_file() and (not runtime.running_hub_tag() or target.read_bytes() == source.read_bytes()):
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
-    if not sys.platform.startswith("win"):
+    if not runtime.WINDOWS:
         target.chmod(0o755)
     return target
 
@@ -74,9 +74,10 @@ def _iconset(logo: Path, work: Path) -> "Path | None":
         return None
 
 
-def create_mac_app(dest_dir: Path, display_name: str, city: str, tools_dir: Path,
+def create_mac_app(dest_dir: Path, display_name: str, city: str,
                    logo: "Path | None" = None, sign: bool = True) -> Path:
     """Create <dest_dir>/<display_name>.app that opens Terminal and runs the per-user launcher."""
+    tools_dir, home = runtime.tools_dir(), runtime.home()
     name = safe_name(display_name)
     app = dest_dir / f"{name}.app"
     contents = app / "Contents"
@@ -88,7 +89,7 @@ def create_mac_app(dest_dir: Path, display_name: str, city: str, tools_dir: Path
     resources.mkdir(parents=True)
     # The executable: a shell script that runs the launcher inside Terminal (visible, closable).
     # Only the city id is embedded; the launcher path is derived from $HOME at run time.
-    rel = tools_dir.relative_to(Path.home()) if str(tools_dir).startswith(str(Path.home())) else None
+    rel = tools_dir.relative_to(home) if str(tools_dir).startswith(str(home)) else None
     launcher = f'"$HOME/{rel.as_posix()}/citygml.sh"' if rel else f'"{tools_dir / "citygml.sh"}"'
     script = (
         "#!/bin/bash\n"
@@ -124,12 +125,13 @@ def create_mac_app(dest_dir: Path, display_name: str, city: str, tools_dir: Path
 
 # ---- Windows ----
 
-def create_windows_shortcut(dest_dir: Path, display_name: str, city: str, tools_dir: Path,
+def create_windows_shortcut(dest_dir: Path, display_name: str, city: str,
                             logo: "Path | None" = None) -> Path:
     """Create <dest_dir>/<display_name>.lnk that runs the per-user launcher with the city id."""
     name = safe_name(display_name)
     lnk = dest_dir / f"{name}.lnk"
-    launcher = tools_dir / "citygml.ps1"
+    tools_dir = runtime.tools_dir()
+    launcher = runtime.launcher_path()
     icon = ""
     if logo and logo.is_file():
         ico = tools_dir / f"{re.sub(r'[^A-Za-z0-9]+', '-', city)}.ico"
@@ -161,13 +163,12 @@ def create_windows_shortcut(dest_dir: Path, display_name: str, city: str, tools_
     return lnk
 
 
-def create_shortcut(dest_dir: Path, display_name: str, city: str, tools_dir: Path,
-                    logo: "Path | None" = None) -> Path:
+def create_shortcut(dest_dir: Path, display_name: str, city: str, logo: "Path | None" = None) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
-        return create_mac_app(dest_dir, display_name, city, tools_dir, logo)
-    if sys.platform.startswith("win"):
-        return create_windows_shortcut(dest_dir, display_name, city, tools_dir, logo)
+        return create_mac_app(dest_dir, display_name, city, logo)
+    if runtime.WINDOWS:
+        return create_windows_shortcut(dest_dir, display_name, city, logo)
     raise OSError("Desktop launchers are available on macOS and Windows only")
 
 
