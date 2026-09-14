@@ -44,7 +44,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag to upload directly to specified Release without using Actions temp storage (e.g. hub-v0.2.4)'
+        description: 'Existing hub-v tag whose Release receives the packages (built, then published after the production approval)'
         required: false
         type: string
 
@@ -59,11 +59,36 @@ env:
   PYEMBED_SHA256: d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate release series before building
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then tag="$GITHUB_REF_NAME"; fi
+          if [[ -n "$tag" ]]; then
+            [[ "$tag" =~ ^hub-v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || {
+              echo '::error::Expected a hub-v release tag'; exit 1;
+            }
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -z "$REQUESTED_TAG" && "$GITHUB_REF_TYPE" != branch ]]; then
+            echo '::error::Build-only dispatch must select a branch'; exit 1
+          fi
+
   windows:
+    needs: validate-release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
           filter: blob:none
           sparse-checkout: |
             tools/hub
@@ -166,7 +191,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "verification under the bundled Python failed" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
-        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        if: github.event_name != 'pull_request'
         with:
           name: hub-windows
           path: tools/hub/dist/citygml-hub-*-windows-full.zip
@@ -227,25 +252,17 @@ jobs:
           $out5 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$script'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $out5 -notmatch "Could not check for a newer version; starting the installed hub-$ver2" -or $out5 -notmatch "EXEC hub-$ver2") { Write-Host $out5; throw "one-line command offline did not start the installed version" }
           Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver, one-line command updated to hub-$ver2 and starts it offline"
-      - name: Upload Windows package directly to requested Release
-        if: inputs.release_tag != ''
-        shell: bash
-        working-directory: tools/hub/dist
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          version="${RELEASE_TAG#hub-}"
-          gh release upload "$RELEASE_TAG" "citygml-hub-${version}-windows-full.zip" --clobber
 
   macos-zip:
     # M1: a zip that bundles no binaries and uses the CLT python3 + git (no signing needed).
     # program/citygml.sh is stored with the execute bit set (the installer copies it into place).
+    needs: validate-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
           filter: blob:none
           sparse-checkout: |
             tools/hub
@@ -271,7 +288,7 @@ jobs:
         run: python3 scripts/verify_bundle.py tools/hub/dist/citygml-hub-*-macos.zip --flavor macos
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
-        if: github.event_name != 'pull_request' && inputs.release_tag == ''
+        if: github.event_name != 'pull_request'
         with:
           name: hub-macos
           path: tools/hub/dist/citygml-hub-*-macos.zip
@@ -307,34 +324,29 @@ jobs:
           out3="$(bash install/citygml.sh --fetch-latest 2>&1 || true)"
           echo "$out3" | tail -n 1 | grep -q "^hub-v" || { echo "$out3"; echo "fetch mode failed"; exit 1; }
           echo "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers a tag"
-      - name: Upload macOS package directly to requested Release
-        if: inputs.release_tag != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          version="${RELEASE_TAG#hub-}"
-          gh release upload "$RELEASE_TAG" "tools/hub/dist/citygml-hub-${version}-macos.zip" --clobber
 
   release:
-    if: startsWith(github.ref, 'refs/tags/hub-v')
+    # The only job that publishes. It runs in the `production` environment, so it waits
+    # for the deployment approval (docs/production-protection.md); the builds and smoke
+    # tests above run unattended and nothing reaches users before that approval.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/hub-v')) || inputs.release_tag != ''
     needs: [windows, macos-zip]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: hub-*
           path: dist
           merge-multiple: true
-      - name: Create release and upload versioned packages
+      - name: Create the release for a pushed tag, then upload the versioned packages
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          version="${GITHUB_REF_NAME#hub-}"
+          version="${RELEASE_TAG#hub-}"
           windows="dist/citygml-hub-${version}-windows-full.zip"
           macos="dist/citygml-hub-${version}-macos.zip"
           test -f "$windows"
@@ -346,9 +358,11 @@ jobs:
             (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")
             echo '```'
           } > notes.md
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --title "citygml-hub $GITHUB_REF_NAME" \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # A manual run names an existing Release; only a pushed tag creates one.
+            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $RELEASE_TAG does not exist"; exit 1; }
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "citygml-hub $RELEASE_TAG" \
               --notes-file notes.md
           fi
-          gh release upload "$GITHUB_REF_NAME" "$windows" "$macos" --clobber
+          gh release upload "$RELEASE_TAG" "$windows" "$macos"
