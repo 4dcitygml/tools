@@ -79,6 +79,10 @@ class TransformTest(unittest.TestCase):
 
 class ManifestAndGateTest(unittest.TestCase):
     def setUp(self):
+        # The gate compares the manifest's repository with GITHUB_REPOSITORY when that is set;
+        # a CI runner sets it to the tools repository, so the fixture names its own city here.
+        env = patch.dict('os.environ', {'GITHUB_REPOSITORY': 'example/citygml'})
+        env.start(); self.addCleanup(env.stop)
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name); self.repo = GitRepo(self.root)
         (self.root / 'docs').mkdir()

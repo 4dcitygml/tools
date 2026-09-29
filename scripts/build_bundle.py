@@ -60,8 +60,10 @@ def manifest(repo_root: Path, flavor: str) -> "list[tuple[Path, str, int]]":
     entries.append((hub / "preset.json", f"{LIB}/preset.json", PLAIN))
     if flavor == "windows":
         entries.append((hub / "packaging" / "start-windows.bat", f"{LIB}/start-windows.bat", PLAIN))
-    # the shared modules (the A5 classification table is shared with CI)
-    entries.append((repo_root / "scripts" / "pr_classification.py", f"{LIB}/pr_classification.py", PLAIN))
+    # the shared modules (the A5 classification table, the A10 marker table and the building
+    # identity rule are shared with CI)
+    for name in ("pr_classification.py", "pr_markers.py", "building_identity.py"):
+        entries.append((repo_root / "scripts" / name, f"{LIB}/{name}", PLAIN))
     for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py"):
         entries.append((repo_root / "tools" / name, f"{LIB}/{name}", PLAIN))
     # the per-user launchers the installer copies into place (citygml.sh keeps its execute bit)
@@ -82,7 +84,7 @@ def required(flavor: str) -> "list[str]":
     """Archive names a distribution zip must contain (checked after assembly and by tests)."""
     names = [f"{LIB}/hub.py", f"{LIB}/index.html", f"{LIB}/review.html", f"{LIB}/setup.html", f"{LIB}/settings.html",
              f"{LIB}/preset.json", f"{LIB}/runtime.py", f"{LIB}/accounts.py", f"{LIB}/git_sync.py",
-             f"{LIB}/shortcuts.py", f"{LIB}/pr_classification.py", f"{LIB}/citygml.sh", f"{LIB}/citygml.ps1",
+             f"{LIB}/shortcuts.py", f"{LIB}/pr_classification.py", f"{LIB}/pr_markers.py", f"{LIB}/building_identity.py", f"{LIB}/citygml.sh", f"{LIB}/citygml.ps1",
              f"{LIB}/LICENSE", f"{LIB}/NOTICE", f"{LIB}/THIRD_PARTY_NOTICES.md",
              f"{LIB}/attr_editor/app.py", f"{LIB}/attr_editor/index.html", f"{LIB}/attr_editor/setup.html",
              f"{LIB}/attr_editor/viewer.html", f"{LIB}/tex_editor/app.py", f"{LIB}/tex_editor/index.html",

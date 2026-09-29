@@ -12,7 +12,17 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import zipfile
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts import repo_git  # noqa: E402
+
+
+def git(root, *args):
+    return repo_git.git(root, *args, strip=True)
 
 DIRECTORIES = ('scripts', 'schemas', 'semantics', 'ci', 'docs', 'tools')
 FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'requirements.txt')
@@ -26,10 +36,6 @@ PREFIX = 'citygml-tools'
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
-
-
-def git(root, *args):
-    return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
 
 
 def source_files(root):

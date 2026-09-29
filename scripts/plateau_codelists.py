@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_xml import localname as _localname  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
 
 
@@ -86,12 +87,6 @@ _QUALITY_AXIS_PAT = _re.compile(
 def is_quality_axis(codelist_name: str) -> bool:
     """True if the codelist name is a "quality axis" type (DataQuality/precision/status/completeness)."""
     return bool(_QUALITY_AXIS_PAT.search(codelist_name))
-
-
-def _localname(elem) -> str:
-    if not isinstance(elem.tag, str):  # skip comments/PIs
-        return ""
-    return etree.QName(elem).localname
 
 
 def load_codelist(path: Path) -> dict:

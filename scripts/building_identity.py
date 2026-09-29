@@ -88,6 +88,13 @@ def rule_from_config(cfg: dict | None) -> IdentityRule:
     return IdentityRule(kind, invalid)
 
 
+def leaf_pattern(tag_local: str) -> "re.Pattern[bytes]":
+    """The leaf elements named tag_local in a member's bytes, any prefix: groups are the
+    opening tag, the text and the closing tag, so a value can be replaced in place."""
+    t = re.escape(tag_local.encode("utf-8"))
+    return re.compile(rb"(<(?:\w+:)?" + t + rb"\b[^>]*>)([^<]*)(</(?:\w+:)?" + t + rb">)")
+
+
 def stable_id(span: bytes, gml_id: str, rule: IdentityRule = IdentityRule()) -> str:
     """The stable building ID of one member under the city's rule (gml_id when absent or invalid)."""
     if rule.type == "gml:id":

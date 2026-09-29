@@ -47,6 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_constants import tools_repo  # noqa: E402
 from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
 from scripts import codelist_crosswalk as X  # noqa: E402
 from scripts import semantic_registry as R  # noqa: E402
@@ -325,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--base", required=True); g.add_argument("--current", required=True); g.add_argument("--new", required=True)
     g.add_argument("--edition-from"); g.add_argument("--edition-to")
     g.add_argument("--base-uri"); g.add_argument("--current-uri"); g.add_argument("--new-uri")
-    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools"); g.add_argument("--tools-commit", required=True)
+    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default=tools_repo()); g.add_argument("--tools-commit", required=True)
     g.add_argument("--plan-issue", required=True); g.add_argument("--seed", type=int, default=20260903); g.add_argument("--sample-size", type=int, default=30)
     g.add_argument("--crosswalk", help="code-list crosswalk JSON (default: semantics/codelists/<from>__<to>.json in tools)")
     g.add_argument("--overrides", help="the city's reviewed code rules (semantics/overrides.json in the city repository)")

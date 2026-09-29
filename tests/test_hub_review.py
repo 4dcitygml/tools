@@ -10,31 +10,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.support import REPO_ROOT, load_app, runtime
+from tests.support import REPO_ROOT, EnglishEnv, load_app, runtime
 
 hub = load_app("hub_review_app", "tools/hub/app.py")
 
 
-class _EnglishEnv(unittest.TestCase):
-    """Pin the language to the default en so tr() output is deterministic regardless of env vars.
-
-    Same approach as _EnvGuard in tests/test_i18n.py (save -> remove -> restore).
-    """
-
-    _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
-
-    def setUp(self):
-        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
-        for k in self._ENV_KEYS:
-            os.environ.pop(k, None)
-        os.environ["CITYGML_LANG"] = "en"
-
-    def tearDown(self):
-        for k, v in self._saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+_EnglishEnv = EnglishEnv   # the display language pinned to en (tests/support.py)
 
 
 class FakeAuth:

@@ -29,11 +29,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_xml import APP, CORE, GML, iter_coords, write_plateau_gml  # noqa: E402
 from scripts.safe_xml import safe_parser  # noqa: E402
 
-CORE = "http://www.opengis.net/citygml/2.0"
-GML = "http://www.opengis.net/gml"
-APP = "http://www.opengis.net/citygml/appearance/2.0"
 
 Q_CORE = f"{{{CORE}}}cityObjectMember"
 Q_APPMEMBER = f"{{{APP}}}appearanceMember"
@@ -46,15 +44,6 @@ Q_BOUNDEDBY = f"{{{GML}}}boundedBy"
 Q_ENVELOPE = f"{{{GML}}}Envelope"
 Q_LOWER = f"{{{GML}}}lowerCorner"
 Q_UPPER = f"{{{GML}}}upperCorner"
-
-
-def write_plateau_gml(root: etree._Element, out_path: Path) -> None:
-    """Write in PLATEAU's official serialization format (UTF-8 BOM + CRLF + double-quoted declaration)."""
-    body = etree.tostring(root, encoding="UTF-8", xml_declaration=False)
-    body = b'<?xml version="1.0" encoding="UTF-8"?>\n' + body
-    body = body.replace(b"\n", b"\r\n")
-    body = b"\xef\xbb\xbf" + body
-    out_path.write_bytes(body)
 
 
 def cell_bounds_from_mesh(code: str) -> tuple[float, float, float, float]:
@@ -186,20 +175,6 @@ def assign_quadrant(building: etree._Element, lat_min: float, lon_min: float,
     if max(areas.values()) <= 0.0:
         return None
     return max(areas, key=areas.get)
-
-
-def iter_coords(building: etree._Element):
-    """Yield (lat, lon, z) from every posList / pos inside the building."""
-    for tag in (f"{{{GML}}}posList", f"{{{GML}}}pos"):
-        for el in building.iter(tag):
-            if not el.text:
-                continue
-            nums = el.text.split()
-            for i in range(0, len(nums) - 2, 3):
-                try:
-                    yield float(nums[i]), float(nums[i + 1]), float(nums[i + 2])
-                except ValueError:
-                    continue
 
 
 def building_stats(building: etree._Element):

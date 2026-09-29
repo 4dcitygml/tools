@@ -41,6 +41,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.diff_citygml import APP_NS  # noqa: E402
+from scripts.citygml_xml import localname as _localname  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
 
 # localnames of elements to remove directly under a building (bldg namespace: LOD2+ detailed geometry, thematic surfaces, installations, rooms).
@@ -54,12 +55,6 @@ DROP_LOCALNAMES = frozenset({
 
 _BUILDING_LOCALNAMES = frozenset({"Building"})
 _APPEARANCE_MEMBER = f"{{{APP_NS}}}appearanceMember"
-
-
-def _localname(elem) -> str:
-    if not isinstance(elem.tag, str):  # comments/PIs
-        return ""
-    return etree.QName(elem).localname
 
 
 def _remove_appearance(root) -> int:

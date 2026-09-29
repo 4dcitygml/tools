@@ -30,7 +30,6 @@ exit code: 1 if any error (for CI blocking), otherwise 0.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import sys
 from pathlib import Path
@@ -43,6 +42,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_constants import CITYGML_LINT_MARKER, COORD_DIM  # noqa: E402
+from scripts.citygml_xml import open_source as _open  # noqa: E402
 from scripts.safe_xml import safe_iterparse  # noqa: E402
 from scripts.diff_citygml import (  # noqa: E402
     _BUILDING_TAGS,
@@ -197,12 +197,6 @@ def check_building(building: etree._Element, geom_index: Optional[dict] = None) 
 
 
 # --- Generic lint engine (also imported and used by plateau_lint) ------------
-def _open(source: Source):
-    if isinstance(source, (bytes, bytearray)):
-        return io.BytesIO(source)
-    return str(source)
-
-
 def geom_index_from_map(bmap: dict) -> dict:
     """Build a geometry-hash -> [id] index from load_buildings' {id:(attrs,geom)}."""
     index: dict = {}

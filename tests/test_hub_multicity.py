@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.support import TempHome, runtime
+from tests.support import make_clone, TempHome, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_multicity_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -29,15 +29,6 @@ _spec.loader.exec_module(hub)
 
 TOKYO = "4dcitygml/sample-tokyo-station"
 MUNICH = "4dcitygml/sample-munich-station"
-
-
-def make_clone(root: Path, repo: str) -> Path:
-    """A minimal clone: 4dcitygml.json naming the city and one building file."""
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "4dcitygml.json").write_text(json.dumps({"repo": repo, "data_dirs": ["d"]}), encoding="utf-8")
-    (root / "d").mkdir(exist_ok=True)
-    (root / "d" / "a.gml").write_text("<x/>", encoding="utf-8")
-    return root
 
 
 class _ConfigSandbox(unittest.TestCase):

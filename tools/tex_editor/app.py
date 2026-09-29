@@ -43,15 +43,8 @@ import accounts  # noqa: E402
 from attr_editor import app as attr  # noqa: E402  — the attribute editor is the shared base
 
 
-def tr(key: str, default: str, **params) -> str:
-    """Server-generated text of this editor in the display language (fail-open)."""
-    return runtime.tr("tex_editor", key, default, **params)
-
-
-def tr_lang(lang: str, key: str, default: str, **params) -> str:
-    """tr() in an explicit language: repository-facing text (PR title / body) follows the
-    repository's working language, not the UI language of the person editing."""
-    return runtime.tr("tex_editor", key, default, lang=lang, **params)
+tr = runtime.translator("tex_editor")          # server-generated text in the display language
+tr_lang = runtime.translator_in("tex_editor")  # repository-facing text in the city's working language
 
 _IMAGE_MAX_BYTES = 30 * 1024 * 1024  # cap on the baked atlas size (safety net)
 

@@ -156,3 +156,21 @@ class TestRepoScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSharedGit(unittest.TestCase):
+    """scripts/repo_git.py: the one git wrapper of the scripts."""
+
+    def test_text_bytes_strip_and_error(self):
+        from scripts.repo_git import GitError, git
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([GIT, "init", "-q", d], check=True)
+            self.assertEqual(git(d, "rev-parse", "--is-inside-work-tree"), "true\n")
+            self.assertEqual(git(d, "rev-parse", "--is-inside-work-tree", strip=True), "true")
+            self.assertEqual(git(d, "rev-parse", "--is-inside-work-tree", binary=True), b"true\n")
+            with self.assertRaises(GitError) as ctx:
+                git(d, "rev-parse", "--verify", "no-such-ref")
+            err = ctx.exception
+            self.assertIsInstance(err, RuntimeError)                 # scripts that catch RuntimeError
+            self.assertIsInstance(err, subprocess.CalledProcessError)  # scripts that catch CalledProcessError
+            self.assertTrue(str(err).startswith("git rev-parse --verify no-such-ref:"), str(err))

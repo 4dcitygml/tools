@@ -269,6 +269,11 @@ parsed.
 | `<!-- citygml-automatic-inspection -->` | Inspection summary, one `<!--cp:key-->` row per gate (A6). |
 | `<!-- citygml-change-summary -->` | Table of changed values derived from the diff (tool-independent). |
 | `<!-- citygml-commit-scope -->`, `<!-- citygml-reviewability-lint -->`, `<!-- citygml-quality-lint -->` | Detailed findings of the `commit-scope`, `minimal-diff` and `file-scope` / `structure` gates. |
+| `<!-- plateau-quality-lint -->`, `<!-- val3dity-topology-gate -->` | Detailed findings of the `plausibility` and `topology` gates. |
+| `<!-- cesium-building-preview -->` | The 3D preview link of the changed buildings (`model` gate). |
+| `<!-- citygml-metadata -->` | The machine-readable record of the analysis (an encoded payload; clients read the stamp, not the text). |
+| `<!-- citygml-suggested-commit -->` | A commit message CI suggests when the trailers are missing or wrong (`commit-scope` gate). |
+| `<!-- citygml-bulk-reproduction -->` | The result of re-executing a bulk submission's manifest (`reproduction` gate, A7). |
 | `<!-- citygml-base-freshness -->` | The PR is behind main and must be updated. A state comment: one per PR, edited between `<!-- status:active -->` and `<!-- status:resolved -->`. |
 | `<!-- citygml-auto-resubmission -->` | CI asked the proposer to fix and resubmit. |
 | `<!-- citygml-ci-retry-request -->` | A re-inspection request (A8; written by clients, read by CI). |

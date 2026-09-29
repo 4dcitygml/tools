@@ -23,30 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_xml import GML, bbox as member_bbox  # noqa: E402
 from scripts.safe_xml import safe_parser  # noqa: E402
 
-GML = "http://www.opengis.net/gml"
-
-
-def member_bbox(member: etree._Element):
-    xmin = ymin = zmin = float("inf")
-    xmax = ymax = zmax = float("-inf")
-    for tag in (f"{{{GML}}}posList", f"{{{GML}}}pos"):
-        for el in member.iter(tag):
-            if not el.text:
-                continue
-            nums = el.text.split()
-            for i in range(0, len(nums) - 2, 3):
-                try:
-                    x, y, z = float(nums[i]), float(nums[i + 1]), float(nums[i + 2])
-                except ValueError:
-                    continue
-                xmin, xmax = min(xmin, x), max(xmax, x)
-                ymin, ymax = min(ymin, y), max(ymax, y)
-                zmin, zmax = min(zmin, z), max(zmax, z)
-    if xmin == float("inf"):
-        return None
-    return xmin, ymin, zmin, xmax, ymax, zmax
 
 
 def main() -> None:

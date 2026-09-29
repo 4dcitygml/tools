@@ -26,7 +26,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import statistics as st
 import sys
@@ -48,17 +47,12 @@ from scripts.plateau_codelists import (  # noqa: E402
     quality_tier,
     unknown_codes,
 )
+from scripts.citygml_xml import open_source as _open  # noqa: E402
 from scripts.safe_xml import safe_iterparse  # noqa: E402
 from scripts.sentinels import is_sentinel  # noqa: E402
 
 # Numeric attributes (localname) to collect stats for by default. Replace via --numeric as needed.
 DEFAULT_NUMERIC = ("measuredHeight", "storeysAboveGround", "storeysBelowGround")
-
-
-def _open(source):
-    if isinstance(source, (bytes, bytearray)):
-        return io.BytesIO(source)
-    return str(source)
 
 
 def _iter_buildings(source):

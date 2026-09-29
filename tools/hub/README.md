@@ -148,7 +148,8 @@ Consequences worth knowing:
   PR** (`/api/pr-preview`), so preview and PR cannot drift.
 - The generated ja/de title prefixes (`属性修正`/`テクスチャ`,
   `Attributkorrektur`/`Textur…`) deliberately match the one classification
-  table (`scripts/pr_classification.py`, shipped as `program/pr_classification.py`)
+  table (`scripts/pr_classification.py`, shipped as `program/pr_classification.py`;
+  the comment markers the hub reads are `scripts/pr_markers.py`, shipped the same way)
   that CI and the hub's `review_kind()` share, so even branch-less manual PRs
   classify; this pairing is contract-tested (`tests/test_repo_language.py`).
 - Squash-merged PRs carry the repo-language PR title into the history's title
@@ -165,7 +166,7 @@ citygml-tools/
 ├─ citygml.sh | citygml.ps1        per-user launcher (copied from program/; the desktop icon runs it)
 └─ citygml-hub/<hub-vX.Y.Z>/program/
       hub.py, index.html, review.html, setup.html, settings.html
-      runtime.py, accounts.py, git_sync.py, shortcuts.py, pr_classification.py
+      runtime.py, accounts.py, git_sync.py, shortcuts.py, pr_classification.py, pr_markers.py, building_identity.py
       attr_editor/, tex_editor/, i18n/, themes/, licenses,
       PortableGit/ and PythonPortable/ (Windows only)
 ```

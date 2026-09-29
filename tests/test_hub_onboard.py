@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import shutil
 
-from tests.support import TempHome, accounts, fake_git, runtime
+from tests.support import EnglishEnv, TempHome, accounts, fake_git, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -49,26 +49,7 @@ def setup_html(mode="setup"):
         }).decode("utf-8")
 
 
-class _EnglishEnv(unittest.TestCase):
-    """Pin the language to the default en so tr() output is deterministic despite env vars.
-
-    Same approach as _EnvGuard in tests/test_i18n.py (save, remove, restore).
-    """
-
-    _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
-
-    def setUp(self):
-        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
-        for k in self._ENV_KEYS:
-            os.environ.pop(k, None)
-        os.environ["CITYGML_LANG"] = "en"
-
-    def tearDown(self):
-        for k, v in self._saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+_EnglishEnv = EnglishEnv   # the display language pinned to en (tests/support.py)
 
 
 class TestSetupHtml(unittest.TestCase):
@@ -634,6 +615,34 @@ class TestAttributeEditorPretest(_EnglishEnv):
              "CityGML format", "Changed file scope", "Source list sync"],
         )
 
+    def test_pretest_names_the_building_by_the_city_rule(self):
+        # A city that identifies buildings by a generic attribute (building_id.type gen:<NAME>):
+        # the "Target building" line names that id, like the buildingID the proposal carries.
+        root = Path(self.temp.name)
+        (root / "4dcitygml.json").write_text('{"building_id": {"type": "gen:BIN"}}', encoding="utf-8")
+        self.gml.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" '
+            'xmlns:bldg="http://www.opengis.net/citygml/building/2.0" '
+            'xmlns:gml="http://www.opengis.net/gml" '
+            'xmlns:gen="http://www.opengis.net/citygml/generics/2.0">'
+            '<core:cityObjectMember><bldg:Building gml:id="gml-bldg-1">'
+            '<bldg:storeysAboveGround>2</bldg:storeysAboveGround>'
+            '<gen:stringAttribute name="BIN"><gen:value>1001234</gen:value></gen:stringAttribute>'
+            '</bldg:Building></core:cityObjectMember></core:CityModel>',
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                        "commit", "-q", "-m", "gen id"], check=True)
+        repo = attr.Repo(root)
+        result = repo.pretest(self.payload)
+        self.assertTrue(result["passed"], result["checks"])
+        self.assertEqual(result["buildingID"], "1001234")
+        target = next(item for item in result["checks"] if item["label"] == "Target building")
+        self.assertIn("1001234", target["detail"])
+        self.assertNotIn("gml-bldg-1", target["detail"])
+
     def test_pretest_allows_missing_optional_supplement(self):
         self.payload["reason"] = ""
         result = self.repo.pretest(self.payload)
@@ -729,7 +738,7 @@ class TestReleaseZipIsInstallerPayload(unittest.TestCase):
         wf = (REPO_ROOT / ".github" / "workflows" / "release-hub.yml").read_text(encoding="utf-8")
         self.assertNotIn("%%BUNDLE_OS%%", wf)
         self.assertNotIn("READ-ME-FIRST", wf)
-        for name in ("citygml.sh", "citygml.ps1", "runtime.py", "accounts.py", "git_sync.py", "shortcuts.py", "pr_classification.py"):
+        for name in ("citygml.sh", "citygml.ps1", "runtime.py", "accounts.py", "git_sync.py", "shortcuts.py", "pr_classification.py", "pr_markers.py", "building_identity.py"):
             self.assertIn(f"{build_bundle.LIB}/{name}", build_bundle.required("macos"), name)
         self.assertFalse((REPO_ROOT / "tools" / "hub" / "getting-started.html").exists())   # the entrance page is gone
 
