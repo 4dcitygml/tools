@@ -46,6 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.repo_git import git as _git  # noqa: E402
 from scripts.provenance_manifest import parse_manifest_ref, sha256_hex, validate as validate_manifest  # noqa: E402
 from scripts.repo_scope import data_dirs, is_data  # noqa: E402
 from scripts.building_identity import IdentityRule, building_spans, rule_from_config, stable_id  # noqa: E402
@@ -97,21 +98,6 @@ class CommitResult:
     @property
     def ok(self) -> bool:
         return not self.errors
-
-
-def _git(repo: Path, *args: str, binary: bool = False) -> str | bytes:
-    proc = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"git {' '.join(args)}: {detail}")
-    if binary:
-        return proc.stdout
-    return proc.stdout.decode("utf-8", errors="replace")
 
 
 def _blob(repo: Path, sha: str, path: str) -> bytes | None:

@@ -34,10 +34,38 @@ def load(name, path):
     return module
 
 gate = load('report_contract', REPO_ROOT/'tools/hub/operator_explanation.py')
-with patch.dict(sys.modules, {'operator_explanation':gate}):
-    runner = load('report_gate', CITY_SCRIPTS/'check_review_report.py')
-with patch.dict(sys.modules, {'operator_explanation':gate,'check_review_report':runner}):
-    publisher = load('report_publisher', CITY_SCRIPTS/'publish_review_report.py')
+# What the city scripts import as `operator_explanation`. Transition (2026-09-17): a city
+# checkout from before the practice exemption was retired still imports `required`; it
+# gets a copy of the contract that answers True, the contract itself stays as it is.
+import types
+_for_city = types.ModuleType('operator_explanation'); _for_city.__dict__.update(gate.__dict__)
+_for_city.required = lambda repo: True
+# The city scripts reach GitHub through one client module (github_api.py, review step 5);
+# every test patches its `api` once. A checkout from before that step keeps the client
+# inside check_review_report, which the same patch reaches through the alias below.
+with patch.dict(sys.modules, {'operator_explanation':_for_city}):
+    if (CITY_SCRIPTS/'github_api.py').is_file():
+        client = load('github_api', CITY_SCRIPTS/'github_api.py')
+        with patch.dict(sys.modules, {'github_api':client}):
+            runner = load('report_gate', CITY_SCRIPTS/'check_review_report.py')
+            with patch.dict(sys.modules, {'check_review_report':runner}):
+                publisher = load('report_publisher', CITY_SCRIPTS/'publish_review_report.py')
+    else:
+        runner = load('report_gate', CITY_SCRIPTS/'check_review_report.py')
+        with patch.dict(sys.modules, {'check_review_report':runner}):
+            publisher = load('report_publisher', CITY_SCRIPTS/'publish_review_report.py')
+        client = None
+
+
+def github(stub):
+    """Every GitHub call of the city scripts answered by stub (path, method='GET', payload=None)."""
+    if client is not None:
+        return patch.object(client, 'api', side_effect=stub)
+    from contextlib import ExitStack
+    stack = ExitStack()
+    stack.enter_context(patch.object(runner, 'api', side_effect=stub))
+    stack.enter_context(patch.object(publisher, 'api', side_effect=stub))
+    return stack
 
 SHA='a'*40
 REPO='example-city/citygml'
@@ -53,19 +81,17 @@ def fixture(number=7):
                 'checks':[{'key':k,'label':k,'status':'pass'} for k in KEYS]}
     report=publisher.build_report(REPO,pr,run,inspection,{'summary.md':'Storeys: 2 → 3'},[{'filename':'city/udx/bldg/a.gml'}])
     comment={'id':100,'body':gate.report_comment(report),'user':{'login':'github-actions[bot]','type':'Bot'}}
-    confirmation={'id':200,'state':'COMMENTED','commit_id':SHA,
-                  'body':gate.MARKER+'\nReport-ID: '+report['reportId'],
-                  'submitted_at':'2026-09-05T12:00:00Z','user':{'login':'operator','type':'User'}}
-    return pr,run,inspection,report,comment,confirmation
+    return pr,run,inspection,report,comment
 
 
 class ReportContractTest(unittest.TestCase):
     def setUp(self):
-        self.pr,self.run,self.inspection,self.report,self.comment,self.confirmation=fixture()
-        self.comments=[self.comment];self.reviews=[self.confirmation];self.permission='write'
+        self.pr,self.run,self.inspection,self.report,self.comment=fixture()
+        self.comments=[self.comment];self.reviews=[];self.permission='write';self.check_runs=[]
     def api(self,path):
         if '/comments?' in path:return 200,self.comments
         if '/reviews?' in path:return 200,self.reviews
+        if '/check-runs?' in path:return 200,{'check_runs':self.check_runs}   # the head's ci-report runs (reused when present)
         if '/actions/' in path:return 200,{'workflow_runs':[self.run]}
         if '/collaborators/' in path:return 200,{'permission':self.permission}
         self.fail(path)
@@ -82,6 +108,21 @@ class ReportContractTest(unittest.TestCase):
                 elif key=='labels':self.pr[key]=[{'name':'texture-override'}]
                 else:self.pr[key]='new evidence'
                 self.assertFalse(self.evaluate()['valid'])
+    def test_latest_run_ignores_a_cancelled_run_with_a_higher_id(self):
+        # opened and labeled queued two runs in the same second; cancel-in-progress cancelled
+        # the one with the higher id (seen on a practice repository's pull request): the
+        # completed run is the analysis the report matches.
+        cancelled=dict(self.run,id=51,status='completed',conclusion='cancelled')
+        runs=[cancelled,self.run]
+        api=lambda path:(200,{'workflow_runs':runs}) if '/actions/' in path else self.api(path)
+        self.assertEqual(gate.latest_run(api,REPO,self.pr)['id'],50)
+        self.assertTrue(gate.current_report(api,REPO,self.pr)['reportReady'])
+        runs[:]=[cancelled]
+        with self.assertRaises(RuntimeError):gate.latest_run(api,REPO,self.pr)
+        running=dict(self.run,id=52,status='in_progress',conclusion=None)
+        runs[:]=[self.run,cancelled,running]
+        self.assertEqual(gate.latest_run(api,REPO,self.pr)['id'],52)
+        self.assertFalse(gate.current_report(api,REPO,self.pr)['reportReady'])
     def test_rerun_attempt_or_new_run_requires_new_report(self):
         self.run['run_attempt']=2;self.assertFalse(self.evaluate()['reportReady'])
         self.run['run_attempt']=1;self.run['id']=51;self.assertFalse(self.evaluate()['reportReady'])
@@ -141,9 +182,18 @@ class ReportContractTest(unittest.TestCase):
             if '/comments?' in path and '&page=2' in path:return 200,self.comments
             return self.api(path)
         self.assertTrue(gate.evaluate(api,REPO,self.pr)['valid'])
-    def test_only_first_party_samples_are_exempt(self):
-        self.assertFalse(gate.required('4dcitygml/sample-tokyo-station'))
-        self.assertTrue(gate.required('proposer/sample-tokyo-station'))
+    def test_practice_repositories_are_validated_like_any_other(self):
+        # The practice repositories run the whole pipeline (Exchange Contract Part C): a stale
+        # report is a stale report there too, and the field `required` is always True.
+        practice=gate.evaluate(self.api,'4dcitygml/sample-tokyo-station',self.pr)
+        self.assertTrue(practice['required'])              # no exemption any more
+        self.assertFalse(practice['valid'])                # the fixture's report belongs to another repository
+        result=gate.evaluate(self.api,REPO,self.pr)
+        self.assertTrue(result['required']);self.assertTrue(result['valid'])
+        self.pr['body']='changed after the report'
+        stale=gate.evaluate(self.api,REPO,self.pr)
+        self.assertTrue(stale['required']);self.assertFalse(stale['valid'])
+        self.assertFalse(hasattr(gate,'required'))
     def test_mirrored_contract(self):
         expected=(REPO_ROOT/'tools/hub/operator_explanation.py').read_bytes()
         for repo in ['city-template','sample-tokyo-station','sample-munich-station','sample-newyork-station']:
@@ -160,7 +210,7 @@ class GateTransitionsTest(unittest.TestCase):
             if '/pulls?state=open' in path:return 200,[self.pr]
             if path.endswith('/pulls/7'):return 200,self.pr
             return self.api(path)
-        with patch.dict('os.environ',{'GITHUB_REPOSITORY':REPO}),patch.object(runner,'api',side_effect=api):runner.run()
+        with patch.dict('os.environ',{'GITHUB_REPOSITORY':REPO}),github(api):runner.run()
         return writes
     def test_report_check_needs_no_human_confirmation(self):
         self.reviews=[];writes=self.drive()
@@ -171,11 +221,19 @@ class GateTransitionsTest(unittest.TestCase):
         self.pr['draft']=False;self.pr['body']='new source';writes=self.drive()
         self.assertEqual(writes[-1][1]['conclusion'],'failure')
         self.assertFalse(any(path == '/graphql' or '/dismissals' in path for path,_ in writes))
+    def test_existing_report_check_is_reused_not_recreated(self):
+        # one ci-report row per head: an existing run of ours is reopened in place
+        self.check_runs=[{'id':77,'app':{'slug':'github-actions'}},{'id':78,'app':{'slug':'someone-else'}}]
+        writes=self.drive()
+        self.assertTrue(writes[0][0].endswith('/check-runs/77'),writes[0][0])
+        self.assertEqual(writes[0][1]['status'],'in_progress')
+        self.assertFalse(any(path.endswith('/check-runs') for path,_ in writes))
+        self.assertEqual(writes[-1][1]['conclusion'],'success')
 
 
 class ReportPublicationTest(unittest.TestCase):
     def drive(self, failure=None):
-        pr, run, inspection, report, comment, confirmation = fixture()
+        pr, run, inspection, report, comment = fixture()
         writes = []
         def api(path, method='GET', payload=None):
             if method != 'GET':
@@ -187,6 +245,7 @@ class ReportPublicationTest(unittest.TestCase):
             if '/pulls?state=open' in path:return 200, [pr]
             if '/actions/' in path:return 200, {'workflow_runs': [run]}
             if '/comments?' in path:return 200, []
+            if '/check-runs?' in path:return 200, {'check_runs': []}
             if '/files?' in path:return 200, [{'filename': 'city/udx/bldg/a.gml'}]
             self.fail(path)
         with tempfile.TemporaryDirectory() as temp:
@@ -200,7 +259,7 @@ class ReportPublicationTest(unittest.TestCase):
             previous = Path.cwd()
             try:
                 os.chdir(root)
-                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_EVENT_PATH': str(root/'event.json'), 'REPORT_EVENT_PATH': ''}), patch.object(publisher, 'api', side_effect=api), patch.object(runner, 'api', side_effect=api):
+                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_EVENT_PATH': str(root/'event.json'), 'REPORT_EVENT_PATH': ''}), github(api):
                     if failure:
                         with self.assertRaises((RuntimeError, FileNotFoundError)):publisher.run()
                     else:

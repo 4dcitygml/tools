@@ -27,12 +27,25 @@ class TestToolsRepositoryName(unittest.TestCase):
         # The tools repository is named once per script, with CITYGML_TOOLS_REPO as the only override
         # (development copies point it at themselves; installed users see the unchanged default).
         root = Path(__file__).resolve().parents[1] / "scripts"
+        constants = (root / "citygml_constants.py").read_text(encoding="utf-8")
+        self.assertRegex(constants, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO["']\) or ["']4dcitygml/tools["']""")
         for name in ("identity_manifest.py", "source_update_manifest.py", "carry_forward_manifest.py",
                      "lod0_semantic_manifest.py", "repo_scope.py"):
             src = (root / name).read_text(encoding="utf-8")
-            self.assertIn("CITYGML_TOOLS_REPO", src, name)
-            self.assertRegex(src, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO["']\) or ["']4dcitygml/tools["']""", name)
+            self.assertIn("default=tools_repo()", src, name)
+            self.assertNotRegex(src, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO""", name)   # read once, in tools_repo()
             self.assertNotRegex(src, r"""default=["']4dcitygml/tools["']""", name)
+        import os
+        from scripts.citygml_constants import tools_repo
+        saved = os.environ.pop("CITYGML_TOOLS_REPO", None)
+        try:
+            self.assertEqual(tools_repo(), "4dcitygml/tools")
+            os.environ["CITYGML_TOOLS_REPO"] = "example/tools-copy"
+            self.assertEqual(tools_repo(), "example/tools-copy")
+        finally:
+            os.environ.pop("CITYGML_TOOLS_REPO", None)
+            if saved is not None:
+                os.environ["CITYGML_TOOLS_REPO"] = saved
 
 
 class BulkManifestTest(unittest.TestCase):

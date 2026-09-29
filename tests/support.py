@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -44,6 +45,33 @@ def load_app(name: str, rel: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+class EnglishEnv(unittest.TestCase):
+    """Pins the display language to en for one test, so tr() output is deterministic
+    whatever the environment says (save, remove, restore CITYGML_LANG and the locale
+    variables). Subclasses that also need a temporary HOME set `home = True`."""
+
+    _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
+    home = False
+
+    def setUp(self):
+        self._home = TempHome(lang=None) if self.home else None
+        if self._home:
+            self._home.__enter__()
+        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+        os.environ["CITYGML_LANG"] = "en"
+
+    def tearDown(self):
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if self._home:
+            self._home.__exit__(None, None, None)
 
 
 class TempHome:

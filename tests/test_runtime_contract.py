@@ -58,7 +58,7 @@ class TestDocumentedChannels(unittest.TestCase):
             self.assertTrue(callable(getattr(hub, name, None)), name)
 
     def test_shared_modules_and_launchers_exist(self):
-        for rel in ("tools/git_sync.py", "tools/shortcuts.py", "scripts/pr_classification.py",
+        for rel in ("tools/git_sync.py", "tools/shortcuts.py", "scripts/pr_classification.py", "scripts/pr_markers.py", "scripts/building_identity.py",
                     "install/citygml.sh", "install/citygml.ps1"):
             self.assertTrue((REPO_ROOT / rel).is_file(), rel)
             self.assertIn(Path(rel).name, DOC, rel)
@@ -77,7 +77,7 @@ class TestDocumentedChannels(unittest.TestCase):
         from tests.test_bundle import build_bundle
         for flavor in ("macos", "windows"):
             names = {arc for _, arc, _ in build_bundle.manifest(REPO_ROOT, flavor)}
-            for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py", "pr_classification.py"):
+            for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py", "pr_classification.py", "pr_markers.py", "building_identity.py"):
                 self.assertIn(f"{build_bundle.LIB}/{name}", names, name)
 
 

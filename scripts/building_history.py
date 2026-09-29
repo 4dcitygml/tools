@@ -37,16 +37,10 @@ from scripts import semantic_registry as R  # noqa: E402
 from scripts.commit_building_scope import _trailers  # noqa: E402
 from scripts.provenance_manifest import parse_manifest_ref  # noqa: E402
 from scripts.reconstruct_minimal import building_spans  # noqa: E402
+from scripts.repo_git import git as _git  # noqa: E402
 
 _BID_RE = re.compile(rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>")
 BULK_KINDS = {"source-baseline", "scope-extract", "layout", "carry-forward", "schema-update", "schema-migration", "lifecycle"}
-
-
-def _git(repo: Path, *args: str, binary: bool = False):
-    out = subprocess.run(["git", "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-    if out.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)}: {out.stderr.decode(errors='replace').strip()}")
-    return out.stdout if binary else out.stdout.decode("utf-8", errors="replace")
 
 
 def _blob(repo: Path, sha: str, path: str) -> bytes | None:

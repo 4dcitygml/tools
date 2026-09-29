@@ -40,6 +40,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.citygml_constants import tools_repo  # noqa: E402
+from scripts.repo_git import git as _git  # noqa: E402
+
 CODE_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".command", ".ps1", ".bat", ".cmd", ".exe", ".dll",
                  ".js", ".mjs", ".ts", ".rb", ".php", ".pl", ".jar", ".dylib", ".so", ".app"}
 DOC_ROOT_NAMES = re.compile(r"^(README|LICENSE|NOTICE|CONTRIBUTING|SUPPORT|CHANGELOG|SECURITY)([.-].*)?$", re.I)
@@ -48,10 +54,6 @@ CONFIG_PATHS = {"4dcitygml.json", "theme.json", ".gitignore", ".gitattributes",
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".ico"}
 PIN_LINE = re.compile(r"^[+-]\s*CITYGML_TOOLS_REF:\s*([0-9a-f]{40})\b.*$")
 TOOLING_LABEL = "tooling"
-
-
-def _git(repo, *args) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
 
 
 def changed_files(repo, base, head) -> list:
@@ -200,7 +202,7 @@ def main(argv=None) -> int:
     ap.add_argument("--head-sha", required=True)
     ap.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"))
     ap.add_argument("--json-output", default=None)
-    ap.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools")
+    ap.add_argument("--tools-repo", default=tools_repo())
     args = ap.parse_args(argv)
     files = changed_files(args.repo, args.base_sha, args.head_sha)
     cfg = city_config(args.repo)

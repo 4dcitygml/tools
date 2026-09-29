@@ -145,6 +145,12 @@ deliberate step.
    without the approval step. The approval itself is verified once, on a
    history-free public rehearsal repository or at the first production
    release, after reading back the environment's rules.
+   Actions minutes on a private copy are metered, so a copy keeps the
+   repository variable `CITYGML_CI` at `off`: every automatic run of every
+   workflow is skipped, and a manual run (`workflow_dispatch`) still works for
+   debugging one workflow. Before a change is handed to production the copy
+   sets `CITYGML_CI` to `on`, the pull request is refreshed so every workflow
+   runs once, and the variable goes back to `off`. Production sets nothing.
 2. **Fix what the rehearsal breaks** in the development copies, then in
    production through the normal pull-request route.
 3. **Apply to production** from the common-settings thread, one repository at

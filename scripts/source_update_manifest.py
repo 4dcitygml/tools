@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import os
 import random
 import re
 import sys
@@ -35,21 +34,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_constants import tools_repo  # noqa: E402
 from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
 from scripts.identity_manifest import _environment, _file_material, load_edition  # noqa: E402
 from scripts.plan_yearly_citygml_transition import attribute_family, base_path  # noqa: E402
 from scripts.provenance_manifest import (  # noqa: E402
     changes_by_building, commit_series, committed_manifest, compare_reproduction, edition_arg,
     locate_materials, manifest_ref, schema_errors, sha256_hex, write_generated)
+from scripts.building_identity import leaf_pattern  # noqa: E402
 from scripts.reconstruct_minimal import _tag_localname, building_spans  # noqa: E402
 
 FAMILIES = ("address", "lod_quality", "source_quality", "disaster_risk", "storeys", "usage_class_landuse",
             "planning_zoning_rates", "survey_building_detail", "generic_attributes", "other_attributes")
 
-
-def _leaf_pattern(tag_local: str) -> re.Pattern[bytes]:
-    t = re.escape(tag_local.encode("utf-8"))
-    return re.compile(rb"(<(?:\w+:)?" + t + rb"\b[^>]*>)([^<]*)(</(?:\w+:)?" + t + rb">)")
 
 
 def _unique_leaf(span: bytes, tag_local: str, normalized_value: str) -> re.Match[bytes] | None:
@@ -57,7 +54,7 @@ def _unique_leaf(span: bytes, tag_local: str, normalized_value: str) -> re.Match
     normalized) text equals ``normalized_value``; None when 0 or several."""
     wanted = A.norm_num(normalized_value)
     hits = []
-    for m in _leaf_pattern(tag_local).finditer(span):
+    for m in leaf_pattern(tag_local).finditer(span):
         text = m.group(2).decode("utf-8", errors="replace").strip()
         # raw equality first (codes are strings: "000" != "0"), numeric normalization as fallback
         if text == normalized_value or A.norm_num(text) == wanted:
@@ -268,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--current-label", default="current"); g.add_argument("--current-uri", help="git:<sha>:<path> or URL of the current file")
     g.add_argument("--edition-new", type=edition_arg, required=True, help="LABEL=PATH of the new official edition GML")
     g.add_argument("--new-uri", help="<zip-url>#<member> or URL of the new edition file")
-    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools"); g.add_argument("--tools-commit", required=True)
+    g.add_argument("--product", required=True); g.add_argument("--tools-repo", default=tools_repo()); g.add_argument("--tools-commit", required=True)
     g.add_argument("--plan-issue", required=True); g.add_argument("--seed", type=int, default=20260902); g.add_argument("--sample-size", type=int, default=30)
     g.add_argument("--output", required=True); g.add_argument("--apply-output")
     g.set_defaults(func=cmd_generate)

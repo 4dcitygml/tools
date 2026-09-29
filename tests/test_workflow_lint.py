@@ -111,6 +111,15 @@ class WorkflowLintTest(unittest.TestCase):
                     bad.append(f"{wf.parent.parent.parent.name}/{wf.name}: {line.strip()}")
         self.assertEqual(bad, [], "': ' inside a plain scalar:\n" + "\n".join(bad))
 
+    def test_every_tools_workflow_carries_the_copy_switch(self) -> None:
+        # A development copy sets CITYGML_CI=off to skip every automatic run; the entry job of
+        # each workflow carries the condition, and a manual run is always allowed.
+        switch = "if: vars.CITYGML_CI != 'off' || github.event_name == 'workflow_dispatch'"
+        for wf in sorted((TOOLS / ".github" / "workflows").glob("*.yml")):
+            text = wf.read_text(encoding="utf-8")
+            self.assertIn(switch, text, wf.name)
+            self.assertIn("workflow_dispatch:", text, wf.name)
+
     def test_release_workflows_smoke_test_their_archives(self) -> None:
         # The distribution must be exercised (extracted and imported) before it is uploaded:
         # both build jobs run scripts/verify_bundle.py (the Windows job twice, once under the

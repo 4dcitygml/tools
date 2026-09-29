@@ -48,19 +48,13 @@ if _SHARED is None:
     sys.exit("runtime.py is missing next to the editor: install the tools again with the one-line command")
 sys.path.insert(0, str(_SHARED))
 import runtime  # noqa: E402
+import building_identity  # noqa: E402
 import accounts  # noqa: E402
 import git_sync  # noqa: E402
 
 
-def tr(key: str, default: str, **params) -> str:
-    """Server-generated text of the editor in the display language (fail-open)."""
-    return runtime.tr("attr_editor", key, default, **params)
-
-
-def tr_lang(lang: str, key: str, default: str, **params) -> str:
-    """tr() in an explicit language: repository-facing text (PR title / body) follows the
-    repository's working language, not the UI language of the person editing."""
-    return runtime.tr("attr_editor", key, default, lang=lang, **params)
+tr = runtime.translator("attr_editor")          # server-generated text in the display language
+tr_lang = runtime.translator_in("attr_editor")  # repository-facing text in the city's working language
 
 # ---- Theme pack (tools/themes/theme_loader.py via runtime; a broken theme.json is ignored) ----
 
@@ -73,11 +67,7 @@ def city_map_config(repo_root) -> dict:
     """
     if repo_root is None:
         return {}
-    try:
-        meta = json.loads((Path(repo_root) / "4dcitygml.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    m = meta.get("map") if isinstance(meta, dict) else None
+    m = runtime.city_meta(repo_root).get("map")
     if not isinstance(m, dict):
         return {}
     out: dict = {}
@@ -110,19 +100,8 @@ def city_map_html(data: bytes, repo_root) -> bytes:
 # ---- Language pack (tools/i18n/i18n_loader.py via runtime; a broken catalog falls back to English) ----
 
 
-def norm_repo_lang(value: object) -> str:
-    """Normalize 4dcitygml.json "lang" (BCP 47) to a catalog language; en if absent."""
-    primary = str(value or "").split("-")[0].strip().lower()
-    return primary or "en"
-
-
-def read_repo_lang(root: "Path | str") -> str:
-    """Repo working language from <root>/4dcitygml.json (en when absent/broken)."""
-    try:
-        meta = json.loads((Path(root) / "4dcitygml.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        meta = {}
-    return norm_repo_lang(meta.get("lang"))
+norm_repo_lang = runtime.norm_lang   # the city's `lang` as a catalog language
+read_repo_lang = runtime.repo_lang   # the city's working language from its 4dcitygml.json
 
 
 def created_by_trailer(root: "Path | str", app: str) -> str:
@@ -265,26 +244,8 @@ def stable_building_id_from_span(
     bid_type: str = "uro:buildingID",
     invalid_values: "set[str] | frozenset[str] | tuple[str, ...]" = (),
 ) -> str:
-    """Resolve the stable ID from a building span (building_id.type in 4dcitygml.json).
-
-    - "uro:buildingID" (default, PLATEAU): the value of <uro:buildingID>
-    - "gml:id": the gml:id itself (munich etc.)
-    - "gen:<NAME>": the value of generic attribute <NAME> (newyork's BIN etc.)
-    Falls back to gid when not found or when the source value is listed in
-    building_id.invalid_values (for example an upstream placeholder ID).
-    """
-    if bid_type == "gml:id":
-        return gid
-    if bid_type.startswith("gen:"):
-        name = re.escape(bid_type[4:].encode("utf-8"))
-        m = re.search(
-            rb'<(?:\w+:)?stringAttribute\s+name="' + name
-            + rb'"\s*>\s*<(?:\w+:)?value>([^<]+)</', span)
-        value = m.group(1).decode("utf-8").strip() if m else ""
-        return value if value and value not in invalid_values else gid
-    hit = _BUILDINGID_RE.search(span)
-    value = hit.group(1).decode("utf-8").strip() if hit else ""
-    return value if value and value not in invalid_values else gid
+    """The stable ID of a building span under the city's rule (building_identity.stable_id)."""
+    return building_identity.stable_id(span, gid, building_identity.IdentityRule(bid_type, frozenset(invalid_values)))
 
 
 def ns_for_root(root: "ET.Element") -> dict:
@@ -327,10 +288,6 @@ _THEMATIC_RE = re.compile(
 )
 _CREATION_RE = re.compile(rb"<(?:\w+:)?creationDate>[^<]*</(?:\w+:)?creationDate>")
 
-_COM_OPEN = b"<core:cityObjectMember>"
-_COM_CLOSE = b"</core:cityObjectMember>"
-_BUILDING_ID_RE = re.compile(rb'<(?:\w+:)?Building\b[^>]*?\sgml:id="([^"]+)"')
-_BUILDINGID_RE = re.compile(rb"<(?:\w+:)?buildingID>([^<]+)</(?:\w+:)?buildingID>")
 
 # Always read-only leaves (spec §3: gml:id, geometry, buildingID, creationDate)
 READONLY_TAGS = {"buildingID", "creationDate"}
@@ -631,48 +588,7 @@ def label_in(lang: str, tag: str, fallback: str = "") -> str:
 # --------------------------------------------------------------------------
 # Byte spans and leaf-value replacement (same approach as reconstruct_minimal.py)
 # --------------------------------------------------------------------------
-def _com_markers(raw: bytes) -> "tuple[bytes, bytes]":
-    """Detect the actual spelling of this file's cityObjectMember open/close tags.
-
-    PLATEAU uses `<core:cityObjectMember>`; CityGML 1.0-family international
-    data (munich etc.) uses the default-namespace `<cityObjectMember>`. To keep
-    byte search fast, the actual spelling is determined once (no regex) and
-    scanning runs with find.
-    """
-    if raw.find(_COM_OPEN) >= 0:
-        return _COM_OPEN, _COM_CLOSE
-    m = re.search(rb"<((?:\w+:)?cityObjectMember)[ >]", raw)
-    if m:
-        tag = m.group(1)
-        return b"<" + tag + b">", b"</" + tag + b">"
-    return _COM_OPEN, _COM_CLOSE
-
-
-def building_spans(raw: bytes) -> dict[str, tuple[int, int]]:
-    """gml:id -> [start, end) of the cityObjectMember containing that building."""
-    spans: dict[str, tuple[int, int]] = {}
-    com_open, com_close = _com_markers(raw)
-    pos = 0
-    while True:
-        start = raw.find(com_open, pos)
-        if start < 0:
-            break
-        close = raw.find(com_close, start)
-        if close < 0:
-            break
-        end = close + len(com_close)
-        m = _BUILDING_ID_RE.search(raw, start, end)
-        if m:
-            spans[m.group(1).decode("utf-8")] = (start, end)
-        pos = end
-    return spans
-
-
-def _leaf_pattern(tag_local: str) -> re.Pattern[bytes]:
-    t = re.escape(tag_local.encode("utf-8"))
-    return re.compile(
-        rb"<(?:\w+:)?" + t + rb"\b[^>]*?>([^<]*)</(?:\w+:)?" + t + rb">"
-    )
+building_spans = building_identity.building_spans   # gml:id -> [start, end) of each member
 
 
 def _xml_escape(text: str) -> bytes:
@@ -740,7 +656,7 @@ class Repo:
             # Without the PLATEAU layout (*/udx/bldg), use data_dirs from 4dcitygml.json
             # (supports international datasets such as munich=lod2_citygml, newyork=citygml)
             candidates = [
-                d for d in self._declared_data_dirs()
+                d for d in runtime.data_dirs(self.root)
                 if (not data or data in d.name) and any(d.glob("*.gml"))
             ]
         if not candidates:
@@ -759,18 +675,12 @@ class Repo:
             print(f"Data package candidates: {names}\n  → using {self.bldg_dir.parent.parent.name} (override with --data)")
         self.data_root = self.bldg_dir.parent.parent  # *_citygml_*_op
         # City metadata (4dcitygml.json): building ID type and display-language default
-        try:
-            meta = json.loads((self.root / "4dcitygml.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            meta = {}
-        bid_config = meta.get("building_id") or {}
-        self._bid_type = str(bid_config.get("type") or "uro:buildingID")
-        self._bid_invalid_values = frozenset(
-            str(value) for value in (bid_config.get("invalid_values") or [])
-        )
+        meta = runtime.city_meta(self.root)
+        rule = building_identity.rule_from_config(meta)
+        self._bid_type, self._bid_invalid_values = rule.type, rule.invalid_values
         # Repo working language (4dcitygml.json "lang"): the language of repo-facing
         # generated text (PR title/body). UI labels follow the user's language via tr().
-        self._repo_lang = norm_repo_lang(meta.get("lang"))
+        self._repo_lang = runtime.norm_lang(meta.get("lang"))
         self.tex_override: "Path | None" = None  # --textures: for displaying swapped-in textures
         self.codelists_dir = self.data_root / "codelists"
         self._tile_cache: dict[str, dict] = {}
@@ -780,19 +690,6 @@ class Repo:
         self._git_lock = threading.Lock()
 
     # ---- File listing ----
-    def _declared_data_dirs(self) -> "list[Path]":
-        """data_dirs declared by 4dcitygml.json at the clone root (empty if none)."""
-        try:
-            meta = json.loads((self.root / "4dcitygml.json").read_text(encoding="utf-8"))
-            return [
-                (self.root / str(rel)).resolve()
-                for rel in (meta.get("data_dirs") or [])
-                if (self.root / str(rel)).is_dir()
-                and (self.root / str(rel)).resolve().is_relative_to(self.root)
-            ]
-        except (OSError, ValueError):
-            return []
-
     def tile_files(self) -> dict[str, Path]:
         out = {}
         plateau = sorted(self.bldg_dir.glob("*_bldg_*_op.gml"))
@@ -1067,13 +964,13 @@ class Repo:
 
         def leaf_index(tag: str, value: str) -> int | None:
             if tag not in tag_matches:
-                tag_matches[tag] = list(_leaf_pattern(tag).finditer(span))
+                tag_matches[tag] = list(building_identity.leaf_pattern(tag).finditer(span))
                 tag_ptr[tag] = 0
             want = _xml_escape(value)
             ms = tag_matches[tag]
             i = tag_ptr[tag]
             while i < len(ms):
-                if ms[i].group(1) == want:
+                if ms[i].group(2) == want:
                     tag_ptr[tag] = i + 1
                     return i
                 i += 1
@@ -1287,7 +1184,7 @@ class Repo:
                 raise ValueError(tr("editor.err_readonly", "{tag} is read-only", tag=tag))
             if new == old:
                 continue
-            matches = list(_leaf_pattern(tag).finditer(span))
+            matches = list(building_identity.leaf_pattern(tag).finditer(span))
             if idx >= len(matches):
                 raise ValueError(tr(
                     "editor.err_leaf_not_found",
@@ -1295,14 +1192,14 @@ class Repo:
                     tag=tag, idx=idx,
                 ))
             m = matches[idx]
-            if m.group(1) != _xml_escape(old):
+            if m.group(2) != _xml_escape(old):
                 raise ValueError(tr(
                     "editor.err_leaf_mismatch",
                     "The current value of {tag}[{idx}] does not match (expected: {old})."
                     " Please reload the page",
                     tag=tag, idx=idx, old=repr(old),
                 ))
-            span = span[: m.start(1)] + _xml_escape(new) + span[m.end(1) :]
+            span = span[: m.start(2)] + _xml_escape(new) + span[m.end(2) :]
 
         r28: list[str] = []
         for ch in src_changes:
@@ -1451,10 +1348,8 @@ class Repo:
             spans = building_spans(new_raw)
             building_id = gid
             if gid in spans:
-                start, end = spans[gid]
-                hit = _BUILDINGID_RE.search(new_raw, start, end)
-                if hit:
-                    building_id = hit.group(1).decode("utf-8").strip()
+                building_id = stable_building_id_from_span(
+                    new_raw[slice(*spans[gid])], gid, self._bid_type, self._bid_invalid_values)
             add("building", tr("editor.check_building_label", "Target building"),
                 gid in spans,
                 tr("editor.check_building_pass",
@@ -1827,7 +1722,7 @@ class Repo:
         # City display name in the UI language, for the "written in <lang>" note
         city = ""
         try:
-            meta = json.loads((self.root / "4dcitygml.json").read_text(encoding="utf-8"))
+            meta = runtime.city_meta(self.root)
             names = meta.get("name") or {}
             ui = runtime.ui_lang()
             if isinstance(names, dict):

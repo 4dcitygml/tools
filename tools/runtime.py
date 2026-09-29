@@ -39,8 +39,8 @@ SHARED_DIR = Path(__file__).resolve().parent
 WINDOWS = sys.platform.startswith("win")
 
 # The shared modules next to this file (accounts, git_sync, shortcuts, pr_classification,
-# the i18n and themes packages) import by name. In the source tree pr_classification.py
-# lives in scripts/ (shared with CI); in the bundle it is copied next to the hub.
+# pr_markers, building_identity, the i18n and themes packages) import by name. In the source
+# tree the modules shared with CI live in scripts/; in the bundle they are copied next to the hub.
 for _dir in (SHARED_DIR.parent / "scripts", SHARED_DIR):
     if _dir.is_dir() and str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
@@ -343,6 +343,31 @@ def clone_city(root) -> "str | None":
     return city_key(city_meta(root).get("repo", ""))
 
 
+def norm_lang(value) -> str:
+    """A 4dcitygml.json `lang` (BCP 47) as a catalog language: the primary subtag, en when absent."""
+    primary = str(value or "").split("-")[0].strip().lower()
+    return primary or "en"
+
+
+def repo_lang(root) -> str:
+    """The city's working language (4dcitygml.json `lang`): the language of repository-facing
+    text such as PR titles and bodies. The UI language is ui_lang()."""
+    return norm_lang(city_meta(root).get("lang"))
+
+
+def data_dirs(root) -> "list[Path]":
+    """The data directories 4dcitygml.json declares, resolved, existing and inside the clone."""
+    root = Path(root)
+    out = []
+    for rel in city_meta(root).get("data_dirs") or []:
+        if not isinstance(rel, str):
+            continue
+        d = root / rel
+        if d.is_dir() and d.resolve().is_relative_to(root.resolve()):
+            out.append(d.resolve())
+    return out
+
+
 def requested_city() -> "str | None":
     """The city the launcher asked for (CITYGML_UPSTREAM), or None when started by hand."""
     return city_key(os.environ.get("CITYGML_UPSTREAM", ""))
@@ -380,11 +405,7 @@ def has_building_data(root) -> bool:
             return True
     except OSError:
         return False
-    return any(
-        (root / str(rel)).is_dir() and any((root / str(rel)).glob("*.gml"))
-        for rel in (city_meta(root).get("data_dirs") or [])
-        if isinstance(rel, str)
-    )
+    return any(any(d.glob("*.gml")) for d in data_dirs(root))
 
 
 def detect_repo() -> "Path | None":
@@ -614,6 +635,21 @@ def tr(app: str, key: str, default: str, *, lang: "str | None" = None, **params)
         for k, v in params.items():
             s = s.replace("{" + k + "}", str(v))
         return s
+
+
+def translator(app: str):
+    """tr() bound to one app: `tr(key, default, **params)` in the display language."""
+    def bound(key: str, default: str, **params) -> str:
+        return tr(app, key, default, **params)
+    return bound
+
+
+def translator_in(app: str):
+    """tr() bound to one app, in an explicit language: `tr_lang(lang, key, default, **params)`
+    for repository-facing text (PR title and body follow the city's working language)."""
+    def bound(lang: str, key: str, default: str, **params) -> str:
+        return tr(app, key, default, lang=lang, **params)
+    return bound
 
 
 def page(data: bytes, app: str, root=None, values: "dict | None" = None) -> bytes:

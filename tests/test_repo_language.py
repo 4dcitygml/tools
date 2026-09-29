@@ -26,7 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.support import TempHome, runtime
+from tests.support import EnglishEnv, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -75,24 +75,8 @@ def tex_title_for(lang: str, add: bool = False) -> str:
                           n=3, bid="13101-bldg-1")
 
 
-class _EnglishEnv(unittest.TestCase):
-    _ENV_KEYS = ("CITYGML_LANG", "LC_ALL", "LC_MESSAGES", "LANG")
-
-    def setUp(self):
-        self._home = TempHome(lang=None)
-        self._home.__enter__()
-        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
-        for k in self._ENV_KEYS:
-            os.environ.pop(k, None)
-        os.environ["CITYGML_LANG"] = "en"
-
-    def tearDown(self):
-        for k, v in self._saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        self._home.__exit__(None, None, None)
+class _EnglishEnv(EnglishEnv):
+    home = True   # a temporary HOME as well: the editor reads the settings file
 
 
 class TestTitlesKeepClassifying(_EnglishEnv):

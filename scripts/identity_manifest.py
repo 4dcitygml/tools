@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import os
 import random
 import re
 import sys
@@ -40,6 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_constants import tools_repo  # noqa: E402
 from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
 from scripts.provenance_manifest import (  # noqa: E402
     commit_series, committed_manifest, compare_reproduction, edition_arg, locate_materials,
@@ -483,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--edition-uri", type=edition_arg, action="append", help="LABEL=URI of the official archive member (for CI re-fetch)")
     g.add_argument("--product", required=True, help="repository-relative path of the baseline GML that receives the IDs")
     g.add_argument("--product-source", help="local file holding the current bytes of --product (default: first edition file)")
-    g.add_argument("--tools-repo", default=os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools")
+    g.add_argument("--tools-repo", default=tools_repo())
     g.add_argument("--tools-commit", required=True, help="immutable commit SHA of the tools used")
     g.add_argument("--plan-issue", required=True)
     g.add_argument("--seed", type=int, default=20260902)

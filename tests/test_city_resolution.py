@@ -55,6 +55,33 @@ class TestNormalize(Base):
         self.assertIsNone(n(""))
 
 
+class TestCityFacts(Base):
+    """4dcitygml.json is read in one place (runtime.city_meta); the facts the tools need
+    come from it through one function each."""
+
+    def test_language_is_the_primary_subtag_or_en(self):
+        for value, lang in (("ja", "ja"), ("ja-JP", "ja"), ("DE", "de"), (" en ", "en"), (None, "en"), ("", "en")):
+            self.assertEqual(runtime.norm_lang(value), lang, value)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(runtime.repo_lang(d), "en")                      # no file
+            (Path(d) / "4dcitygml.json").write_text('{"lang": "de-DE"}', encoding="utf-8")
+            self.assertEqual(runtime.repo_lang(d), "de")
+            (Path(d) / "4dcitygml.json").write_text('not json', encoding="utf-8")
+            self.assertEqual(runtime.repo_lang(d), "en")                      # broken file
+
+    def test_data_dirs_are_existing_directories_inside_the_clone(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            (root / "citygml").mkdir()
+            (root / "4dcitygml.json").write_text(json.dumps(
+                {"data_dirs": ["citygml", "missing", "../outside", 42]}), encoding="utf-8")
+            self.assertEqual(runtime.data_dirs(root), [root / "citygml"])
+            self.assertFalse(runtime.has_building_data(root))              # no .gml yet
+            (root / "citygml" / "a.gml").write_text("<x/>", encoding="utf-8")
+            self.assertTrue(runtime.has_building_data(root))
+            self.assertEqual(runtime.data_dirs(root / "nowhere"), [])
+
+
 class TestPriority(Base):
     def _repo_with(self, city_repo: str | None, upstream_remote: str | None):
         d = Path(tempfile.mkdtemp())

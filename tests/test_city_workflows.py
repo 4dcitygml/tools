@@ -53,11 +53,22 @@ class CityWorkflowContractTest(unittest.TestCase):
         self.assertIn("CITYGML_TOOLS_REPO: ${{ vars.CITYGML_TOOLS_REPO || '4dcitygml/tools' }}", wf)
 
     def test_posting_workflow_truncates_instead_of_failing_on_long_comments(self) -> None:
+        # The posting logic is one script the thin workflow calls; its limits are the contract.
         wf = self._wf(TEMPLATE, "pr-comment.yml")
-        self.assertIn('[ "$size" -gt 60000 ]; then', wf)
-        self.assertIn("head -c 60000", wf)
-        self.assertIn("Truncated to fit the GitHub comment size limit", wf)
-        self.assertIn('-gt 4194304', wf)  # absurd sizes are still rejected
+        self.assertIn("python .github/scripts/post_comments.py", wf)
+        import importlib.util, sys
+        from unittest.mock import patch
+        scripts = TEMPLATE / ".github" / "scripts"
+        spec = importlib.util.spec_from_file_location("post_comments", scripts / "post_comments.py")
+        post = importlib.util.module_from_spec(spec)
+        with patch.object(sys, "path", [str(scripts), *sys.path]):   # it imports its siblings by name
+            spec.loader.exec_module(post)
+        self.assertEqual(post.COMMENT_LIMIT, 60000)          # GitHub rejects bodies over 65,536 characters
+        self.assertEqual(post.ARTIFACT_LIMIT, 4194304)       # absurd sizes are still rejected
+        self.assertIn("Truncated to fit the GitHub comment size limit", post.TRUNCATED)
+        body = post.truncated(b"x" * (post.COMMENT_LIMIT + 10))
+        self.assertLessEqual(len(body), post.COMMENT_LIMIT + len(post.TRUNCATED.encode()))
+        self.assertTrue(body.endswith(post.TRUNCATED.encode()))
 
 
 if __name__ == "__main__":

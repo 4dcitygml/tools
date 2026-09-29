@@ -124,7 +124,7 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   each with the SHA-256 digest GitHub publishes for it. The zip contains one
   top-level folder `citygml-hub/program/` with the hub, the editors, the
   language and theme packs, the shared modules (`runtime.py`, `accounts.py`,
-  `git_sync.py`, `shortcuts.py`, `pr_classification.py`) and the launchers
+  `git_sync.py`, `shortcuts.py`, `pr_classification.py`, `pr_markers.py`, `building_identity.py`) and the launchers
   (`citygml.sh`, `citygml.ps1`). `runtime.py` is the one place that knows the
   files, folders, executables, settings file, city resolution and GitHub access
   described here; the hub and the editors import it and the other shared modules

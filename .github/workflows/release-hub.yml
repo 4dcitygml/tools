@@ -60,6 +60,10 @@ env:
 
 jobs:
   validate-release:
+    # One switch for a development copy: the repository variable CITYGML_CI set to `off`
+    # skips every automatic run (the other jobs need this one); a manual run still works,
+    # so one workflow can be exercised on demand. Production sets nothing.
+    if: vars.CITYGML_CI != 'off' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -97,6 +101,8 @@ jobs:
             tools/i18n
             tools/themes
             scripts/pr_classification.py
+            scripts/pr_markers.py
+            scripts/building_identity.py
             tools/git_sync.py
             tools/shortcuts.py
             tools/accounts.py
@@ -271,6 +277,8 @@ jobs:
             tools/i18n
             tools/themes
             scripts/pr_classification.py
+            scripts/pr_markers.py
+            scripts/building_identity.py
             tools/git_sync.py
             tools/shortcuts.py
             tools/accounts.py

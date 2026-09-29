@@ -47,14 +47,13 @@ import runtime  # noqa: E402
 import accounts  # noqa: E402
 import git_sync  # noqa: E402
 import pr_classification  # noqa: E402
+import pr_markers  # noqa: E402
 import shortcuts  # noqa: E402
 
 DEFAULT_PORT = 8760
 
 
-def tr(key: str, default: str, **params) -> str:
-    """Server-generated text of the hub in the display language (fail-open)."""
-    return runtime.tr("hub", key, default, **params)
+tr = runtime.translator("hub")   # server-generated text of the hub in the display language
 
 
 def current_login() -> "str | None":
@@ -103,10 +102,7 @@ def fetch_releases(url: str = HUB_RELEASES_API) -> list:
 
 
 def min_hub_of(clone_root) -> "str | None":
-    try:
-        value = json.loads((Path(clone_root) / "4dcitygml.json").read_text(encoding="utf-8")).get("min_hub")
-    except (OSError, ValueError, AttributeError):
-        return None
+    value = runtime.city_meta(clone_root).get("min_hub")
     return str(value) if runtime.version_tuple(value) else None
 
 
@@ -175,12 +171,9 @@ def create_city_shortcut(clone_root: Path) -> dict:
     city = runtime.clone_city(clone_root)
     if not city:
         raise RuntimeError("The clone does not name its city (4dcitygml.json repo)")
-    try:
-        cfg = json.loads((Path(clone_root) / "4dcitygml.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        cfg = {}
+    cfg = runtime.city_meta(clone_root)
     name = cfg.get("name")
-    lang = str(cfg.get("lang") or "en").split("-")[0]
+    lang = runtime.norm_lang(cfg.get("lang"))
     if isinstance(name, dict):
         display = name.get(lang) or name.get("en") or next(iter(name.values()), city)
     else:
@@ -569,16 +562,8 @@ def _overall_check_status(checks: list) -> str:
 
 def ci_retry_info(check_status: str, comments: list) -> dict:
     """Explain, per cause, whether re-inspection on the same data is useful."""
-    freshness = any(
-        "<!-- citygml-base-freshness -->" in str(comment.get("body") or "")
-        and "<!-- status:active -->" in str(comment.get("body") or "")
-        for comment in comments
-    )
-    data_adjustment = any(
-        "<!-- citygml-auto-resubmission -->" in str(comment.get("body") or "")
-        and "<!-- status:active -->" in str(comment.get("body") or "")
-        for comment in comments
-    )
+    freshness = pr_markers.has_active(comments, pr_markers.BASE_FRESHNESS)
+    data_adjustment = pr_markers.has_active(comments, pr_markers.AUTO_RESUBMISSION)
     if freshness:
         return {
             "available": False, "kind": "update",
@@ -628,7 +613,7 @@ def _marker_status(comments: list, marker: str, fallback: str) -> str:
     return fallback
 
 
-_CP_KEY_RE = re.compile(r"<!--\s*cp:([a-z0-9-]+)\s*-->")
+_CP_KEY_RE = pr_markers.CHECKPOINT_RE
 
 
 def _inspection_summary_statuses(comments: list) -> dict[str, str]:
@@ -640,7 +625,7 @@ def _inspection_summary_statuses(comments: list) -> dict[str, str]:
     result: dict[str, str] = {}
     for comment in comments:
         body = str(comment.get("body") or "")
-        if "<!-- citygml-automatic-inspection -->" not in body:
+        if pr_markers.INSPECTION not in body:
             continue
         for line in body.splitlines():
             if not line.strip().startswith("|"):
@@ -705,15 +690,15 @@ def review_checkpoints(
             action = tr("hub.cp_no_action", "No action is needed")
         return {"key": key, "label": label, "status": status, "reason": reason, "action": action}
 
-    commit_scope = _marker_status(comments, "<!-- citygml-commit-scope -->", check_status)
-    freshness = _marker_status(comments, "<!-- citygml-base-freshness -->", check_status)
+    commit_scope = _marker_status(comments, pr_markers.COMMIT_SCOPE, check_status)
+    freshness = _marker_status(comments, pr_markers.BASE_FRESHNESS, check_status)
     if freshness == "fail":
         summary["freshness"] = "fail"
-    reviewability = _marker_status(comments, "<!-- citygml-reviewability-lint -->", check_status)
-    structure = _marker_status(comments, "<!-- citygml-quality-lint -->", check_status)
-    plausibility = _marker_status(comments, "<!-- plateau-quality-lint -->", check_status)
+    reviewability = _marker_status(comments, pr_markers.REVIEWABILITY_LINT, check_status)
+    structure = _marker_status(comments, pr_markers.QUALITY_LINT, check_status)
+    plausibility = _marker_status(comments, pr_markers.PLATEAU_LINT, check_status)
     topology = (
-        _marker_status(comments, "<!-- val3dity-topology-gate -->", check_status)
+        _marker_status(comments, pr_markers.VAL3DITY, check_status)
         if kind == "geometry" else "na"
     )
     texture = check_status if kind == "texture" else "na"
@@ -1132,7 +1117,7 @@ class Hub:
         ids: list[str] = []
         for comment in comments:
             body = str(comment.get("body") or "")
-            if "<!-- citygml-change-summary -->" not in body:
+            if pr_markers.CHANGE_SUMMARY not in body:
                 continue
             for value in re.findall(r"^####\s+`([^`]+)`\s*$", body, flags=re.MULTILINE):
                 if value not in ids:
@@ -1301,16 +1286,8 @@ class Hub:
             and str(r.get("commit_id") or "") == head_sha
             for r in latest_reviews(reviews).values()
         )
-        freshness_feedback = any(
-            "<!-- citygml-base-freshness -->" in str(c.get("body") or "")
-            and "<!-- status:active -->" in str(c.get("body") or "")
-            for c in comments
-        )
-        auto_resubmit = any(
-            "<!-- citygml-auto-resubmission -->" in str(c.get("body") or "")
-            and "<!-- status:active -->" in str(c.get("body") or "")
-            for c in comments
-        ) or freshness_feedback or not reason_ok or check_status == "fail"
+        freshness_feedback = pr_markers.has_active(comments, pr_markers.BASE_FRESHNESS)
+        auto_resubmit = pr_markers.has_active(comments, pr_markers.AUTO_RESUBMISSION) or freshness_feedback or not reason_ok or check_status == "fail"
         adjustment_reasons = []
         if not reason_ok:
             adjustment_reasons.append(
@@ -1419,7 +1396,7 @@ class Hub:
         sources = [body]
         sources += [
             str(c.get("body") or "") for c in comments
-            if "<!-- citygml-change-summary -->" in str(c.get("body") or "")
+            if pr_markers.CHANGE_SUMMARY in str(c.get("body") or "")
         ]
         words = change_table_words()
         for source in sources:
@@ -1618,16 +1595,8 @@ class Hub:
         permission = self.reviewer_permission()
         author = ((pr.get("user") or {}).get("login") or "")
         self_authored = author == login
-        freshness_feedback = any(
-            "<!-- citygml-base-freshness -->" in str(c.get("body") or "")
-            and "<!-- status:active -->" in str(c.get("body") or "")
-            for c in comments
-        )
-        auto_resubmit = any(
-            "<!-- citygml-auto-resubmission -->" in str(c.get("body") or "")
-            and "<!-- status:active -->" in str(c.get("body") or "")
-            for c in comments
-        ) or freshness_feedback
+        freshness_feedback = pr_markers.has_active(comments, pr_markers.BASE_FRESHNESS)
+        auto_resubmit = pr_markers.has_active(comments, pr_markers.AUTO_RESUBMISSION) or freshness_feedback
         manual_changes_requested = any(
             r.get("state") == "CHANGES_REQUESTED"
             and str(r.get("commit_id") or "") == str((pr.get("head") or {}).get("sha") or "")
@@ -1885,7 +1854,7 @@ class Hub:
         if demo:
             return {"ok": True, "demo": True, "number": number, "retry": retry}
 
-        marker = "<!-- citygml-ci-retry-request -->"
+        marker = pr_markers.RETRY_REQUEST
         comment = (
             f"{marker}\n"
             "## 🔄 Re-run automated inspection\n\n"

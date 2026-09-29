@@ -22,7 +22,13 @@ from lxml import etree
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from scripts.citygml_constants import tools_repo  # noqa: E402
+from scripts import repo_git  # noqa: E402
 from scripts.provenance_manifest import validate, sha256_hex, manifest_ref, canonical_bytes
+
+
+def git(repo, *args, binary=False):
+    return repo_git.git(repo, *args, binary=binary, strip=not binary)
 
 KIND = 'semantic-correction'
 RECIPE = 'lod0-footprint-to-roofedge-v1'
@@ -218,10 +224,6 @@ def report(m):
         '', f"Excluded: {len(e['excluded'])}. Recipe: {RECIPE}. Tools commit: {m['builder']['tools_commit']}.", ''])
 
 
-def git(repo, *args, binary=False):
-    return subprocess.check_output(['git', '-C', str(repo), *args], text=not binary).strip() if not binary else subprocess.check_output(['git', '-C', str(repo), *args])
-
-
 def cmd_commits(args, m):
     repo = Path(args.repo).resolve()
     manifest_path = Path(args.manifest).resolve()
@@ -266,7 +268,7 @@ def main(argv=None):
     g = sub.add_parser('generate')
     for key in ('repository', 'mesh', 'municipality', 'current', 'rationale', 'product', 'tools-commit', 'plan-issue', 'output'):
         g.add_argument('--' + key, required=True)
-    g.add_argument('--tools-repo', default=os.environ.get('CITYGML_TOOLS_REPO') or '4dcitygml/tools')
+    g.add_argument('--tools-repo', default=tools_repo())
     g.add_argument('--current-uri'); g.add_argument('--rationale-uri'); g.add_argument('--apply-output'); g.add_argument('--report')
     a = sub.add_parser('apply'); a.add_argument('--manifest', required=True); a.add_argument('--input', required=True); a.add_argument('--output', required=True)
     c = sub.add_parser('commits'); c.add_argument('--manifest', required=True); c.add_argument('--repo', required=True)

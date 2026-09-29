@@ -33,11 +33,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.citygml_xml import APP, CORE, GML, iter_coords, write_plateau_gml  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
 
-CORE = "http://www.opengis.net/citygml/2.0"
-GML = "http://www.opengis.net/gml"
-APP = "http://www.opengis.net/citygml/appearance/2.0"
 
 Q_CORE = f"{{{CORE}}}cityObjectMember"
 Q_APPMEMBER = f"{{{APP}}}appearanceMember"
@@ -51,28 +49,6 @@ Q_BOUNDEDBY = f"{{{GML}}}boundedBy"
 Q_ENVELOPE = f"{{{GML}}}Envelope"
 Q_LOWER = f"{{{GML}}}lowerCorner"
 Q_UPPER = f"{{{GML}}}upperCorner"
-
-
-def write_plateau_gml(root: etree._Element, out_path: Path) -> None:
-    """Write in the official PLATEAU serialization format (UTF-8 BOM + CRLF + double-quoted declaration)."""
-    body = etree.tostring(root, encoding="UTF-8", xml_declaration=False)
-    body = b'<?xml version="1.0" encoding="UTF-8"?>\n' + body
-    body = body.replace(b"\n", b"\r\n")
-    body = b"\xef\xbb\xbf" + body
-    out_path.write_bytes(body)
-
-
-def iter_coords(el: etree._Element):
-    for tag in (f"{{{GML}}}posList", f"{{{GML}}}pos"):
-        for e in el.iter(tag):
-            if not e.text:
-                continue
-            nums = e.text.split()
-            for i in range(0, len(nums) - 2, 3):
-                try:
-                    yield float(nums[i]), float(nums[i + 1]), float(nums[i + 2])
-                except ValueError:
-                    continue
 
 
 def _sdm_key(surfdata: etree._Element) -> str:

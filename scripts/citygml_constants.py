@@ -7,16 +7,32 @@ PR comment markers are kept distinct from each other so that each comment can be
 """
 from __future__ import annotations
 
-# --- PR comment markers (each posted/updated independently) ---
-PREVIEW_MARKER = "<!-- cesium-building-preview -->"
-SUMMARY_MARKER = "<!-- citygml-change-summary -->"
-LINT_MARKER = "<!-- citygml-reviewability-lint -->"
-METADATA_MARKER = "<!-- citygml-metadata -->"
+import os
+
+
+def tools_repo() -> str:
+    """The repository that publishes the tools (owner/name): CITYGML_TOOLS_REPO, else 4dcitygml/tools.
+    A city that verifies in a private mirror names it once, in this variable."""
+    return os.environ.get("CITYGML_TOOLS_REPO") or "4dcitygml/tools"
+
+# --- PR comment markers (each posted/updated independently): the table is scripts/pr_markers.py ---
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from scripts import pr_markers  # noqa: E402
+
+PREVIEW_MARKER = pr_markers.PREVIEW
+SUMMARY_MARKER = pr_markers.CHANGE_SUMMARY
+LINT_MARKER = pr_markers.REVIEWABILITY_LINT
+METADATA_MARKER = pr_markers.METADATA
 # The data-quality lint has two layers (generic CityGML structure / PLATEAU conventions), each with its own comment.
-CITYGML_LINT_MARKER = "<!-- citygml-quality-lint -->"
-PLATEAU_LINT_MARKER = "<!-- plateau-quality-lint -->"
+CITYGML_LINT_MARKER = pr_markers.QUALITY_LINT
+PLATEAU_LINT_MARKER = pr_markers.PLATEAU_LINT
 # Topological consistency gate (official engine val3dity, diff-based). Pre-existing defects are tolerated; only invalids introduced by the PR are warned about.
-VAL3DITY_MARKER = "<!-- val3dity-topology-gate -->"
+VAL3DITY_MARKER = pr_markers.VAL3DITY
 
 # --- val3dity topology gate (topological consistency per official standards, §6.3 L07-L14 / val3dity 100-405) ---
 # Planarity tolerance [m]. Follows product spec §6.3 L12 (LOD2/3 "tolerance for treating surfaces as coplanar").

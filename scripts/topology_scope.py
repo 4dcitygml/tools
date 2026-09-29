@@ -16,9 +16,14 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.repo_git import git as _git  # noqa: E402
 
 
 _BUILDING_TRAILER_RE = re.compile(
@@ -32,21 +37,6 @@ class Decision:
     run: bool
     reason: str
     building_ids: tuple[str, ...]
-
-
-def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
-    return result.stdout
 
 
 def building_ids(messages: str) -> set[str]:
