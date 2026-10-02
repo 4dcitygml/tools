@@ -1,0 +1,58 @@
+{
+  "attribute": {
+    "resultKeys": [
+      "branch",
+      "buildingID",
+      "commit",
+      "ok",
+      "prUrl",
+      "pushed"
+    ],
+    "branch": "edit/bldg-1-<time>",
+    "commitMessage": "Update attributes (Storeys Above Ground): 2 → 3\n\n- Storeys Above Ground: 2 → 3\n- Source (Storeys Above Ground):  → 801\n\n現地調査票で地上階数を確認しました。\n\nBuilding: bldg-1\nCreated-By: citygml-attr-editor",
+    "changedFiles": [
+      "city/udx/bldg/53394611_bldg_6697_op.gml"
+    ],
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/repos/<city>/pulls",
+        "payload": {
+          "title": "Update building info: Storeys Above Ground",
+          "head": "alice:edit/bldg-1-<time>",
+          "base": "main",
+          "body": "## Summary of changes\n\nChecked \"現地調査\" and corrected \"Storeys Above Ground\" from \"2\" to \"3\".\n\n## Reason and supporting evidence <!--sec:reason-->\n\n現地調査票で地上階数を確認しました。\n\n## Target building\n\n- Building ID: bldg-1\n- Internal data ID: `gml-bldg-1`\n\n## Details\n\n| Item | Before | After | Confirmed source |\n|---|---|---|---|\n| Storeys Above Ground | 2 | 3 | 現地調査 (801) |\n\n<sub>The data changes in this PR are provided under the [Data Contribution Policy](../blob/main/docs/data-contribution-policy.md) (CC0 1.0).</sub>\n"
+        }
+      }
+    ]
+  },
+  "texture": {
+    "resultKeys": [
+      "added",
+      "branch",
+      "buildingID",
+      "commit",
+      "ok",
+      "prUrl",
+      "pushed"
+    ],
+    "branch": "tex/bldg-1-<time>",
+    "commitMessage": "Add textures (1 faces): bldg-1\n\n- (no existing texture) → 53394611_bldg_6697_appearance/tex_snapshot.jpg\n\nPhotographed from the street on 2026-09-01.\n\nBuilding: bldg-1\nCreated-By: citygml-tex-editor",
+    "changedFiles": [
+      "city/udx/bldg/53394611_bldg_6697_appearance/tex_snapshot.jpg",
+      "city/udx/bldg/53394611_bldg_6697_op.gml"
+    ],
+    "requests": [
+      {
+        "method": "POST",
+        "path": "/repos/<city>/pulls",
+        "payload": {
+          "title": "Add textures (1 faces): bldg-1",
+          "head": "alice:tex/bldg-1-<time>",
+          "base": "main",
+          "body": "## New textures (bldg-1 / `gml-bldg-1` / 1 faces)\n\n| Before image | After image (newly added) |\n|---|---|\n| (no existing texture) | `53394611_bldg_6697_appearance/tex_snapshot.jpg` |\n\n**New textures** for a building without any (appearance block added with new images, #119). Coordinates are unchanged; the UVs are generated from wall clusters (consistent with R1/R3).\n\n## Reason and supporting evidence <!--sec:reason-->\n\nPhotographed from the street on 2026-09-01.\n\n## Rights confirmation\n\nThe submitter agrees that the photos used are their own, that they are provided as **CC0 1.0** (moral rights will not be exercised), and that they have confirmed the notes on portrait rights and personal information ([Data Contribution Policy](../blob/main/docs/data-contribution-policy.md) v2).\n"
+        }
+      }
+    ]
+  }
+}

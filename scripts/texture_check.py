@@ -191,4 +191,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from scripts.gate_result import guarded
+    raise SystemExit(guarded(main))

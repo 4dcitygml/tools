@@ -74,10 +74,10 @@ Shared settings file (`~/.citygml_attr_editor.json`):
 
 ```json
 {
-  "repo": "/…/CityGML Data (sample-tokyo-station)",
+  "repo": "/…/CityGML Data (sample-munich-station)",
   "lang": "ja",
   "cities": {
-    "4dcitygml/sample-tokyo-station": {"repo": "/…/CityGML Data (sample-tokyo-station)", "last_used": "2026-09-06T…", "login": "example-user"}
+    "4dcitygml/sample-munich-station": {"repo": "/…/CityGML Data (sample-munich-station)", "last_used": "2026-09-06T…", "login": "example-user"}
   },
   "legacyReviewed": "2026-09-07"
 }
@@ -145,7 +145,11 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   *Get it now* runs its fetch mode (`citygml.sh --fetch-latest` /
   `citygml.ps1 -FetchLatest`), which prints the installed tag.
 - City repositories carry no code and no client pin (Exchange Contract A11).
-  A city may declare `min_hub` in `4dcitygml.json`; tools treat it as advice.
+  A city may declare `min_hub` in `4dcitygml.json`. From hub-v1.5.0 on, an older
+  hub and its editors can view but not send a proposal or request a retry
+  (`runtime.require_min_hub`); the banner says why and stays. It is judged when
+  the clone opens and again after the city sync. Hubs before v1.5.0 treat it as
+  advice and read it before the sync (the banner shows from the second start).
 - The city clone's `main` is kept in line with the city repository by the
   shared `git_sync` module (ls-remote first, fetch with git's low-speed abort,
   fast-forward or reset, never over unsaved changes). It never touches edit branches.

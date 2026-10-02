@@ -18,6 +18,8 @@ These tests pin the cross-component contracts that make that safe:
 """
 from __future__ import annotations
 
+from tests.support import SUPPORTED  # noqa: E402  (the one list, tools/i18n/i18n_loader.py)
+
 import importlib.util
 import json
 import os
@@ -27,6 +29,28 @@ import unittest
 from pathlib import Path
 
 from tests.support import EnglishEnv, runtime
+
+# which recorded outcome the driver turns into which gate row (ci/pr_analysis_main.sh, S17)
+_GATE_OUTCOMES = {"reason": "REASON", "classification": "CLASSIFICATION", "commit-scope": "COMMIT_SCOPE",
+                  "freshness": "FRESHNESS", "schema": "FORMAT", "minimal-diff": "REVIEWABILITY",
+                  "texture": "TEXTURE", "structure": "STRUCTURE", "plausibility": "PLATEAU", "model": "PREVIEW",
+                  "reproduction": "REPRODUCTION", "scope-reproducibility": "SCOPE_REPRODUCIBILITY",
+                  "topology": "TOPOLOGY"}
+
+
+def write_gates(runner_temp: Path, env: dict) -> None:
+    """Record the gate rows as the driver would for these outcomes: success 0, failure 1, the
+    classification's warn-only mode 0 with a warning; any other value leaves the row unrecorded."""
+    from scripts import gate_result
+    code = {"success": (0, 0), "failure": (1, 0), "warning": (0, 1)}
+    for key, var in _GATE_OUTCOMES.items():
+        if env.get(var + "_OUTCOME") in code:
+            exit_code, warnings = code[env[var + "_OUTCOME"]]
+            gate_result.write(runner_temp, gate_result.result(key, exit_code, warnings=warnings))
+    repo, quality = env.get("REPO_SCOPE_OUTCOME"), env.get("QUALITY_OUTCOME")
+    if repo or quality:                     # file-scope folds both (the driver writes it after the quality step)
+        worst = 1 if "failure" in (repo, quality) else 0
+        gate_result.write(runner_temp, gate_result.result("file-scope", worst))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -43,7 +67,7 @@ _i18n_spec = importlib.util.spec_from_file_location(
 i18n = importlib.util.module_from_spec(_i18n_spec)
 _i18n_spec.loader.exec_module(i18n)
 
-LANGS = ("en", "ja", "de")
+LANGS = SUPPORTED
 CHANGES = [{
     "key": "storeysAboveGround#0", "tag": "storeysAboveGround",
     "index": 0, "old": "2", "new": "3", "label": "地上階数",
@@ -111,17 +135,19 @@ class TestBodyStaysCiSafe(_EnglishEnv):
     """Every language's generated body passes CI reason extraction and never
     contains a placeholder literal."""
 
-    def test_reason_extracts_and_no_placeholder(self):
+    def test_the_reason_section_is_the_proposers_words(self):
+        # maintainer decision 1 (2026-10-01): the anchored section holds the proposer's reason; a
+        # generated sentence there meant A1 could never fail. Empty, it fails CI's check.
+        from scripts import pr_reason
         for lang in LANGS:
-            body = attr.build_pr_body("13101-bldg-1", "bldg-1", CHANGES,
-                                      SOURCES, "", None, lang=lang)
+            body = attr.build_pr_body("13101-bldg-1", "bldg-1", CHANGES, SOURCES,
+                                      "Field survey sheet of 2026-09-01", None, lang=lang)
             match = CI_ANCHOR.search(body)
             self.assertIsNotNone(match, f"{lang}: anchor missing")
-            reason = re.sub(r"<!--.*?-->", "", match.group(1), flags=re.DOTALL).strip()
-            self.assertGreaterEqual(len(reason), 5, f"{lang}: reason too short")
-            for p in CI_PLACEHOLDERS:
-                self.assertNotIn(p.lower(), body.lower(),
-                                 f"{lang}: placeholder {p!r} in body")
+            self.assertEqual(pr_reason.section(body), "Field survey sheet of 2026-09-01", lang)
+            self.assertTrue(pr_reason.acceptable(body), lang)
+            empty = attr.build_pr_body("13101-bldg-1", "bldg-1", CHANGES, SOURCES, "", None, lang=lang)
+            self.assertFalse(pr_reason.acceptable(empty), f"{lang}: an empty reason must not pass")
             self.assertNotIn(title_for(lang), CI_PLACEHOLDERS)
 
 
@@ -227,9 +253,9 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                 (tmpdir / "4dcitygml.json").write_text(city_json, encoding="utf-8")
             event = tmpdir / "event.json"
             event.write_text(json.dumps(
-                {"pull_request": {"title": "x", "head": {"ref": "edit/x"}}}),
+                {"pull_request": {"number": 1, "title": "x", "head": {"ref": "edit/x", "sha": "a" * 40}, "base": {"sha": "b" * 40}}}),
                 encoding="utf-8")
-            env = dict(os.environ,
+            env = dict(os.environ, GITHUB_REPOSITORY="",
                        GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT),
                        RUNNER_TEMP=str(tmpdir), GML_COUNT="1",
                        REASON_OUTCOME="failure", FRESHNESS_OUTCOME="success",
@@ -241,6 +267,7 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                 env['FORMAT_OUTCOME'] = 'cancelled'
             if strict:
                 env["STRICT_GATE"] = "1"
+            write_gates(tmpdir, env)
             proc = subprocess.run(
                 ["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")],
                 cwd=tmpdir, env=env, capture_output=True, text=True)
@@ -275,14 +302,15 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
             tmpdir = Path(tmp)
             (tmpdir / "4dcitygml.json").write_text('{"lang": "ja"}', encoding="utf-8")
             event = tmpdir / "event.json"
-            event.write_text(json.dumps({"pull_request": {"title": "x", "head": {"ref": "edit/x"}}}), encoding="utf-8")
+            event.write_text(json.dumps({"pull_request": {"number": 1, "title": "x", "head": {"ref": "edit/x", "sha": "a" * 40}, "base": {"sha": "b" * 40}}}), encoding="utf-8")
             (tmpdir / "citygml_repo_scope.json").write_text(json.dumps(
                 {"ok": False, "rejected": [{"path": "install/start-mac.command", "note": "executable code", "category": "rejected"}]}),
                 encoding="utf-8")
-            env = dict(os.environ, GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT), RUNNER_TEMP=str(tmpdir),
+            env = dict(os.environ, GITHUB_REPOSITORY="", GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT), RUNNER_TEMP=str(tmpdir),
                        GML_COUNT="0", REASON_OUTCOME="success", FRESHNESS_OUTCOME="success",
                        CLASSIFICATION_OUTCOME="success", REPO_SCOPE_OUTCOME="failure", STRICT_GATE="1",
                        COMMIT_SCOPE_OUTCOME="success", TEXTURE_OUTCOME="success")
+            write_gates(tmpdir, env)
             proc = subprocess.run(["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")], cwd=tmpdir, env=env,
                                   capture_output=True, text=True)
             structured = json.loads((tmpdir / "out" / "inspection.json").read_text())
@@ -294,12 +322,85 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         self.assertIn("4dcitygml/tools", resubmission)
 
     def test_warn_only_transition_passes_with_advisory(self):
-        # CITYGML_CLASSIFICATION_WARN_ONLY: the row passes, the guidance is posted as an advisory.
+        # CITYGML_CLASSIFICATION_WARN_ONLY: the row warns and does not block (S17: warnings show in
+        # the row, maintainer decision 2026-09-30); the guidance is posted as an advisory.
         env_reason_ok = '{"lang": "de"}'
         proc, inspection, resubmission = self._run(env_reason_ok, strict=True, classification="warning")
-        self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key'] == 'classification'), 'pass')
+        self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key'] == 'classification'), 'warn')
         self.assertIn("### Hinweis", resubmission)
         self.assertIn("`geom/`", resubmission)
+
+    def run_rows(self, statuses: dict, lang='{"lang": "en"}'):
+        """The summary over explicit gate rows (every other applicable row passes)."""
+        import subprocess
+        from scripts import gate_result
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            (tmpdir / "4dcitygml.json").write_text(lang, encoding="utf-8")
+            (tmpdir / "event.json").write_text(json.dumps({"pull_request": {"number": 1, "title": "x", "head": {"ref": "edit/x", "sha": "a" * 40}, "base": {"sha": "b" * 40}}}),
+                                               encoding="utf-8")
+            (tmpdir / "out").mkdir()
+            (tmpdir / "out" / "plausibility_lint.md").write_text("**❌ 0 error(s) / ⚠️ 1 warning(s)**", encoding="utf-8")
+            for row in gate_result.ROWS:
+                status = statuses.get(row.key, "pass")
+                code = {"pass": 0, "fail": 1, "warn": 1, "error": 2}[status]
+                gate_result.write(tmpdir, gate_result.result(row.key, code))
+            env = dict(os.environ, GITHUB_REPOSITORY="", GITHUB_EVENT_PATH=str(tmpdir / "event.json"), TOOLS_DIR=str(REPO_ROOT),
+                       RUNNER_TEMP=str(tmpdir), GML_COUNT="1", STRICT_GATE="1", TOPOLOGY_APPLICABLE="true")
+            proc = subprocess.run(["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")], cwd=tmpdir, env=env,
+                                  capture_output=True, text=True)
+            return (proc, json.loads((tmpdir / "out/inspection.json").read_text()),
+                    (tmpdir / "out/inspection.md").read_text(encoding="utf-8"),
+                    (tmpdir / "out/resubmission.md").read_text(encoding="utf-8"))
+
+    def test_every_recorded_value_has_a_reader(self):
+        # S4: records nothing read (PR_CLASS, PREVIEW_URL, a dozen *_OUTCOME) are gone; the rows come
+        # from the gates' result files, and the outcomes file carries only what the summary reads
+        import re
+        ci = REPO_ROOT / "ci"
+        recorded = set()
+        for script in ci.glob("*.sh"):
+            recorded |= set(re.findall(r"\brecord ([A-Z_]+)", script.read_text(encoding="utf-8")))
+        summary = (REPO_ROOT / "scripts" / "inspection_summary.py").read_text(encoding="utf-8")
+        self.assertTrue(recorded)
+        self.assertEqual(sorted(v for v in recorded if f'"{v}"' not in summary), [])
+
+    def test_the_driver_keeps_no_state_between_runs(self):
+        # A12: fixed /tmp scratch files, and result files of an earlier run read as this run's
+        import re
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"(?<!:-)/tmp/\S*", driver), [])
+        self.assertIn('rm -rf gates citygml_commit_scope.json', driver)
+
+    def test_a_warning_shows_and_does_not_block(self):
+        # D15: plausibility_lint's header always carries the cross and warning signs; the row now comes
+        # from the gate's result, and an advisory finding is a warning that does not block
+        proc, structured, inspection, resubmission = self.run_rows({"plausibility": "warn"})
+        rows = {r["key"]: r for r in structured["checks"]}
+        self.assertEqual((rows["plausibility"]["status"], rows["plausibility"]["severity"], rows["plausibility"]["ran"]),
+                         ("warn", "advisory", True))
+        self.assertNotIn("outcomes", structured)   # the trusted side reads each row's ran
+        # S9: the context the trusted side compares with the live PR has one definition, the contract master's
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("contract", REPO_ROOT / "tools/hub/operator_explanation.py")
+        contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(contract)
+        pr = {"number": 1, "title": "x", "head": {"ref": "edit/x", "sha": "a" * 40}, "base": {"sha": "b" * 40}}
+        self.assertEqual(structured["context"], contract.context(pr))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("⚠️ Warning (does not block)", inspection)
+        self.assertIn("<!-- status:resolved -->", resubmission)
+        self.assertIn("Warnings (no action required)", resubmission)
+
+    def test_a_system_error_blocks_and_is_not_the_proposers_data(self):
+        # D16: the gate could not judge; the row says so and the proposer is not asked to fix data
+        proc, structured, inspection, resubmission = self.run_rows({"schema": "error"}, lang='{"lang": "ja"}')
+        rows = {r["key"]: r for r in structured["checks"]}
+        self.assertEqual((rows["schema"]["status"], rows["schema"]["ran"]), ("error", False))
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("⚙️ 仕組みのエラー", inspection)
+        self.assertIn("データの問題ではありません", resubmission)
+        self.assertNotIn("<!-- status:active -->", resubmission)
 
     def test_ja_repo_gets_japanese_comments_with_fixed_markers(self):
         proc, inspection, resubmission = self._run('{"lang": "ja"}')

@@ -48,6 +48,12 @@ class TestMarkersAreTheTable(unittest.TestCase):
         for marker in pr_markers.COMMENT_MARKERS:
             self.assertIn(marker, doc, marker)
 
+    def test_the_report_marker_is_the_contract_masters(self):
+        spec = importlib.util.spec_from_file_location("contract", REPO_ROOT / "tools" / "hub" / "operator_explanation.py")
+        contract = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(contract)
+        self.assertEqual(pr_markers.REVIEW_REPORT, contract.REPORT_MARKER)
+
     def test_forms(self):
         self.assertEqual(pr_markers.status("active"), pr_markers.STATUS_ACTIVE)
         self.assertEqual(pr_markers.checkpoint("schema"), "<!--cp:schema-->")

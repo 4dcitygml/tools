@@ -20,7 +20,6 @@ import argparse
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -30,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import repo_git  # noqa: E402
 from scripts import setup_city_data as Z  # noqa: E402
 
 
@@ -45,10 +45,10 @@ def fetch_material(material: dict, outdir: Path, repo: Path | None = None) -> Pa
     if uri.startswith("git:"):
         # git:<commit sha>:<path> — a blob of the city repository itself (the file at the parent commit)
         _scheme, sha, path = uri.split(":", 2)
-        proc = subprocess.run(["git", "-C", str(repo or Path.cwd()), "show", f"{sha}:{path}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            raise SystemExit(f"{name}: git object {sha}:{path} not found ({proc.stderr.decode(errors='replace').strip()})")
-        data = proc.stdout
+        try:
+            data = repo_git.git(repo or Path.cwd(), "show", f"{sha}:{path}", binary=True)
+        except repo_git.GitError as e:
+            raise SystemExit(f"{name}: git object {sha}:{path} not found ({e})")
         if _sha256(data) != material["sha256"]:
             raise SystemExit(f"{name}: digest mismatch for {uri}")
         target = outdir / name

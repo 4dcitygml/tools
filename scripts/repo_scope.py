@@ -224,4 +224,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    from scripts.gate_result import guarded
+    sys.exit(guarded(main))

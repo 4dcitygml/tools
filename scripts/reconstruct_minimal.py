@@ -50,6 +50,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.diff_citygml import diff_sources  # noqa: E402
+from scripts.gate_result import malformed_input  # noqa: E402
 
 # Member spans and the file's own spelling of cityObjectMember come from the shared identity module
 # (PLATEAU writes <core:cityObjectMember>, CityGML 1.0 data often the default-namespace <cityObjectMember>).
@@ -196,13 +197,18 @@ def reconstruct(base: bytes, head: bytes) -> Result:
             deleted.append(bid)
             methods[bid] = "delete"
             bs, be = base_spans[bid]
-            # Also remove the leading indentation and trailing newline so no blank line is left.
-            del_start = base.rfind(b"\n", 0, bs) + 1
-            del_end = be
-            if base[be : be + 2] == b"\r\n":
-                del_end = be + 2
-            elif base[be : be + 1] == b"\n":
-                del_end = be + 1
+            # When the member has its own line, remove the indentation before it and the newline
+            # after it too, so no blank line is left. Otherwise (CityGML 1.0 files often start the
+            # first members on the CityModel tag's line) remove the member alone: eating back to
+            # the line start removed the CityModel tag and its namespaces (D12).
+            del_start, del_end = bs, be
+            line_start = base.rfind(b"\n", 0, bs) + 1
+            if base[line_start:bs].strip(b" \t") == b"":
+                del_start = line_start
+                if base[be : be + 2] == b"\r\n":
+                    del_end = be + 2
+                elif base[be : be + 1] == b"\n":
+                    del_end = be + 1
             edits.append((del_start, del_end, b""))
 
         elif status == "renamed":
@@ -346,4 +352,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        code = main()
+    except Exception as exc:  # noqa: BLE001
+        # CI reads exit 1 as formatting churn and 2 as "needs a person"; a crash must be neither (D13).
+        # A file that is not well-formed XML has no minimal diff: a person reads it (the schema row
+        # names the syntax error).
+        if malformed_input(exc):
+            print(f"the file is not well-formed XML: {exc}", file=sys.stderr)
+            code = 2
+        else:
+            print(f"error: the minimal-diff check could not process the files: {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
+            code = 3
+    raise SystemExit(code)

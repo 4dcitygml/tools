@@ -4,7 +4,9 @@
 """Lightweight tests for the integrated frontend's admin-facing PR review screen."""
 from __future__ import annotations
 
+import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +19,8 @@ hub = load_app("hub_review_app", "tools/hub/app.py")
 
 _EnglishEnv = EnglishEnv   # the display language pinned to en (tests/support.py)
 
+
+BOT = {"login": "github-actions[bot]", "type": "Bot"}   # CI's comments (A10: trusted by the bot identity)
 
 class FakeAuth:
     login = "reviewer"
@@ -72,6 +76,8 @@ def fake_github_api(path, token, method="GET", payload=None, timeout=30):
             "name": "analyze", "status": "completed", "conclusion": "success",
             "details_url": "https://github.example/check/1",
         }]}
+    if "/actions/runs?status=action_required" in path:
+        return 200, {"workflow_runs": []}
     if path.startswith("/search/issues?"):
         return 200, {"items": [example_pr()]}
     if path.endswith("/pulls/123/reviews") and method == "POST":
@@ -116,7 +122,7 @@ class TestReviewParsers(_EnglishEnv):
         self.assertEqual(hub.attribute_label("/uro:notInTheTable[1]", labels), "Other attribute (notInTheTable)")
 
     def test_headings_come_from_the_catalogs_and_the_template(self):
-        heads = hub.reason_headings()
+        heads = hub.pr_reason.HEADINGS
         for h in ("Reason and supporting evidence", "Summary of changes", "編集理由・根拠資料", "変更の概要",
                   "Begründung und Belege", "Zusammenfassung der Änderungen"):
             self.assertIn(h, heads)
@@ -132,9 +138,9 @@ class TestReviewParsers(_EnglishEnv):
 
     def test_marker_status_reads_the_result_icons(self):
         comments = [{"body": "<!-- citygml-quality-lint -->\n| item | ✅ |"},
-                    {"body": "<!-- plateau-quality-lint -->\n❌ 1 issue"}]
+                    {"body": "<!-- plausibility-lint -->\n❌ 1 issue"}]
         self.assertEqual(hub._marker_status(comments, "<!-- citygml-quality-lint -->", "pending"), "pass")
-        self.assertEqual(hub._marker_status(comments, "<!-- plateau-quality-lint -->", "pending"), "fail")
+        self.assertEqual(hub._marker_status(comments, "<!-- plausibility-lint -->", "pending"), "fail")
         self.assertEqual(hub._marker_status(comments, "<!-- other -->", "pending"), "pending")
 
     def test_reason_section(self):
@@ -142,7 +148,7 @@ class TestReviewParsers(_EnglishEnv):
             hub.section_text(example_pr()["body"], "Reason and supporting evidence"),
             "2026 field survey sheet",
         )
-        self.assertFalse(hub.review_ready_reason("(please fill in)"))
+        self.assertFalse(hub.pr_reason.filled("(please fill in)"))
 
     def test_attribute_labels_are_human_readable(self):
         labels = hub.attribute_labels()
@@ -203,22 +209,17 @@ class TestReviewParsers(_EnglishEnv):
             checks=[{"status": "completed", "conclusion": "success"}],
             model_available=True, kind="attribute",
         )
-        self.assertEqual(
-            [p["label"] for p in points],
-            [
-                "Description and evidence", "Change classification", "One change = one building",
-                "Consistency with the latest version", "Changed file scope",
-                "CityGML format", "Minimal diff", "Texture consistency",
-                "Geometric structure", "Attribute value plausibility",
-                "Topological consistency", "3D view",
-            ],
-        )
+        # every row of CI, in CI's order (the bulk rows were missing: a failed reproduction could
+        # look ready in the hub without the strict gate)
+        from scripts import gate_result
+        self.assertEqual([p["key"] for p in points], [r.key for r in gate_result.ROWS])
+        self.assertEqual([p["label"] for p in points], [r.label for r in gate_result.ROWS])
         self.assertEqual(next(p for p in points if p["key"] == "texture")["status"], "na")
         self.assertEqual(next(p for p in points if p["key"] == "topology")["status"], "na")
 
     def test_inspection_summary_can_mark_a_specific_failure(self):
         # Exchange format v2: match by the <!--cp:key--> anchor (display name is free-form)
-        comments = [{"body": (
+        comments = [{"user": BOT, "body": (
             "<!-- citygml-automatic-inspection -->\n"
             "| Check | Result |\n|---|---|\n"
             "| Attribute value plausibility <!--cp:plausibility--> | ❌ Needs attention |\n"
@@ -233,7 +234,7 @@ class TestReviewParsers(_EnglishEnv):
 
     def test_inspection_summary_falls_back_to_english_names(self):
         # Comments without a key can be matched by the English display name (fallback)
-        comments = [{"body": (
+        comments = [{"user": BOT, "body": (
             "<!-- citygml-automatic-inspection -->\n"
             "| Check | Result |\n|---|---|\n"
             "| Attribute value plausibility | ❌ Needs attention |\n"
@@ -246,6 +247,56 @@ class TestReviewParsers(_EnglishEnv):
         target = next(p for p in points if p["key"] == "plausibility")
         self.assertEqual(target["status"], "fail")
         self.assertIn("Waiting for the proposer", target["action"])
+
+    def test_warn_and_error_signs_are_their_own_states(self):
+        # S17: ⚠️ is advisory (never read as a failure), ⚙️ is a system error, not the data
+        comments = [{"user": BOT, "body": (
+            "<!-- citygml-automatic-inspection -->\n| Check | Result |\n|---|---|\n"
+            "| Attribute value plausibility <!--cp:plausibility--> | ⚠️ Warning (does not block) |\n"
+            "| CityGML format <!--cp:schema--> | ⚙️ System error |\n"
+        )}]
+        points = {p["key"]: p for p in hub.review_checkpoints(
+            reason_ok=True, unsafe_files=[], checks=[{"status": "completed", "conclusion": "success"}],
+            model_available=False, kind="attribute", comments=comments)}
+        self.assertEqual(points["plausibility"]["status"], "warn")
+        self.assertIn("does not block", points["plausibility"]["action"])
+        self.assertEqual(points["schema"]["status"], "error")
+        self.assertIn("not a problem in the data", points["schema"]["reason"])
+        self.assertEqual(points["model"]["status"], "warn")      # advisory: no 3D view is a warning
+
+    def test_the_machine_report_rows_come_first(self):
+        import operator_explanation as contract
+        pr = {"number": 7, "head": {"sha": "a" * 40}, "base": {"sha": "b" * 40}, "title": "t", "body": "b", "labels": []}
+        report = contract.encode_report({
+            "version": 1, "repo": "city/sample", "pr": 7, "context": contract.context(pr), "runId": 1, "runAttempt": 1,
+            "runUrl": "u", "state": "pass", "heading": "h", "labels": {k: k for k in contract.FIELDS},
+            "fields": {k: "" for k in contract.FIELDS},
+            "checks": [{"key": "plausibility", "status": "warn", "severity": "advisory", "ran": True},
+                       {"key": "schema", "status": "pass", "severity": "blocking", "ran": True}]})
+        bot = {"login": "github-actions[bot]", "type": "Bot"}
+        comments = [{"id": 5, "user": bot, "body": contract.report_comment(report)},
+                    {"id": 4, "user": bot, "body": "<!-- citygml-automatic-inspection -->\n|x|y|\n"
+                                      "| x <!--cp:schema--> | ❌ Needs attention |\n"}]
+        self.assertEqual(hub.report_rows(comments, pr), {"plausibility": "warn", "schema": "pass"})
+        points = {p["key"]: p["status"] for p in hub.review_checkpoints(
+            reason_ok=True, unsafe_files=[], checks=[{"status": "completed", "conclusion": "success"}],
+            model_available=True, comments=comments, rows=hub.report_rows(comments, pr))}
+        self.assertEqual((points["plausibility"], points["schema"]), ("warn", "pass"))
+        self.assertEqual(hub.report_rows(comments, {**pr, "body": "edited after the report"}), {})   # stale
+        forged = [{**comments[0], "user": {"login": "someone", "type": "User"}}]
+        self.assertEqual(hub.report_rows(forged, pr), {})                                         # not the bot
+
+    def test_signs_count_only_from_ci_and_an_unknown_sign_is_not_a_pass(self):
+        # A6/A10 review: anyone could paste the marker, and an unknown sign fell back to the hub's reading
+        table = ("<!-- citygml-automatic-inspection -->\n| Check | Result |\n|---|---|\n"
+                 "| CityGML format <!--cp:schema--> | {sign} |\n")
+        ok = [{"status": "completed", "conclusion": "success"}]
+        pasted = [{"user": {"login": "someone", "type": "User"}, "body": table.format(sign="✅ Pass")}]
+        self.assertEqual(hub._inspection_summary_statuses(pasted), {})
+        unknown = [{"user": BOT, "body": table.format(sign="🆕 Something new")}]
+        points = {p["key"]: p["status"] for p in hub.review_checkpoints(
+            reason_ok=True, unsafe_files=[], checks=ok, model_available=True, comments=unknown)}
+        self.assertEqual(points["schema"], "pending")
 
     def test_ci_retry_is_only_offered_for_probable_system_failure(self):
         retry = hub.ci_retry_info("fail", [])
@@ -295,6 +346,162 @@ class TestReviewApiModel(_EnglishEnv):
     def tearDown(self):
         self.temp.cleanup()
         super().tearDown()
+
+    def test_maintainer_card_only_for_an_account_that_can_approve(self):
+        def permission(level):
+            return lambda path, *a, **k: (200, {"permission": level}) if path.endswith("/permission") else (404, {})
+        with patch.object(hub.SESSION, "account", FakeAuth()):
+            for level, shown in [("admin", True), ("maintain", True), ("write", True), ("push", True),
+                                 ("triage", False), ("read", False), ("none", False)]:
+                with self.subTest(level=level), patch.object(runtime, "github_api", side_effect=permission(level)):
+                    self.assertEqual(self.repo.review_entry(), {"ok": True, "canReview": shown})
+            with patch.object(runtime, "github_api", side_effect=OSError("offline")):
+                self.assertFalse(self.repo.review_entry()["canReview"])
+        not_connected = type("NotConnected", (FakeAuth,), {"token": lambda self: ""})()
+        with patch.object(hub.SESSION, "account", not_connected), patch.object(runtime, "github_api") as api:
+            self.assertFalse(self.repo.review_entry()["canReview"])
+        api.assert_not_called()
+
+    def fork_api(self, level="admin", files=None, conclusion="action_required"):
+        """GitHub as the pending-runs view sees it: two waiting runs, one of them for a closed PR."""
+        calls = []
+        files = files or {"8": ["city/udx/bldg/53394611_bldg_6697_op.gml"], "9": [".github/workflows/pr-analysis.yml"]}
+        runs = [{"id": 101, "name": "PR Analysis", "head_sha": "a" * 40, "created_at": "2026-09-11T00:00:00Z", "conclusion": conclusion},
+                {"id": 102, "name": "PR Analysis", "head_sha": "b" * 40, "created_at": "2026-09-12T00:00:00Z", "conclusion": conclusion},
+                {"id": 103, "name": "PR Analysis", "head_sha": "c" * 40, "created_at": "2026-09-13T00:00:00Z", "conclusion": conclusion}]
+        pulls = [{"number": 8, "title": "Storeys", "user": {"login": "resident"}, "head": {"sha": "a" * 40}, "html_url": "u8"},
+                 {"number": 9, "title": "Workflow", "user": {"login": "other"}, "head": {"sha": "b" * 40}, "html_url": "u9"}]
+
+        def api(path, token=None, method="GET", payload=None, **k):
+            calls.append((method, path))
+            if path.endswith("/permission"):
+                return 200, {"permission": level}
+            if "/actions/runs?status=action_required" in path:
+                return 200, {"workflow_runs": runs}
+            if re.search(r"/actions/runs/\d+/approve$", path):
+                return 201, {}
+            m = re.search(r"/actions/runs/(\d+)$", path)
+            if m:
+                return 200, next(r for r in runs if r["id"] == int(m.group(1)))
+            if "/pulls?state=open" in path:
+                return 200, pulls
+            m = re.search(r"/pulls/(\d+)/files", path)
+            if m:
+                return 200, [{"filename": f} for f in files[m.group(1)]]
+            return 404, {}
+        return api, calls
+
+    def test_pending_runs_lists_waiting_fork_runs_for_a_reviewer(self):
+        api, _ = self.fork_api()
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            got = self.repo.pending_runs()
+        self.assertTrue(got["canReview"])
+        self.assertEqual([(r["runId"], r["number"], r["author"], r["touchesWorkflows"]) for r in got["runs"]],
+                         [(101, 8, "resident", False), (102, 9, "other", True)])   # run 103 has no open PR
+        api, _ = self.fork_api(level="read")
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            self.assertEqual(self.repo.pending_runs(), {"ok": True, "canReview": False, "runs": []})
+
+    def test_queue_names_a_fork_pr_that_waits_for_approval(self):
+        # D4: the analysis waits in action_required; the checks the PR has are not a failure
+        def api(path, token=None, method="GET", payload=None, **k):
+            if "/actions/runs?status=action_required" in path:
+                return 200, {"workflow_runs": [{"id": 1, "head_sha": "a" * 40}]}
+            if "/check-runs" in path:   # as on a real waiting fork PR (2026-09-30)
+                return 200, {"check_runs": [{"name": "gatekeeper", "status": "completed", "conclusion": "skipped"},
+                                            {"name": "comment", "status": "completed", "conclusion": "success"}]}
+            return fake_github_api(path, token, method, payload)
+        pr = example_pr()
+        pr["head"] = {**pr.get("head", {}), "sha": "a" * 40}
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            waiting = self.repo._review_queue_item("t", "city/sample", pr, self.repo._awaiting_approval("t", "city/sample"))
+            pr["head"] = {**pr["head"], "sha": "b" * 40}
+            running = self.repo._review_queue_item("t", "city/sample", pr, self.repo._awaiting_approval("t", "city/sample"))
+        self.assertEqual((waiting["waitingSource"], waiting["queueStatus"]), ("approval", "proposer_waiting"))
+        self.assertIn("first-time contributor", " ".join(waiting["adjustmentReasons"]))
+        self.assertEqual(running["waitingSource"], "ci")   # the same checks without a waiting run
+
+    def test_approve_run_checks_again_and_approves_only_that_run(self):
+        api, calls = self.fork_api()
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            self.assertEqual(self.repo.approve_run(101)["number"], 8)
+            with self.assertRaisesRegex(RuntimeError, r"\.github/"):
+                self.repo.approve_run(102)                 # its PR changes a workflow
+            with self.assertRaisesRegex(RuntimeError, "no longer waiting"):
+                self.repo.approve_run(103)                 # its PR was closed
+        posts = [p for m, p in calls if m == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0].endswith("/actions/runs/101/approve"), posts)
+        api, calls = self.fork_api(conclusion="success")
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            with self.assertRaisesRegex(RuntimeError, "no longer waiting"):
+                self.repo.approve_run(101)                 # already approved and run
+        api, calls = self.fork_api(level="read")
+        with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=api):
+            with self.assertRaisesRegex(RuntimeError, "can approve"):
+                self.repo.approve_run(101)
+        self.assertFalse([p for m, p in calls if m == "POST"])
+
+    def test_local_lookup_matches_the_whole_building_id(self):
+        # 13101-bldg-83 is a prefix of 13101-bldg-8357, which comes first in the file
+        def member(gid, stable, lat):
+            return ('<core:cityObjectMember><bldg:Building gml:id="' + gid + '">'
+                    '<bldg:lod0RoofEdge><gml:MultiSurface><gml:surfaceMember><gml:Polygon><gml:exterior><gml:LinearRing>'
+                    f'<gml:posList>{lat} 139.0 0 {lat} 139.1 0 {lat + 0.1} 139.1 0 {lat} 139.0 0</gml:posList>'
+                    '</gml:LinearRing></gml:exterior></gml:Polygon></gml:surfaceMember></gml:MultiSurface></bldg:lod0RoofEdge>'
+                    f'<uro:buildingID>{stable}</uro:buildingID></bldg:Building></core:cityObjectMember>')
+        rel = "city/udx/bldg/53394614_bldg_6697_op.gml"
+        (Path(self.temp.name) / rel).write_text(
+            '<core:CityModel xmlns:core="c" xmlns:bldg="b" xmlns:gml="g" xmlns:uro="u">'
+            + member("bldg-long", "13101-bldg-8357", 35.0) + member("bldg-short", "13101-bldg-83", 36.0)
+            + '</core:CityModel>', encoding="utf-8")
+        ref = self.repo._building_ref_from_local_files([{"filename": rel}], [], "13101-bldg-83")
+        self.assertEqual((ref["gid"], ref["buildingId"]), ("bldg-short", "13101-bldg-83"))
+        self.assertEqual(self.repo._building_ref_from_local_files([{"filename": rel}], [], "13101-bldg-8"), {})
+        self.assertEqual(hub._find_whole(b'<a>x-83</a><b id="x-8357"/>', "x-83"), 3)
+        self.assertEqual(hub._find_whole(b'<b id="x-8357"/>', "x-83"), -1)
+
+    def test_local_lookup_follows_the_citys_identity_rule(self):
+        # S11: the lookup read PLATEAU's uro:buildingID in every city; a gml:id city (Munich) has
+        # buildingID-like leaves that are not its stable ID
+        (Path(self.temp.name) / "4dcitygml.json").write_text(
+            json.dumps({"repo": "o/munich", "building_id": {"type": "gml:id"}}), encoding="utf-8")
+        rel = "city/udx/bldg/690_5334_1.gml"
+        (Path(self.temp.name) / rel).write_text(
+            '<core:CityModel xmlns:core="c" xmlns:bldg="b" xmlns:gml="g" xmlns:uro="u">'
+            '<core:cityObjectMember><bldg:Building gml:id="DEBY_LOD2_1">'
+            '<uro:buildingID>not-the-id</uro:buildingID></bldg:Building></core:cityObjectMember>'
+            '</core:CityModel>', encoding="utf-8")
+        ref = self.repo._building_ref_from_local_files([{"filename": rel}], [], "DEBY_LOD2_1")
+        self.assertEqual(ref["buildingId"], "DEBY_LOD2_1")
+
+    def test_a_city_outside_the_plateau_layout_is_reviewed_too(self):
+        # Munich: data in lod2_citygml/ (data_dirs), UTM coordinates, file names that are not mesh
+        # codes. Its files were all "unsafe", it got no building reference, and its tile was refused.
+        root = Path(self.temp.name)
+        (root / "4dcitygml.json").write_text(
+            json.dumps({"repo": "o/munich", "building_id": {"type": "gml:id"}, "data_dirs": ["lod2_citygml"]}),
+            encoding="utf-8")
+        rel = "lod2_citygml/690_5334_1.gml"
+        (root / "lod2_citygml").mkdir()
+        (root / rel).write_text(
+            '<CityModel xmlns="http://www.opengis.net/citygml/1.0" xmlns:bldg="b" xmlns:gml="g">'
+            '<gml:boundedBy><gml:Envelope srsName="EPSG:25832"/></gml:boundedBy>'
+            '<cityObjectMember><bldg:Building gml:id="DEBY_LOD2_1"><gml:posList>691000 5334000 518 691010 5334000 518 '
+            '691010 5334010 518</gml:posList></bldg:Building></cityObjectMember></CityModel>', encoding="utf-8")
+        self.assertTrue(self.repo._is_data_file(rel))
+        self.assertTrue(self.repo._is_data_file("lod2_citygml/textures/a.jpg", gml=False))
+        self.assertFalse(self.repo._is_data_file("docs/a.gml"))
+        self.assertFalse(self.repo._is_data_file("lod2_citygml/../x.gml"))
+        ref = self.repo._building_ref_from_local_files([{"filename": rel}], [], "DEBY_LOD2_1")
+        self.assertEqual((ref["buildingId"], ref["tile"]), ("DEBY_LOD2_1", "690_5334_1"))
+        self.assertAlmostEqual(ref["center"][0], 48.13, delta=0.05)   # latitude, not a UTM northing
+        self.assertAlmostEqual(ref["center"][1], 11.58, delta=0.05)
+
+    def test_owner_repo_has_one_parser(self):
+        for url, want in (("https://github.com/o/r.git", "o/r"), ("git@github.com:O/R.git", "O/R"), ("o/r", "o/r"),
+                          ("https://github.com/o/r/", None), ("https://example.com/o/r", None)):
+            self.assertEqual(runtime.github_nwo(url), want, url)
 
     def test_queue_and_detail_are_human_readable(self):
         with patch.object(hub.SESSION, "account", FakeAuth()), patch.object(runtime, "github_api", side_effect=fake_github_api
@@ -456,7 +663,7 @@ class TestReviewApiModel(_EnglishEnv):
             '</bldg:Building>',
             encoding="utf-8",
         )
-        comments = [{"body": (
+        comments = [{"user": BOT, "body": (
             "<!-- citygml-change-summary -->\n"
             "### 修正\n\n#### `bldg-object-1`\n"
         )}]
@@ -466,7 +673,57 @@ class TestReviewApiModel(_EnglishEnv):
         self.assertEqual(result, "13101-bldg-3728")
 
 
+class TestReviewViewerRoute(_EnglishEnv):
+    """The review screen embeds the attribute editor's 3D view at /review-viewer.html. Served as raw
+    bytes it had no t() and stopped before loading the building (the globe stayed empty)."""
+
+    def get(self, city_json: "dict | None" = None) -> str:
+        import json
+        import threading
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        with tempfile.TemporaryDirectory() as tmp:
+            if city_json is not None:
+                (Path(tmp) / "4dcitygml.json").write_text(json.dumps(city_json), encoding="utf-8")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), hub.Handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with patch.object(hub.SESSION, "hub", hub.Hub(Path(tmp))):
+                    url = f"http://127.0.0.1:{server.server_address[1]}/review-viewer.html?tile=1&bid=b"
+                    with urllib.request.urlopen(url, timeout=10) as r:
+                        return r.read().decode("utf-8")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_viewer_is_served_with_the_attribute_editors_language_pack(self):
+        html = self.get()
+        self.assertIn('id="city-i18n"', html)
+        self.assertLess(html.index("window.t = function"), html.index("t('viewer.loading_mesh'"))
+        with patch.object(runtime, "ui_lang", lambda: "ja"):
+            html = self.get()
+        self.assertIn('"viewer.loading_mesh"', html)   # the viewer's keys come from the attribute editor catalog
+
+    def test_viewer_receives_the_citys_map_settings(self):
+        html = self.get({"map": {"tiles": "osm", "center": [48.14, 11.56], "zoom": 15}})
+        self.assertIn("window.CITY_MAP", html)
+        self.assertIn('"tiles": "osm"', html)
+
+
 class TestReviewHtml(unittest.TestCase):
+    def test_pending_runs_panel_is_for_reviewers_and_refuses_workflow_changes(self):
+        html = (REPO_ROOT / "tools" / "hub" / "review.html").read_text(encoding="utf-8")
+        self.assertIn('<section id="pendingRuns" hidden></section>', html)
+        self.assertIn("if (demo || !queueData || !queueData.canReview) { box.hidden=true; return; }", html)
+        self.assertIn("api('/api/reviews/pending-runs')", html)
+        self.assertIn("/api/reviews/pending-runs/${b.dataset.run}/approve", html)
+        self.assertIn("r.touchesWorkflows", html)   # no button for a PR that changes .github/
+        # before: only in the panel (for a reviewer); after starting: back in the list, which
+        # refreshes itself while checks run
+        self.assertIn("queueData.items.filter(it=>!(queueData.canReview && !demo && it.waitingSource==='approval'))", html)
+        self.assertIn("await loadQueue();\n    loadPendingRuns();", html)
+        self.assertIn("items.some(it=>it.waitingSource==='checking')", html)
+
     def test_review_ui_has_evidence_gate_and_demo_notice(self):
         html = (REPO_ROOT / "tools" / "hub" / "review.html").read_text(encoding="utf-8")
         self.assertIn("What changes in this proposal", html)

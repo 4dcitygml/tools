@@ -30,7 +30,8 @@ LINT_MARKER = pr_markers.REVIEWABILITY_LINT
 METADATA_MARKER = pr_markers.METADATA
 # The data-quality lint has two layers (generic CityGML structure / PLATEAU conventions), each with its own comment.
 CITYGML_LINT_MARKER = pr_markers.QUALITY_LINT
-PLATEAU_LINT_MARKER = pr_markers.PLATEAU_LINT
+PLAUSIBILITY_LINT_MARKER = pr_markers.PLAUSIBILITY_LINT
+PLAUSIBILITY_LINT_LEGACY_MARKER = pr_markers.PLAUSIBILITY_LINT_LEGACY
 # Topological consistency gate (official engine val3dity, diff-based). Pre-existing defects are tolerated; only invalids introduced by the PR are warned about.
 VAL3DITY_MARKER = pr_markers.VAL3DITY
 

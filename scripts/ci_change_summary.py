@@ -33,8 +33,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.diff_citygml import diff_files, diff_sources  # noqa: E402
-from scripts.extract_building_preview import _get_file_at_sha  # noqa: E402  (shared git show helper / X-2)
+from scripts.repo_git import blob  # noqa: E402
 from scripts.citygml_constants import SUMMARY_MARKER  # noqa: E402,F401  (marker distinct from preview's)
+from scripts.gate_result import malformed_input  # noqa: E402
 
 # Safety caps so a single comment does not bloat (GitHub comments are 65,536 chars).
 # Tier1-minimum PRs touch one building so these normally never trigger; when they do, the omission is made explicit.
@@ -144,13 +145,14 @@ def render_markdown(diff_result: dict, preview_url: Optional[str] = None) -> str
     return _render_footer(preview_url, lines)
 
 
-def render_ci(results: list[dict], preview_url: Optional[str] = None) -> str:
+def render_ci(results: list[dict], preview_url: Optional[str] = None, unreadable: Optional[list[str]] = None) -> str:
     """Combine multiple files' diff results into one PR-comment Markdown (for W5a).
 
-    Expected to receive only files with changes. Returns an empty string when
-    empty (= do not post).
+    Expected to receive only files with changes; `unreadable` names changed files that are not
+    well-formed XML. Returns an empty string when there is nothing to say (= do not post).
     """
-    if not results:
+    unreadable = unreadable or []
+    if not results and not unreadable:
         return ""
     lines: list[str] = [SUMMARY_MARKER, "## 📝 CityGML change summary", ""]
     if len(results) > 1:
@@ -159,18 +161,30 @@ def render_ci(results: list[dict], preview_url: Optional[str] = None) -> str:
     for result in results:
         _render_sections(result, lines)
         lines.append("")
+    if unreadable:
+        lines.append("These changed files are not well-formed XML, so their changes cannot be listed "
+                     "(see the CityGML format check):")
+        lines += [f"- `{path}`" for path in unreadable]
+        lines.append("")
     return _render_footer(preview_url, lines)
 
 
 def collect_ci_results(
-    repo: Path, base_sha: str, head_sha: str, gml_files: list[str]
+    repo: Path, base_sha: str, head_sha: str, gml_files: list[str], unreadable: Optional[list[str]] = None
 ) -> list[dict]:
-    """Diff base (git show) against head (git show) for each changed .gml; return only those with changes."""
+    """Diff base (git show) against head (git show) for each changed .gml; return only those with changes.
+    A file that is not well-formed XML is appended to `unreadable` instead (the schema row names it)."""
     results: list[dict] = []
     for rel_path in gml_files:
-        old_bytes = _get_file_at_sha(repo, base_sha, rel_path)
-        new_bytes = _get_file_at_sha(repo, head_sha, rel_path)
-        result = diff_sources(old_bytes, new_bytes, rel_path, rel_path)
+        old_bytes = blob(repo, base_sha, rel_path)
+        new_bytes = blob(repo, head_sha, rel_path)
+        try:
+            result = diff_sources(old_bytes, new_bytes, rel_path, rel_path)
+        except Exception as exc:  # noqa: BLE001
+            if unreadable is None or not malformed_input(exc):
+                raise
+            unreadable.append(rel_path)
+            continue
         if _has_changes(result):
             results.append(result)
     return results
@@ -204,8 +218,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         listed = (ln.strip() for ln in args.file_list.read_text(encoding="utf-8").splitlines())
         gml_files = [p for p in listed if p.endswith(".gml")]
         repo = args.repo or REPO_ROOT
-        results = collect_ci_results(repo, args.base_sha, args.head_sha, gml_files)
-        sys.stdout.write(render_ci(results, preview_url=args.preview_url))
+        unreadable: list[str] = []
+        results = collect_ci_results(repo, args.base_sha, args.head_sha, gml_files, unreadable)
+        sys.stdout.write(render_ci(results, preview_url=args.preview_url, unreadable=unreadable))
         return 0
 
     if args.from_json is not None:

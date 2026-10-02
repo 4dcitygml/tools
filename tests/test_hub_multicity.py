@@ -58,7 +58,8 @@ class TestConfigPerCity(_ConfigSandbox):
         runtime.remember_clone(TOKYO, tokyo)
         runtime.remember_clone(MUNICH, munich)
         cfg = runtime.read_config()
-        self.assertEqual(cfg["repo"], str(munich))                    # last used, for the standalone editor
+        self.assertNotIn("repo", cfg)                                 # no single slot any more (S18)
+        self.assertEqual(runtime.last_clone(), munich)                # last used, from the city entries
         self.assertEqual(set(cfg["cities"]), {TOKYO, MUNICH})
         self.assertEqual(runtime.saved_clone_for(TOKYO), tokyo)
         self.assertEqual(runtime.saved_clone_for(MUNICH), munich)
@@ -70,13 +71,29 @@ class TestConfigPerCity(_ConfigSandbox):
         runtime.save_config({"cities": {MUNICH: {"repo": str(tokyo)}}})    # even a wrong per-city entry is verified
         self.assertIsNone(runtime.saved_clone_for(MUNICH))
 
-    def test_legacy_entry_is_migrated_when_it_is_this_city(self):
+    def test_a_hub_v1_3_settings_file_is_migrated_once(self):
+        # S18 (maintainer, 2026-09-30): one migration at start instead of fallbacks in every reader
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
-        runtime.save_config({"repo": str(tokyo), "lang": "de"})
-        self.assertEqual(runtime.saved_clone_for(TOKYO), tokyo)
+        munich = make_clone(self.tmp / "munich", MUNICH)
+        v13 = {"repo": str(tokyo), "lang": "de", "legacyReviewed": "2026-09-01",
+               "cities": {"4DCityGML/Sample-Tokyo-Station": {"login": "alice"},             # other spelling
+                          MUNICH: {"repo": str(munich), "login": "bob", "last_used": "2026-09-02T10:00:00+0900"},
+                          "someone/forgotten-city": {"repo": str(self.tmp / "gone")}}}
+        runtime.save_config(v13)
+        self.assertTrue(runtime.migrate_config())
         cfg = runtime.read_config()
-        self.assertEqual(cfg["cities"][TOKYO]["repo"], str(tokyo))
-        self.assertEqual(cfg["lang"], "de")                            # nothing dropped
+        self.assertEqual(cfg["version"], runtime.CONFIG_VERSION)
+        self.assertNotIn("repo", cfg)
+        self.assertEqual(cfg["cities"][TOKYO]["repo"], str(tokyo))          # the single slot, into its city
+        self.assertEqual(cfg["cities"][TOKYO]["login"], "alice")            # merged with the other spelling
+        self.assertEqual(cfg["cities"][MUNICH]["login"], "bob")
+        self.assertIn("someone/forgotten-city", cfg["cities"])              # kept: its clone may come back
+        self.assertEqual((cfg["lang"], cfg["legacyReviewed"]), ("de", "2026-09-01"))   # nothing else dropped
+        backup = runtime.config_path().with_name(runtime.config_path().name + ".v1.bak")
+        self.assertEqual(json.loads(backup.read_text(encoding="utf-8"))["repo"], str(tokyo))
+        self.assertEqual(runtime.saved_clone_for(TOKYO), tokyo)
+        self.assertFalse(runtime.migrate_config())                           # once
+        self.assertFalse(runtime.migrate_config.__doc__ is None)
 
     def test_clone_city_reads_the_clone_not_the_environment(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
@@ -85,7 +102,7 @@ class TestConfigPerCity(_ConfigSandbox):
         self.assertEqual(runtime.requested_city(), MUNICH)
         # The sync target is the clone's own city, whatever the start script asked for.
         self.assertEqual(runtime.upstream_url(tokyo, ignore_env=True), "https://github.com/" + TOKYO)
-        self.assertEqual(runtime.upstream_url(tokyo), "https://github.com/" + MUNICH)
+        self.assertEqual(runtime.upstream_url(tokyo), "https://github.com/" + TOKYO)   # the clone's own (F7)
 
     def test_default_dest_is_named_after_the_city(self):
         session = hub.Session()                                    # HOME is the empty temp folder
@@ -222,7 +239,7 @@ class TestReviewFollowsTheContract(unittest.TestCase):
         responses = {
             "/commits?": (200, []),
             "/check-runs?": (200, {"check_runs": []}),
-            "/comments?": (200, [{"body": inspection, "user": {"login": "github-actions[bot]"}}]),
+            "/comments?": (200, [{"body": inspection, "user": {"login": "github-actions[bot]", "type": "Bot"}}]),
             "/reviews?": (200, []),
         }
 

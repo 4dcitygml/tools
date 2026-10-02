@@ -44,10 +44,13 @@ from shapely.strtree import STRtree
 
 GML_NS = "http://www.opengis.net/gml"
 APP_NS = "http://www.opengis.net/citygml/appearance/2.0"
-EXCLUDED_ATTRIBUTE_NS = {GML_NS, APP_NS}
+# geometry and appearance are not attributes, in every CityGML version
+EXCLUDED_ATTRIBUTE_NS = {GML_NS, APP_NS, "http://www.opengis.net/citygml/appearance/1.0",
+                         "http://www.opengis.net/citygml/appearance/3.0"}
 BUILDING_TAGS = (
     "{http://www.opengis.net/citygml/building/2.0}Building",
     "{http://www.opengis.net/citygml/building/1.0}Building",
+    "{http://www.opengis.net/citygml/building/3.0}Building",
 )
 GML_ID = f"{{{GML_NS}}}id"
 EARTH_METRES_PER_DEGREE = 111_320.0

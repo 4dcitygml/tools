@@ -114,14 +114,14 @@ class TestCityCrs(unittest.TestCase):
         _reproject(root, "EPSG:2263", "EPSG:32618")
         x, y, z = (float(v) for v in root.find(".//{http://www.opengis.net/gml}lowerCorner").text.split())
         self.assertTrue(580000 < x < 590000 and 4505000 < y < 4515000, (x, y))   # Manhattan in UTM 18N meters
-        self.assertAlmostEqual(z, 8.6, places=3)
+        self.assertAlmostEqual(z, 8.6 * 1200 / 3937, places=3)   # US feet heights become metres too
         self.assertEqual(root.find(".//{http://www.opengis.net/gml}Envelope").get("srsName"), "EPSG:32618")
 
-    def test_city_crs_defaults_to_plateau(self):
+    def test_city_crs_is_never_guessed(self):
         import tempfile
         from pathlib import Path
         from scripts.val3dity_gate import _city_crs
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_city_crs(Path(d)), "EPSG:6697")
+            self.assertIsNone(_city_crs(Path(d)))   # not Japanese lat/lon by default
             (Path(d) / "4dcitygml.json").write_text('{"crs": "EPSG:2263"}', encoding="utf-8")
             self.assertEqual(_city_crs(Path(d)), "EPSG:2263")

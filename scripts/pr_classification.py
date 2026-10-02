@@ -166,7 +166,8 @@ def main(argv=None) -> int:
     parser.add_argument("--title", default="")
     parser.add_argument("--data-changed", default="true")
     parser.add_argument("--administrative", default="false")
-    parser.add_argument("--print", dest="what", choices=("class", "kind"), default="class")
+    parser.add_argument("--print", dest="what", choices=("class", "kind", "both"), default="class",
+                        help="both: the class and the kind for checks, space-separated, from one call")
     parser.add_argument("--guide", action="store_true", help="print the guidance Markdown and exit")
     parser.add_argument("--advisory", action="store_true", help="with --guide: advisory wording")
     parser.add_argument("--lang", default="en")
@@ -176,9 +177,16 @@ def main(argv=None) -> int:
         print(guide_markdown(load_catalog(args.lang, args.tools_dir), advisory=args.advisory))
         return 0
     cls = classify(args.branch, args.title, _to_bool(args.data_changed), _to_bool(args.administrative))
-    print(kind_for_checks(cls) if args.what == "kind" else cls)
+    print({"kind": kind_for_checks(cls), "both": f"{cls} {kind_for_checks(cls)}"}.get(args.what, cls))
     return 1 if cls == UNCLASSIFIED and args.what == "class" else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # the gates' exit convention (scripts/gate_result.py), inline: this file also ships alone in
+    # the hub bundle (program/pr_classification.py), without the scripts package
+    try:
+        code = main()
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        code = 2
+    sys.exit(code)

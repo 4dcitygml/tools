@@ -34,16 +34,14 @@ def load(name, path):
     return module
 
 gate = load('report_contract', REPO_ROOT/'tools/hub/operator_explanation.py')
-# What the city scripts import as `operator_explanation`. Transition (2026-09-17): a city
-# checkout from before the practice exemption was retired still imports `required`; it
-# gets a copy of the contract that answers True, the contract itself stays as it is.
-import types
-_for_city = types.ModuleType('operator_explanation'); _for_city.__dict__.update(gate.__dict__)
-_for_city.required = lambda repo: True
+# What the city scripts import as `operator_explanation`: the contract master itself.
+_for_city = gate
 # The city scripts reach GitHub through one client module (github_api.py, review step 5);
 # every test patches its `api` once. A checkout from before that step keeps the client
 # inside check_review_report, which the same patch reaches through the alias below.
-with patch.dict(sys.modules, {'operator_explanation':_for_city}):
+# The city scripts import their other siblings (texts.py, ...) by name from their folder.
+with patch.dict(sys.modules, {'operator_explanation':_for_city}), \
+        patch.object(sys, 'path', [str(CITY_SCRIPTS)] + sys.path):
     if (CITY_SCRIPTS/'github_api.py').is_file():
         client = load('github_api', CITY_SCRIPTS/'github_api.py')
         with patch.dict(sys.modules, {'github_api':client}):
@@ -69,6 +67,7 @@ def github(stub):
 
 SHA='a'*40
 REPO='example-city/citygml'
+from scripts import gate_result
 KEYS=['reason','classification','commit-scope','scope-reproducibility','reproduction','freshness','file-scope','schema','minimal-diff','texture','structure','plausibility','topology','model']
 
 def fixture(number=7):
@@ -78,7 +77,7 @@ def fixture(number=7):
     run={'id':50,'run_attempt':1,'status':'completed','conclusion':'success','head_sha':SHA,
          'head_repository':{'full_name':'proposer/citygml'},'head_branch':'edit/b-1','path':'.github/workflows/pr-analysis.yml'}
     inspection={'context':gate.context(pr),'pr':number,'lang':'ja','hasGml':True,
-                'checks':[{'key':k,'label':k,'status':'pass'} for k in KEYS]}
+                'checks':[dict(gate_result.result(k,0),label=k) for k in KEYS]}   # the rows as the analysis writes them (S17)
     report=publisher.build_report(REPO,pr,run,inspection,{'summary.md':'Storeys: 2 → 3'},[{'filename':'city/udx/bldg/a.gml'}])
     comment={'id':100,'body':gate.report_comment(report),'user':{'login':'github-actions[bot]','type':'Bot'}}
     return pr,run,inspection,report,comment
@@ -94,6 +93,8 @@ class ReportContractTest(unittest.TestCase):
         if '/check-runs?' in path:return 200,{'check_runs':self.check_runs}   # the head's ci-report runs (reused when present)
         if '/actions/' in path:return 200,{'workflow_runs':[self.run]}
         if '/collaborators/' in path:return 200,{'permission':self.permission}
+        if '/files?' in path:return 200,[{'filename':'city/udx/bldg/a.gml'}]   # data only: no tooling label needed (D11)
+        if path.endswith('/contents/4dcitygml.json'):return 404,{}   # the check's title in the city's language: en
         self.fail(path)
     def evaluate(self):return gate.evaluate(self.api,REPO,self.pr)
     def test_generated_report_is_ready_without_a_human_confirmation(self):
@@ -164,10 +165,39 @@ class ReportContractTest(unittest.TestCase):
     def test_missing_checks_rejected(self):
         self.inspection['checks']=self.inspection['checks'][:-1]
         with self.assertRaises(ValueError):publisher.build_report(REPO,self.pr,self.run,self.inspection,{},[])
+    def test_the_payload_fields_clients_rely_on(self):
+        # What the contract module (current_report), hub-v1.5.0 (report_rows) and the trusted check
+        # read from the report payload, pinned against a payload the city publisher really builds.
+        r = publisher.build_report(REPO, self.pr, self.run, self.inspection, {'summary.md': 'delta'}, [])
+        for key in ('version', 'repo', 'pr', 'context', 'runId', 'runAttempt', 'runUrl', 'state', 'checks',
+                    'heading', 'labels', 'fields', 'reportId'):
+            self.assertIn(key, r, key)
+        self.assertEqual(r['version'], 1)
+        self.assertEqual(set(r['fields']), set(gate.FIELDS))
+        self.assertIn(r['state'], ('pass', 'fix', 'system'))
+        self.assertEqual([c['key'] for c in r['checks']], [row.key for row in gate_result.ROWS])
+        for c in r['checks']:
+            self.assertTrue({'key', 'status', 'severity', 'ran'} <= set(c), c)
+            self.assertIn(c['status'], gate_result.STATUSES)
+            self.assertIn(c['severity'], (gate_result.BLOCKING, gate_result.ADVISORY))
+            self.assertIsInstance(c['ran'], bool)
+        self.assertEqual(gate.decode_report({'body': gate.report_comment(r),
+                                              'user': {'login': 'github-actions[bot]', 'type': 'Bot'}})['checks'],
+                         r['checks'])   # the fields survive the comment encoding
+        # hub-v1.5.0 reads the row states from it
+        hub_spec = importlib.util.spec_from_file_location('hub_payload', REPO_ROOT / 'tools/hub/app.py')
+        hub = importlib.util.module_from_spec(hub_spec)
+        hub_spec.loader.exec_module(hub)
+        comment = {'id': 1, 'user': {'login': 'github-actions[bot]', 'type': 'Bot'}, 'body': gate.report_comment(r)}
+        self.assertEqual(hub.report_rows([comment], self.pr), {c['key']: c['status'] for c in r['checks']})
+        # the contract names the row fields
+        doc = (REPO_ROOT / 'docs/exchange-contract.md').read_text(encoding='utf-8')
+        self.assertIn("every row's `key`, `status`, `severity`, `ran`", doc)
+
     def test_newer_analyzer_gates_are_accepted(self):
         # The trusted side runs from main and is merged before the analysis side (operator
         # handbook 6.7): a report must accept extra gates, and a failing extra gate counts.
-        self.inspection['checks'].append({'key':'new-gate','label':'new-gate','status':'pass'})
+        self.inspection['checks'].append({'key':'new-gate','label':'new-gate','status':'pass','ran':True})
         r=publisher.build_report(REPO,self.pr,self.run,self.inspection,{'summary.md':'delta'},[])
         self.assertEqual(r['state'],'pass');self.assertIn('new-gate',r['fields']['checks'])
         self.inspection['checks'][-1]['status']='fail';self.run['conclusion']='failure'
@@ -210,7 +240,9 @@ class GateTransitionsTest(unittest.TestCase):
             if '/pulls?state=open' in path:return 200,[self.pr]
             if path.endswith('/pulls/7'):return 200,self.pr
             return self.api(path)
-        with patch.dict('os.environ',{'GITHUB_REPOSITORY':REPO}),github(api):runner.run()
+        with patch.dict('os.environ',{'GITHUB_REPOSITORY':REPO}),github(api):
+            os.environ.pop('GITHUB_EVENT_PATH',None)   # the runner's own event is not this PR's
+            runner.run()
         return writes
     def test_report_check_needs_no_human_confirmation(self):
         self.reviews=[];writes=self.drive()
@@ -251,7 +283,6 @@ class ReportPublicationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root/'out').mkdir()
-            (root/'event.json').write_text(json.dumps({'workflow_run': run}))
             (root/'out/pr.txt').write_text('7')
             if failure != 'missing':
                 (root/'out/inspection.json').write_text(json.dumps(inspection))
@@ -259,24 +290,28 @@ class ReportPublicationTest(unittest.TestCase):
             previous = Path.cwd()
             try:
                 os.chdir(root)
-                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_EVENT_PATH': str(root/'event.json'), 'REPORT_EVENT_PATH': ''}), github(api):
+                # post_comments.run() checks the run and the PR, posts the detail comments and hands
+                # the report to publish() in the same process; this is that last step
+                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO}), github(api):
                     if failure:
-                        with self.assertRaises((RuntimeError, FileNotFoundError)):publisher.run()
+                        with self.assertRaises((RuntimeError, FileNotFoundError)):publisher.publish(REPO, pr, run, [])
                     else:
-                        publisher.run()
+                        publisher.publish(REPO, pr, run, [])
             finally:
                 os.chdir(previous)
         return writes
-    def test_report_delivery_precedes_successful_check(self):
+    def test_publisher_posts_the_report_and_leaves_the_check_to_review_report(self):
+        # the ci-report check is review-report.yml's alone: it judges the comment posted here
         writes = self.drive()
-        self.assertIn(gate.REPORT_MARKER, writes[-2][1]['body'])
-        self.assertEqual(writes[-1][1]['conclusion'], 'success')
+        self.assertIn(gate.REPORT_MARKER, writes[-1][1]['body'])
+        self.assertFalse(any('/check-runs' in path for path, _ in writes))
     def test_missing_evidence_or_failed_delivery_never_passes(self):
         for cause in ('missing', 'delivery'):
             with self.subTest(cause=cause):
                 writes = self.drive(cause)
-                self.assertEqual(writes[-1][1]['conclusion'], 'failure')
                 self.assertFalse(any(p.get('conclusion') == 'success' for _, p in writes))
+                if cause == 'missing':
+                    self.assertEqual(writes, [])
 
 
 if __name__=='__main__':unittest.main()

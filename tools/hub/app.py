@@ -43,11 +43,16 @@ _SHARED = next((d for d in (APP_DIR, APP_DIR.parent) if (d / "runtime.py").is_fi
 if _SHARED is None:
     sys.exit("runtime.py is missing next to the hub: install the tools again with the one-line command")
 sys.path.insert(0, str(_SHARED))
+sys.path.insert(1, str(APP_DIR))   # the report contract next to the hub (one folder in the bundle)
 import runtime  # noqa: E402
 import accounts  # noqa: E402
+import building_identity  # noqa: E402
+import citygml_dialect  # noqa: E402
 import git_sync  # noqa: E402
 import pr_classification  # noqa: E402
+import operator_explanation  # noqa: E402
 import pr_markers  # noqa: E402
+import pr_reason  # noqa: E402
 import shortcuts  # noqa: E402
 
 DEFAULT_PORT = 8760
@@ -76,9 +81,19 @@ def current_login() -> "str | None":
 # (runtime.fetch_latest_hub: download, SHA-256 digest check, unpack into the versioned
 # folder next to the running one). Nothing is downloaded without that click, and the
 # running hub is never modified; the launcher picks the newest installed version at
-# the next start. A city may declare `min_hub` in 4dcitygml.json (data, advisory):
-# the banner then says why the update matters.
-HUB_RELEASES_API = "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30"
+# the next start. A city may declare `min_hub` in 4dcitygml.json: an older hub can view
+# but cannot send or request a retry (runtime.require_min_hub, from hub-v1.5.0 on); the
+# banner says why and stays. It is judged when the clone opens and again after the sync,
+# since the sync may bring the city's new min_hub.
+def releases_api() -> str:
+    """The releases the launcher installs from: CITYGML_RELEASES_API, else CITYGML_TOOLS_REPO's, else
+    4dcitygml/tools (the same order as install/citygml.sh and citygml.ps1; D10: the check used to
+    look at 4dcitygml/tools while "Get it now" fetched from the overridden repository)."""
+    if os.environ.get("CITYGML_RELEASES_API"):
+        return os.environ["CITYGML_RELEASES_API"]
+    repo = os.environ.get("CITYGML_TOOLS_REPO") or ""
+    repo = repo if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) else "4dcitygml/tools"
+    return f"https://api.github.com/repos/{repo}/releases?per_page=30"
 
 
 def latest_hub_release(releases: list) -> "dict | None":
@@ -93,17 +108,12 @@ def latest_hub_release(releases: list) -> "dict | None":
     return {"tag": best["tag_name"], "notesUrl": best.get("html_url") or ""} if best else None
 
 
-def fetch_releases(url: str = HUB_RELEASES_API) -> list:
-    status, raw, _ = runtime.request(url, headers={"Accept": "application/vnd.github+json"}, timeout=20)
+def fetch_releases(url: "str | None" = None) -> list:
+    status, raw, _ = runtime.request(url or releases_api(), headers={"Accept": "application/vnd.github+json"}, timeout=20)
     if status != 200:
         raise RuntimeError(f"GitHub releases API answered HTTP {status}")   # rate limit, outage: named, not "up to date"
     data = json.loads(raw.decode("utf-8"))
     return data if isinstance(data, list) else []
-
-
-def min_hub_of(clone_root) -> "str | None":
-    value = runtime.city_meta(clone_root).get("min_hub")
-    return str(value) if runtime.version_tuple(value) else None
 
 
 class UpdateManager:
@@ -111,7 +121,7 @@ class UpdateManager:
         self._lock = threading.Lock()
         self._state = {
             "running": runtime.running_hub_tag(), "latest": None, "available": False, "checked": False,
-            "notesUrl": "", "minHub": None, "minHubOk": True, "error": "",
+            "notesUrl": "", "minHub": None, "minHubOk": True, "minHubFinal": False, "error": "",
             "fetch": {"state": "idle", "tag": None, "message": ""},
         }
 
@@ -123,26 +133,28 @@ class UpdateManager:
         with self._lock:
             self._state.update(kw)
 
-    def check_async(self, min_hub: "str | None" = None, fetch_json=None) -> None:
+    def set_min_hub(self, clone_root, final: bool = False) -> None:
+        """Judge the city's min_hub against the running version: locally, without the network.
+        Called when the clone opens and (final) after the sync."""
+        required = runtime.min_hub(clone_root)
+        self._set(minHub=required, minHubOk=runtime.below_min_hub(clone_root) is None,
+                  minHubFinal=final or self._state["minHubFinal"])
+
+    def check_async(self, fetch_json=None) -> None:
         def work():
             try:
                 latest = latest_hub_release((fetch_json or fetch_releases)())
-            except Exception as e:  # offline etc.: silently keep the running version
+            except Exception as e:  # offline etc.: the running version stays; min_hub is judged anyway
                 self._set(checked=True, error=str(e))
                 return
             running = runtime.version_tuple(self._state["running"])
             newest = runtime.version_tuple(latest["tag"]) if latest else None
             available = bool(newest and (running is None or newest > running))
-            min_ok = True
-            if min_hub and runtime.version_tuple(min_hub) and running and runtime.version_tuple(min_hub) > running:
-                min_ok = False
-                available = available or bool(newest and newest >= runtime.version_tuple(min_hub))
             fetch = dict(self._state["fetch"])
             if latest and (runtime.hubs_dir() / latest["tag"] / "program" / "hub.py").is_file() and available:
                 fetch = {"state": "done", "tag": latest["tag"], "message": ""}
             self._set(checked=True, latest=latest["tag"] if latest else None,
-                      notesUrl=(latest or {}).get("notesUrl", ""), available=available,
-                      minHub=min_hub, minHubOk=min_ok, fetch=fetch)
+                      notesUrl=(latest or {}).get("notesUrl", ""), available=available, fetch=fetch)
         threading.Thread(target=work, name="citygml-update-check", daemon=True).start()
 
     def fetch_async(self, fetch=None) -> dict:
@@ -301,15 +313,13 @@ def review_kind(pr: dict) -> str:
     return pr_classification.classify_by_name(head, title) or "other"
 
 
-_TRAILER_ID_RE = re.compile(r"^(?:Building|Building-Added|Building-Deleted):[ \t]*(\S+)[ \t]*$", re.MULTILINE)
-
-
 def building_id_from_commit_messages(messages: "list[str]") -> str:
     """The building declared by the A2 trailers (the contract's canonical identity), or ''."""
     for message in messages:
-        hit = _TRAILER_ID_RE.search(str(message or ""))
-        if hit:
-            return hit.group(1)
+        # the commit scope gate's parser (building_identity); the first building trailer in the message
+        for key, value in building_identity.TRAILER_RE.findall(str(message or "")):
+            if key in building_identity.BUILDING_TRAILERS and value.strip():
+                return value.strip()
     return ""
 
 
@@ -428,7 +438,7 @@ def human_reason(
     body: str, kind: str = "other", labels: "dict[str, str] | None" = None
 ) -> str:
     """Extract from the PR body only the explanation staff need for their decision."""
-    reason = section_by_key(body, "reason", *reason_headings())
+    reason = section_by_key(body, "reason", *pr_reason.HEADINGS)
     if not reason and kind in ("attribute", "geometry"):
         reason = body
     reason = re.sub(r"<!--.*?-->", "", reason, flags=re.DOTALL)
@@ -495,13 +505,6 @@ def change_table_words() -> dict[str, set[str]]:
             elif len(cells) == 2:
                 words["before"].add(cells[0]); words["after"].add(cells[1])
     return words
-
-
-def reason_headings() -> tuple[str, ...]:
-    """Headings under which the reason stands when a body has no `<!--sec:reason-->` anchor."""
-    values = _catalog_values("pr.heading_")
-    return tuple(sorted(values.get("pr.heading_reason", set()) | values.get("pr.heading_summary", set())
-                        | {"Summary of changes"}))
 
 
 def body_headings() -> set[str]:
@@ -600,11 +603,13 @@ def ci_retry_info(check_status: str, comments: list) -> dict:
     }
 
 
-def _marker_status(comments: list, marker: str, fallback: str) -> str:
-    """Prefer the explicit result in CI comments; otherwise use the overall check-run state."""
+def _marker_status(comments: list, marker: "str | tuple", fallback: str) -> str:
+    """Prefer the explicit result in CI comments (marked by marker, or any of several);
+    otherwise use the overall check-run state."""
+    markers = (marker,) if isinstance(marker, str) else tuple(marker)
     for comment in comments:
         body = str(comment.get("body") or "")
-        if marker not in body:
+        if not any(m in body for m in markers):
             continue
         if "❌" in body or "⚠️" in body:
             return "fail"
@@ -614,6 +619,25 @@ def _marker_status(comments: list, marker: str, fallback: str) -> str:
 
 
 _CP_KEY_RE = pr_markers.CHECKPOINT_RE
+ROW_STATUSES = ("pass", "warn", "fail", "error", "na", "pending")   # Exchange Contract A6
+
+
+def report_rows(comments: list, pr: dict) -> dict[str, str]:
+    """The row states of the newest machine report of this PR's current context, key -> status
+    (A6, A10). Empty while no current report exists; the inspection comment's signs then apply."""
+    reports = [c for c in comments if str(c.get("body") or "").startswith(pr_markers.REVIEW_REPORT)]
+    if not reports:
+        return {}
+    report = operator_explanation.decode_report(max(reports, key=lambda c: int(c.get("id") or 0)))
+    try:
+        current = bool(report) and report.get("pr") == pr.get("number") \
+            and report.get("context") == operator_explanation.context(pr)
+    except (KeyError, TypeError):
+        current = False
+    if not current:
+        return {}
+    return {r["key"]: r["status"] for r in report.get("checks") or []
+            if isinstance(r, dict) and isinstance(r.get("key"), str) and r.get("status") in ROW_STATUSES}
 
 
 def _inspection_summary_statuses(comments: list) -> dict[str, str]:
@@ -625,7 +649,8 @@ def _inspection_summary_statuses(comments: list) -> dict[str, str]:
     result: dict[str, str] = {}
     for comment in comments:
         body = str(comment.get("body") or "")
-        if pr_markers.INSPECTION not in body:
+        # CI's comment only (A10: clients trust the bot's identity); anyone can paste the marker
+        if pr_markers.INSPECTION not in body or not operator_explanation.bot(comment):
             continue
         for line in body.splitlines():
             if not line.strip().startswith("|"):
@@ -636,12 +661,18 @@ def _inspection_summary_statuses(comments: list) -> dict[str, str]:
             raw = cells[1]
             if "−" in raw or "Not applicable" in raw:
                 status = "na"
+            elif "⚙" in raw:
+                status = "error"
+            elif "⚠" in raw:
+                status = "warn"   # advisory since S17; an unknown sign is never read as a pass
             elif "✅" in raw or raw.startswith("Pass"):
                 status = "pass"
             elif "…" in raw or "Checking" in raw:
                 status = "pending"
-            elif "❌" in raw or "⚠️" in raw or "Needs" in raw or "Not run" in raw:
+            elif "❌" in raw or "Needs" in raw or "Not run" in raw:
                 status = "fail"
+            elif _CP_KEY_RE.search(line):
+                status = "pending"   # A6: an unknown sign is not a pass (it fell back to the hub's own reading)
             else:
                 continue
             key_match = _CP_KEY_RE.search(line)
@@ -654,17 +685,18 @@ def _inspection_summary_statuses(comments: list) -> dict[str, str]:
 def review_checkpoints(
     *, reason_ok: bool, unsafe_files: list, checks: list, model_available: bool,
     kind: str = "attribute", comments: "list | None" = None,
-    changes_requested: bool = False, adjustment_owner: str = "ci",
+    changes_requested: bool = False, adjustment_owner: str = "ci", rows: "dict | None" = None,
 ) -> list[dict]:
     """List every inspection item — pass, not-applicable, and fail — for the person in charge.
 
-    Matched via `match` (item names in the trusted CI inspection-list comment;
-    Japanese = interchange format) and returned with `label` (display name in the
-    selected language).
+    A row's state comes from CI: the machine report's rows (`rows`, A6) first, then the
+    inspection comment's `<!--cp:key-->` signs, matched by key or English display name. The
+    hub's own reading below only fills a row CI has not posted yet. Returned with `label`
+    (display name in the selected language).
     """
     comments = comments or []
     check_status = _overall_check_status(checks)
-    summary = _inspection_summary_statuses(comments)
+    summary = {**_inspection_summary_statuses(comments), **(rows or {})}
     resubmit = tr("hub.cp_wait_proposer_ci",
                   "CI has posted items to confirm. Waiting for the proposer to respond")
     if changes_requested and adjustment_owner == "reviewer":
@@ -686,6 +718,14 @@ def review_checkpoints(
                         "No reviewer action is needed")
         elif status == "fail":
             action = resubmit
+        elif status == "warn":
+            action = tr("hub.cp_warn_action",
+                        "An advisory finding: it does not block. Read it and decide in your review")
+        elif status == "error":
+            reason = tr("hub.cp_error_reason",
+                        "The check could not reach a result: a system error, not a problem in the data")
+            action = tr("hub.cp_error_action",
+                        "CI or a maintainer repeats the check; request a re-inspection if it persists")
         else:
             action = tr("hub.cp_no_action", "No action is needed")
         return {"key": key, "label": label, "status": status, "reason": reason, "action": action}
@@ -696,7 +736,8 @@ def review_checkpoints(
         summary["freshness"] = "fail"
     reviewability = _marker_status(comments, pr_markers.REVIEWABILITY_LINT, check_status)
     structure = _marker_status(comments, pr_markers.QUALITY_LINT, check_status)
-    plausibility = _marker_status(comments, pr_markers.PLATEAU_LINT, check_status)
+    plausibility = _marker_status(
+        comments, (pr_markers.PLAUSIBILITY_LINT, pr_markers.PLAUSIBILITY_LINT_LEGACY), check_status)
     topology = (
         _marker_status(comments, pr_markers.VAL3DITY, check_status)
         if kind == "geometry" else "na"
@@ -722,6 +763,15 @@ def review_checkpoints(
               tr("hub.cp_commit_scope_ok", "The change is contained to one building"),
               tr("hub.cp_commit_scope_ng",
                  "The change touches multiple buildings, or the building IDs are inconsistent")),
+        # the bulk rows (A7): not applicable unless CI's rows say otherwise
+        point("scope-reproducibility", "Ward extraction reproducibility",
+              tr("hub.cp_scope_reproducibility_label", "Ward extraction reproducibility"), "na",
+              tr("hub.cp_scope_reproducibility_ok", "The ward extraction was reproduced from its source"),
+              tr("hub.cp_scope_reproducibility_ng", "The ward extraction could not be reproduced from its source")),
+        point("reproduction", "Bulk conversion reproduction",
+              tr("hub.cp_reproduction_label", "Bulk conversion reproduction"), "na",
+              tr("hub.cp_reproduction_ok", "The bulk conversion was reproduced from its manifest"),
+              tr("hub.cp_reproduction_ng", "The bulk conversion could not be reproduced from its manifest")),
         point("freshness", "Consistency with the latest version",
               tr("hub.cp_freshness_label", "Consistency with the latest version"), freshness,
               tr("hub.cp_freshness_ok", "The change is based on the latest published data"),
@@ -765,7 +815,7 @@ def review_checkpoints(
               tr("hub.cp_topology_ng",
                  "The change introduces new topological inconsistencies")),
         point("model", "3D view",
-              tr("hub.cp_model_label", "3D view"), "pass" if model_available else "fail",
+              tr("hub.cp_model_label", "3D view"), "pass" if model_available else "warn",
               tr("hub.cp_model_ok", "The building's 3D model can be viewed"),
               tr("hub.cp_model_ng", "The building's 3D model cannot be prepared")),
     ]
@@ -827,15 +877,34 @@ def section_by_key(markdown: str, key: str, *headings: str) -> str:
     return ""
 
 
-def review_ready_reason(reason: str) -> bool:
-    normalized = reason.strip()
-    return bool(normalized and "please fill in" not in normalized.lower())
-
-
 # ---- Theme pack (shares tools/themes/theme_loader.py; runs without themes if missing) ----
 
 
 # ---- Language pack (shares tools/i18n/i18n_loader.py; runs with the original text if missing) ----
+
+
+def _tile_code(name: str) -> str:
+    """The editors' tile code of a data file: the mesh of a PLATEAU-named tile
+    (<mesh>_bldg_..._op.gml), else the file name without .gml (attr_editor Repo.tile_files)."""
+    return name.split("_", 1)[0] if re.fullmatch(r"\d+_bldg_.*_op\.gml", name) else Path(name).stem
+
+
+def _find_whole(data, token: str) -> int:
+    """First offset of token as a whole value in CityGML bytes: an attribute value or an
+    element's text, so bounded by a quote or '>' before and a quote or '<' after. A plain
+    find matched 13102-bldg-83 inside 13102-bldg-8357 and showed another building."""
+    needle = token.encode("utf-8")
+    if not needle:
+        return -1
+    pos = 0
+    while True:
+        hit = data.find(needle, pos)
+        if hit < 0:
+            return -1
+        before, after = data[hit - 1:hit] if hit else b"", data[hit + len(needle):hit + len(needle) + 1]
+        if before in (b">", b'"', b"'") and after in (b"<", b'"', b"'"):
+            return hit
+        pos = hit + 1
 
 
 class Hub:
@@ -847,7 +916,7 @@ class Hub:
         self._procs: dict[str, subprocess.Popen] = {}
         self._ports: dict[str, int] = {}   # tool ports used by this hub (city)
         self._repo_probe: dict[int, "tuple[float, bool]"] = {}  # port -> (timestamp, is our repo)
-        self._contrib_cache: "tuple[float, dict] | None" = None
+        self._contrib_cache: "tuple[str | None, float, dict] | None" = None   # (login, time, data)
         self._cache_lock = threading.Lock()
 
     # ---- Repository / account status ----
@@ -868,19 +937,16 @@ class Hub:
         # as well: with an account chosen, uploads go to that account's copy over HTTPS only.
         if not runtime.git_exe():
             return False
-        r = runtime.git(self.root, "remote", "set-url", "origin", f"https://github.com/{fork_nwo}.git")
+        with git_sync.clone_lock(self.root):   # not while an editor pushes to origin (D18)
+            r = runtime.git(self.root, "remote", "set-url", "origin", f"https://github.com/{fork_nwo}.git")
         if r.returncode == 0:
             print(f"  origin → {fork_nwo} (the account's copy)")
             return True
         return False
 
     def nwo(self) -> "str | None":
-        """origin's owner/repo (for GitHub links and gh)."""
-        url = self._git("remote", "get-url", "origin")
-        m = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url) or re.match(
-            r"https://github\.com/(.+?)(?:\.git)?$", url
-        )
-        return m.group(1) if m else None
+        """origin's owner/repo (for GitHub links and the API)."""
+        return runtime.github_nwo(self._git("remote", "get-url", "origin"))
 
     def status(self) -> dict:
         git_exe, git_bundled = runtime.git_exe(), runtime.git_bundled()
@@ -889,8 +955,9 @@ class Hub:
             "ok": True,
             "repo": str(self.root),
             "branch": self._git("rev-parse", "--abbrev-ref", "HEAD"),
-            "gitUser": self._git("config", "user.name"),
-            "gitEmail": self._git("config", "user.email"),
+            # the clone's own identity, as the editors' confirmation shows it (C5)
+            "gitUser": accounts.clone_identity(self.root)["name"],
+            "gitEmail": accounts.clone_identity(self.root)["email"],
             "nwo": self.nwo(),
             "account": current_login(),
             "hubTag": runtime.running_hub_tag(),
@@ -976,7 +1043,9 @@ class Hub:
         if runtime.port_open(port):
             return {"ok": True, "url": url, "port": port, "already": True}
         # The editors work as the same account as this hub (token and credential store by login).
-        env = {**accounts.scrub_git_env(os.environ), "CITYGML_ACCOUNT": current_login() or ""}
+        # The city is the clone's own; the start script's city variable does not reach the editors (F7).
+        env = {k: v for k, v in accounts.scrub_git_env(os.environ).items() if k != "CITYGML_UPSTREAM"}
+        env["CITYGML_ACCOUNT"] = current_login() or ""
         proc = subprocess.Popen(self._launch_cmd(key, t, port), cwd=str(self.root), env=env)
         self._procs[key] = proc
         # Wait a bit until the server listens (up to ~6 seconds)
@@ -999,13 +1068,22 @@ class Hub:
 
     # ---- Contributions (PRs / Issues) ----
     def contributions(self, force: bool = False) -> dict:
+        login = current_login()
         with self._cache_lock:
-            if not force and self._contrib_cache and time.time() - self._contrib_cache[0] < 30:
-                return self._contrib_cache[1]
+            # per account (S18, F4): after an account change the previous account's list was shown
+            cached = self._contrib_cache
+            if not force and cached and cached[0] == login and time.time() - cached[1] < 30:
+                return cached[2]
         data = self._fetch_contributions()
         with self._cache_lock:
-            self._contrib_cache = (time.time(), data)
+            self._contrib_cache = (login, time.time(), data)
         return data
+
+    def city_data_changed(self) -> None:
+        """The sync brought new city data: models read from the old files are dropped (S18, F3:
+        the review screen's 3D view kept the files as they were before the sync)."""
+        with self._attr_repo_lock:
+            self._attr_repo = None
 
     # Fetch your own PRs / Issues in one request (same GraphQL API and same fields
     # as gh pr list / gh issue list; no gh CLI dependency = works with the device-flow token).
@@ -1026,8 +1104,7 @@ class Hub:
         # Proposals and issues live on the city repository (upstream); the clone's origin is
         # the person's copy, where no PR ever exists.
         nwo = runtime.upstream_nwo(self.root)
-        token = SESSION.token()
-        login = ((SESSION.account.user() or {}) if token else {}).get("login")
+        token, login = SESSION.github_login()
         if not token or not login:
             reason = tr("hub.err_gh_not_connected",
                         'GitHub is not connected (you can connect from "Connect to GitHub" '
@@ -1094,8 +1171,7 @@ class Hub:
 
     # ---- PR review for administrators ----
     def _review_identity(self) -> tuple[str, str, str]:
-        token = SESSION.token()
-        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
+        token, login = SESSION.github_login()
         nwo = runtime.upstream_nwo(getattr(self, "root", None))
         if not token or not login:
             raise RuntimeError(tr("hub.err_connect_first", "Connect to GitHub first"))
@@ -1110,6 +1186,98 @@ class Hub:
             "permission": permission,
             "canReview": permission in ("admin", "maintain", "push", "write"),
         }
+
+    # ---- First-time contributors: fork runs GitHub holds for the maintainer ----
+    def _open_pulls_by_head(self, token: str, nwo: str) -> dict:
+        """Open PRs keyed by head commit (a fork run names its commit, not its PR)."""
+        pulls: dict = {}
+        for page in range(1, 4):
+            code, data = runtime.github_api(
+                f"/repos/{nwo}/pulls?state=open&per_page=100&page={page}", token)
+            if code != 200 or not isinstance(data, list):
+                break
+            for pr in data:
+                sha = ((pr.get("head") or {}).get("sha")) or ""
+                if sha:
+                    pulls[sha] = pr
+            if len(data) < 100:
+                break
+        return pulls
+
+    def _pull_files(self, token: str, nwo: str, number: int) -> list:
+        code, data = runtime.github_api(f"/repos/{nwo}/pulls/{number}/files?per_page=100", token)
+        return [str(f.get("filename") or "") for f in data] if code == 200 and isinstance(data, list) else []
+
+    @staticmethod
+    def _touches_workflows(files: list) -> bool:
+        """A fork PR that changes .github/ would run its own workflow code once approved:
+        the hub does not approve it; the maintainer checks it on GitHub."""
+        return any(f.startswith(".github/") for f in files)
+
+    def pending_runs(self) -> dict:
+        """Workflow runs of fork PRs from first-time contributors that wait in
+        action_required until a maintainer approves them. Only for an account that can
+        approve; approving runs the checks and nothing else."""
+        perm = self.reviewer_permission()
+        if not perm["canReview"]:
+            return {"ok": True, "canReview": False, "runs": []}
+        token, _, nwo = self._review_identity()
+        code, data = runtime.github_api(
+            f"/repos/{nwo}/actions/runs?status=action_required&per_page=100", token)
+        if code != 200 or not isinstance(data, dict):
+            raise RuntimeError(str(getattr(data, "get", lambda *_: "")("message") or f"HTTP {code}"))
+        pulls = self._open_pulls_by_head(token, nwo)
+        runs = []
+        for run in data.get("workflow_runs") or []:
+            pr = pulls.get(str(run.get("head_sha") or ""))
+            if pr is None:        # its PR was closed or updated since: nothing to approve
+                continue
+            files = self._pull_files(token, nwo, int(pr["number"]))
+            runs.append({
+                "runId": run.get("id"),
+                "workflow": run.get("name") or "",
+                "number": pr.get("number"),
+                "title": pr.get("title") or "",
+                "author": ((pr.get("user") or {}).get("login")) or "",
+                "created": run.get("created_at") or "",
+                "url": pr.get("html_url") or "",
+                "files": files[:20],
+                "fileCount": len(files),
+                "touchesWorkflows": self._touches_workflows(files),
+            })
+        runs.sort(key=lambda r: str(r["created"]))
+        return {"ok": True, "canReview": True, "runs": runs}
+
+    def approve_run(self, run_id: int) -> dict:
+        """Approve one waiting run after checking it again: still action_required, the head of
+        an open PR, and no change under .github/."""
+        if not self.reviewer_permission()["canReview"]:
+            raise RuntimeError(tr("hub.err_not_reviewer",
+                                  "Only an account that can approve in this city can do this"))
+        token, login, nwo = self._review_identity()
+        code, run = runtime.github_api(f"/repos/{nwo}/actions/runs/{run_id}", token)
+        if code != 200 or not isinstance(run, dict) or run.get("conclusion") != "action_required":
+            raise RuntimeError(tr("hub.err_run_not_waiting",
+                                  "This run is no longer waiting for approval. Refresh the list"))
+        pr = self._open_pulls_by_head(token, nwo).get(str(run.get("head_sha") or ""))
+        if pr is None:
+            raise RuntimeError(tr("hub.err_run_not_waiting",
+                                  "This run is no longer waiting for approval. Refresh the list"))
+        if self._touches_workflows(self._pull_files(token, nwo, int(pr["number"]))):
+            raise RuntimeError(tr("hub.err_run_touches_workflows",
+                                  "This proposal changes files under .github/. Check it on GitHub and approve it there"))
+        code, data = runtime.github_api(f"/repos/{nwo}/actions/runs/{run_id}/approve", token, method="POST")
+        if code not in (200, 201, 204):
+            raise RuntimeError(str(getattr(data, "get", lambda *_: "")("message") or f"HTTP {code}"))
+        return {"ok": True, "runId": run_id, "number": pr.get("number"), "approvedBy": login}
+
+    def review_entry(self) -> dict:
+        """Whether the dashboard shows the maintainer card: only to an account that can approve
+        in this city. Fail-closed: not connected or GitHub unreachable hides it."""
+        try:
+            return {"ok": True, "canReview": self.reviewer_permission()["canReview"]}
+        except Exception:
+            return {"ok": True, "canReview": False}
 
     @staticmethod
     def _summary_gml_ids(comments: list) -> list[str]:
@@ -1129,36 +1297,36 @@ class Hub:
     ) -> dict:
         """Match the change target against local CityGML and return the ID, position, and display references."""
         gml_ids = self._summary_gml_ids(comments)
-        safe_gml = re.compile(r"^[^/]+/udx/bldg/[^/]+\.gml$", re.IGNORECASE)
         building_start = re.compile(rb"<(?:\w+:)?Building\b")
         gml_id_attr = re.compile(rb"\bgml:id=[\"']([^\"']+)[\"']")
-        building_id_tag = re.compile(
-            rb"<(?:\w+:)?buildingID>([^<]+)</(?:\w+:)?buildingID>"
-        )
+        # the city's own identity rule (4dcitygml.json building_id): PLATEAU's uro:buildingID was
+        # hard-coded here, so a gml:id or gen: city got another ID than the gates give (S11)
+        rule = building_identity.rule_from_config(runtime.city_meta(self.root))
         pos_list_tag = re.compile(
             rb"<(?:\w+:)?posList\b[^>]*>([^<]+)</(?:\w+:)?posList>"
         )
         for file in files:
             rel = str(file.get("filename") or file.get("path") or "")
-            if not safe_gml.match(rel) or ".." in Path(rel).parts:
+            if not self._is_data_file(rel, images=False):
                 continue
             source = self.root / rel
             try:
                 with source.open("rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as data:
                     candidates: list[tuple[str, int]] = []
                     for gml_id in gml_ids:
-                        hit = data.find(gml_id.encode("utf-8"))
+                        hit = _find_whole(data, gml_id)
                         if hit >= 0:
                             candidates.append((gml_id, hit))
                     if stable_id and not candidates:
-                        hit = data.find(stable_id.encode("utf-8"))
+                        hit = _find_whole(data, stable_id)
                         if hit < 0:
                             continue
                         start_match = None
                         for match in building_start.finditer(data, 0, hit):
                             start_match = match
                         if start_match:
-                            id_match = gml_id_attr.search(data, start_match.start(), hit)
+                            # up to the quote after the hit: in a gml:id city the stable ID is the gml:id itself
+                            id_match = gml_id_attr.search(data, start_match.start(), hit + len(stable_id.encode()) + 1)
                             if id_match:
                                 candidates.append((
                                     id_match.group(1).decode("utf-8", errors="replace"),
@@ -1167,18 +1335,18 @@ class Hub:
                     for gml_id, hit in candidates:
                         next_building = building_start.search(data, hit + len(gml_id))
                         end = next_building.start() if next_building else min(len(data), hit + 8_000_000)
-                        stable_match = building_id_tag.search(data, hit, end)
-                        resolved_id = (
-                            stable_match.group(1).decode("utf-8", errors="replace").strip()
-                            if stable_match else stable_id
-                        )
+                        resolved_id = building_identity.stable_id(data[hit:end], gml_id, rule)
                         center = None
                         pos_match = pos_list_tag.search(data, hit, end)
                         if pos_match:
                             try:
                                 nums = [float(x) for x in pos_match.group(1).split()]
-                                lats = nums[0::3]
-                                lons = nums[1::3]
+                                # in the file's own CRS: a projected one (UTM, feet) is converted
+                                srs = re.search(rb'srsName="([^"]*)"', data[:8192])
+                                tf = citygml_dialect.crs_transformer(srs.group(1).decode("utf-8", "replace") if srs else "")
+                                points = [tf(x, y) if tf else (x, y) for x, y in zip(nums[0::3], nums[1::3])]
+                                lats = [p[0] for p in points]
+                                lons = [p[1] for p in points]
                                 if lats and lons:
                                     center = [
                                         round((min(lats) + max(lats)) / 2, 7),
@@ -1189,7 +1357,7 @@ class Hub:
                         return {
                             "buildingId": resolved_id,
                             "gid": gml_id,
-                            "tile": Path(rel).name.split("_", 1)[0],
+                            "tile": _tile_code(Path(rel).name),
                             "center": center,
                         }
             except (OSError, ValueError):
@@ -1208,21 +1376,33 @@ class Hub:
                     self._attr_repo = attr_editor_module().Repo(self.root)
         return self._attr_repo
 
+    def _is_data_file(self, rel: str, gml: bool = True, images: bool = True) -> bool:
+        """Whether a repository path is city data: a .gml or texture image inside the city's data
+        directories (4dcitygml.json data_dirs) or PLATEAU's <package>/udx/bldg/ layout."""
+        if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+            return False
+        kinds = ((r"\.gml",) if gml else ()) + ((r"\.(?:jpe?g|png|tiff?)",) if images else ())
+        if not kinds or not re.search(r"(?:" + "|".join(kinds) + r")$", rel, re.IGNORECASE):
+            return False
+        if re.match(r"^[^/]+/udx/bldg/", rel):
+            return True
+        root = Path(self.root).resolve()
+        return any(rel.startswith(d.relative_to(root).as_posix() + "/") for d in runtime.data_dirs(root))
+
     def review_building_model(self, tile: str, gid: str) -> dict:
-        if not re.fullmatch(r"\d{8,9}", tile):
-            raise ValueError(tr("hub.err_bad_mesh", "Invalid mesh number"))
+        if tile not in self._attribute_repo().tile_files():
+            raise ValueError(tr("hub.err_bad_tile", "Unknown tile"))
         if not re.fullmatch(r"[A-Za-z0-9_.:-]+", gid):
             raise ValueError(tr("hub.err_bad_building_id", "Invalid building identifier"))
         return self._attribute_repo().building_json(tile, gid)
 
     def review_texture(self, path: str) -> tuple[bytes, str]:
         """Return only the local appearance images used by the 3D view."""
-        if ".." in Path(path).parts or not re.fullmatch(
-            r"[^/]+_appearance/[^/]+\.(?:jpe?g|png|tiff?)", path, re.IGNORECASE
-        ):
-            raise ValueError(tr("hub.err_not_appearance", "Only facade images can be fetched"))
         repo = self._attribute_repo()
-        source = repo.bldg_dir / path
+        source = (repo.bldg_dir / path).resolve()
+        if (".." in Path(path).parts or not source.is_relative_to(repo.bldg_dir.resolve())
+                or not re.search(r"\.(?:jpe?g|png|tiff?)$", path, re.IGNORECASE)):
+            raise ValueError(tr("hub.err_not_appearance", "Only facade images can be fetched"))
         if not source.is_file():
             raise FileNotFoundError(tr("hub.err_appearance_missing", "Facade image not found"))
         mime = {
@@ -1248,7 +1428,16 @@ class Hub:
             files, comments
         )
 
-    def _review_queue_item(self, token: str, nwo: str, pr: dict) -> "dict | None":
+    def _awaiting_approval(self, token: str, nwo: str) -> frozenset:
+        """Head commits whose runs GitHub holds for a maintainer's approval (first-time
+        contributors' fork PRs). They have no check runs yet; fail-soft: empty on error."""
+        code, data = runtime.github_api(
+            f"/repos/{nwo}/actions/runs?status=action_required&per_page=100", token)
+        runs = data.get("workflow_runs") if code == 200 and isinstance(data, dict) else None
+        return frozenset(str(r.get("head_sha") or "") for r in runs or [])
+
+    def _review_queue_item(self, token: str, nwo: str, pr: dict,
+                           awaiting_approval: frozenset = frozenset()) -> "dict | None":
         """Build one list item, with two states based on who works on it next.
 
         Every open PR against main is listed whatever its class (A5); `other`
@@ -1259,7 +1448,7 @@ class Hub:
         number = int(pr.get("number") or 0)
         body = str(pr.get("body") or "")
         # Pre-CI preview only: as soon as CI has posted its `reason` row, that verdict wins (A6).
-        reason_ok = review_ready_reason(human_reason(body, kind, self._attribute_labels))
+        reason_ok = pr_reason.filled(human_reason(body, kind, self._attribute_labels))
         head_sha = str((pr.get("head") or {}).get("sha") or "")
         check_runs: list = []
         if head_sha:
@@ -1269,12 +1458,17 @@ class Hub:
             if status == 200 and isinstance(data, dict):
                 check_runs = data.get("check_runs") or []
         check_status = _overall_check_status(check_runs)
+        # GitHub holds this head's analysis until a maintainer allows the first-time run: the
+        # checks it has (a skipped gatekeeper, the freshness comment) say nothing yet
+        needs_approval = head_sha in awaiting_approval
+        if needs_approval:
+            check_status = "pending"
 
         c_status, comment_data = runtime.github_api(
             f"/repos/{nwo}/issues/{number}/comments?per_page=100", token
         )
         comments = comment_data if c_status == 200 and isinstance(comment_data, list) else []
-        ci_rows = _inspection_summary_statuses(comments)
+        ci_rows = {**_inspection_summary_statuses(comments), **report_rows(comments, pr)}
         if "reason" in ci_rows:
             reason_ok = ci_rows["reason"] == "pass"
         r_status, review_data = runtime.github_api(
@@ -1295,6 +1489,10 @@ class Hub:
         if check_status == "fail":
             adjustment_reasons.append(
                 tr("hub.adjust_checks_failing", "Automated checks have failing items"))
+        elif needs_approval:
+            adjustment_reasons.append(tr(
+                "hub.adjust_needs_approval",
+                "A first-time contributor: the checks run once a maintainer allows them"))
         elif check_status == "pending":
             adjustment_reasons.append(tr("hub.retry_pending_label", "Automated checks running"))
         elif auto_resubmit and reason_ok:
@@ -1320,6 +1518,8 @@ class Hub:
             waiting_source = "reviewer"
         elif freshness_feedback:
             waiting_source = "latest"
+        elif needs_approval:
+            waiting_source = "approval"
         elif check_status == "pending":
             waiting_source = "checking"
         elif pr.get("draft"):
@@ -1382,11 +1582,12 @@ class Hub:
             pr for pr in pulls
             if str((pr.get("base") or {}).get("ref") or "") == "main"
         ]
+        awaiting = self._awaiting_approval(token, nwo) if candidates else frozenset()
         workers = min(8, max(1, len(candidates)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             items = [
                 item for item in pool.map(
-                    lambda pr: self._review_queue_item(token, nwo, pr), candidates
+                    lambda pr: self._review_queue_item(token, nwo, pr, awaiting), candidates
                 ) if item is not None
             ]
         perm = self.reviewer_permission()
@@ -1510,10 +1711,10 @@ class Hub:
         kind = review_kind(pr)
         body = str(pr.get("body") or "")
 
-        reason_source = section_by_key(body, "reason", *reason_headings()) or body
+        reason_source = section_by_key(body, "reason", *pr_reason.HEADINGS) or body
         reason = human_reason(body, kind, self._attribute_labels)
-        reason_ok = review_ready_reason(reason)
-        ci_rows = _inspection_summary_statuses(comments)
+        reason_ok = pr_reason.filled(reason)
+        ci_rows = {**_inspection_summary_statuses(comments), **report_rows(comments, pr)}
         if "reason" in ci_rows:   # CI's verdict wins over the local preview (A6)
             reason_ok = ci_rows["reason"] == "pass"
         commits = fetched["commits"] if isinstance(fetched["commits"], list) else []
@@ -1527,11 +1728,7 @@ class Hub:
         if not building_id:
             building_id = str(model_ref.get("buildingId") or "")
 
-        data_path = re.compile(
-            r"^[^/]+/udx/bldg/(?:[^/]+\.gml|[^/]+_appearance/[^/]+\.(?:jpe?g|png|tiff?))$",
-            re.IGNORECASE,
-        )
-        unsafe_files = [f.get("filename") or "" for f in files if not data_path.match(str(f.get("filename") or ""))]
+        unsafe_files = [f.get("filename") or "" for f in files if not self._is_data_file(str(f.get("filename") or ""))]
         checks = [{
             "name": check_display_name(c.get("name") or ""),
             "technicalName": c.get("name") or "",
@@ -1614,9 +1811,13 @@ class Hub:
             comments=comments,
             changes_requested=changes_requested,
             adjustment_owner="reviewer" if manual_changes_requested else "ci",
+            rows=report_rows(comments, pr),
         )
-        inspection_ready = all(c["status"] in ("pass", "na") for c in checkpoints)
-        failed_inspections = [c["label"] for c in checkpoints if c["status"] == "fail"]
+        # warn rows are advisory and never block (A6); the verdict is CI's, row by row
+        row = {c["key"]: c["status"] for c in checkpoints}
+        inspection_ready = all(c["status"] in ("pass", "na", "warn") for c in checkpoints)
+        failed_inspections = [c["label"] for c in checkpoints
+                              if c["status"] in ("fail", "error") and c["key"] not in ("reason", "file-scope")]
         blockers = []
         if str(pr.get("state") or "").lower() != "open":
             blockers.append(tr("hub.blocker_not_open", "This proposal is not open"))
@@ -1626,23 +1827,20 @@ class Hub:
             blockers.append(tr(
                 "hub.blocker_checks",
                 "Approval is not possible until the automated checks complete and all succeed"))
-        if unsafe_files:
+        if row.get("file-scope") in ("fail", "error"):
             blockers.append(tr(
                 "hub.blocker_unsafe_files",
                 "Changes to files other than building data are included"))
-        if not reason_ok:
+        if row.get("reason") in ("fail", "error"):
             blockers.append(tr(
                 "hub.blocker_no_reason",
                 "The reason for the change and supporting documents are not filled in"))
-        if not model_url:
-            blockers.append(tr(
-                "hub.blocker_no_model", "The building's 3D model cannot be displayed"))
         if manual_changes_requested:
             blockers.append(tr(
                 "hub.blocker_reviewer_wait",
                 "Waiting for a response to the reviewer's comment"))
-        # Do not repeat this when blockers for inspections, reason, or the 3D model are already shown
-        if failed_inspections and checks_ok and reason_ok and model_url:
+        # Do not repeat this when the check-run blocker is already shown
+        if failed_inspections and checks_ok:
             blockers.append(tr(
                 "hub.blocker_failed_inspections",
                 "There are inspection items that have not passed ({items})",
@@ -1710,11 +1908,7 @@ class Hub:
         """Return the before/after images of a texture PR via the authenticated API."""
         if side not in ("base", "head"):
             raise ValueError(tr("hub.err_bad_side", "Invalid image comparison side"))
-        asset_path = re.compile(
-            r"^[^/]+/udx/bldg/[^/]+_appearance/[^/]+\.(?:jpe?g|png|tiff?)$",
-            re.IGNORECASE,
-        )
-        if not asset_path.match(path) or ".." in Path(path).parts:
+        if not self._is_data_file(path, gml=False):
             raise ValueError(tr("hub.err_not_texture", "Only texture images can be fetched"))
         token, _login, nwo = self._review_identity()
         code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
@@ -1820,6 +2014,8 @@ class Hub:
 
     def request_ci_retry(self, number: int, *, demo: bool = False) -> dict:
         """Safely request a re-run, via a PR comment, for temporary inspection failures only."""
+        if not demo:
+            runtime.require_min_hub(self.root)
         token, login, nwo = self._review_identity()
         code, pr = runtime.github_api(f"/repos/{nwo}/pulls/{number}", token)
         if code != 200 or not isinstance(pr, dict):
@@ -1879,19 +2075,9 @@ class Hub:
                           "within a few minutes"),
         }
 
-    def feedback_url(self) -> "str | None":
-        nwo = self.nwo()
-        if not nwo:
-            return None
-        tmpl = self.root / ".github" / "ISSUE_TEMPLATE" / "ux_feedback.yml"
-        if tmpl.is_file():
-            return f"https://github.com/{nwo}/issues/new?template=ux_feedback.yml"
-        return f"https://github.com/{nwo}/issues/new"
-
     def feedback_defaults(self) -> dict:
         """Return the defaults and submitter info for the in-hub feedback form."""
-        token = SESSION.token()
-        login = ((SESSION.account.user() or {}) if token else {}).get("login") or ""
+        token, login = SESSION.github_login()
         contributions = self.contributions()
         badge = contributions.get("badge") if contributions.get("ok") else None
         categories = feedback_categories()
@@ -2408,6 +2594,7 @@ class Session:
         self.updates = UpdateManager()
         self.fork = runtime.Memo()
         self.access = runtime.Memo()
+        self._activate_lock = threading.Lock()
 
     # ---- the account ----
     @property
@@ -2416,6 +2603,19 @@ class Session:
 
     def token(self) -> str:
         return self.account.token()
+
+    def github_login(self) -> "tuple[str, str]":
+        """The token and the login GitHub confirms for it; "" for both parts that are missing."""
+        token = self.token()
+        return token, ((self.account.user() or {}) if token else {}).get("login") or ""
+
+    def upstream(self) -> str:
+        """The city's owner/repo: the clone's own city once there is a clone, else the city
+        this session was started for. Fork lookup and creation used runtime.upstream_nwo()
+        without a clone, which is the practice city on a manual start (S18, F3b)."""
+        if self.hub is not None:
+            return runtime.upstream_nwo(self.hub.root, ignore_env=True)
+        return self.city or runtime.upstream_nwo()
 
     def net_git_args(self) -> list:
         """git arguments for a network command as the city's account (or anonymously)."""
@@ -2444,12 +2644,23 @@ class Session:
         self.city = runtime.clone_city(root) or self.city
         runtime.remember_clone(self.city, root)
         self.account.clone_opened()
+        self.updates.set_min_hub(root, final=not (sync and runtime.git_exe()))
         if sync:
             if runtime.git_exe():
                 self.sync = git_sync.BackgroundSync(
-                    root, lambda: runtime.upstream_url(root, ignore_env=True), self.net_git_args, log=print).start()
-            self.updates.check_async(min_hub=min_hub_of(root))
+                    root, lambda: runtime.upstream_url(root, ignore_env=True), self.net_git_args, log=print,
+                    on_done=self._city_synced).start()
+            self.updates.check_async()
         return self.hub
+
+    def _city_synced(self, state: dict) -> None:
+        """After the sync: judge min_hub on the synced config, and drop what was read before."""
+        hub = self.hub
+        if hub is None:
+            return
+        self.updates.set_min_hub(hub.root, final=True)
+        if state.get("state") in ("updated", "ref-moved"):
+            hub.city_data_changed()
 
     def start(self, root, city: "str | None", *, sync: bool = True) -> None:
         """What main() knows: the city the launcher asked for and the clone found for it (or None)."""
@@ -2464,13 +2675,16 @@ class Session:
                 pass
 
     def try_activate(self) -> None:
-        """After the setup screen's clone finished: serve it (the screen keeps polling until then)."""
+        """After the setup screen's clone finished: serve it (the screen keeps polling until then).
+        The first clone of a session is handled like a clone found at start: the version check
+        and min_hub run, and polls arriving together open it once (S18, F6)."""
         st = self.setup
-        if self.hub is not None or not st.done or st.dest is None:
-            return
-        if runtime.has_building_data(Path(st.dest)):
-            self.open_clone(st.dest)
-        else:
+        with self._activate_lock:
+            if self.hub is not None or not st.done or st.dest is None:
+                return
+            if runtime.has_building_data(Path(st.dest)):
+                self.open_clone(st.dest, sync=True)
+                return
             st.done = False
             st.error = tr("hub.err_clone_no_bldg",
                           "No building data (udx/bldg) was found in the cloned destination")
@@ -2494,7 +2708,7 @@ class Session:
             return True
         if fresh:
             return False
-        return self.access.set(upstream_access(self.token()), 5)
+        return self.access.set(upstream_access(self.token(), self.upstream()), 5)
 
     def fork_nwo(self, *, fresh: bool = False) -> "str | None":
         """The account's copy of the city (owner/repo), or None. Kept for a minute when
@@ -2505,7 +2719,7 @@ class Session:
         valid, val = self.fork.get()
         if valid and not fresh:
             return val
-        found = find_fork(self.token(), self.login)
+        found = find_fork(self.token(), self.login, self.upstream())
         self.fork.set(found, 60 if found else 10)
         if found and self.hub is not None:
             self.hub.ensure_origin(found)
@@ -2578,34 +2792,32 @@ class Session:
 
 
 
-def upstream_access(token: str) -> bool:
-    """Whether this token can reach upstream (the source data). Always 200 for a public repo."""
-    code, _ = runtime.github_api(f"/repos/{runtime.upstream_nwo()}", token)
+def upstream_access(token: str, upstream: str) -> bool:
+    """Whether this token can reach the city repository upstream (owner/repo). Always 200 for a public repo."""
+    code, _ = runtime.github_api(f"/repos/{upstream}", token)
     return code == 200
 
 
-def find_fork(token: str, login: str) -> "str | None":
-    """The upstream fork owned by login (owner/repo), or None if absent."""
-    repo = runtime.upstream_nwo().split("/")[-1]
+def find_fork(token: str, login: str, upstream: str) -> "str | None":
+    """login's fork of the city repository upstream (owner/repo), or None if absent."""
+    repo = upstream.split("/")[-1]
     code, data = runtime.github_api(f"/repos/{login}/{repo}", token)
     if code == 200 and data.get("fork"):
         return data.get("full_name")
     return None
 
 
-def create_fork(token: str) -> "tuple[str | None, str | None]":
-    """Create a fork of upstream (or return the existing one). Returns (owner/repo, error message).
-
-    Fork creation is asynchronous, so wait briefly and confirm the fork materialized.
-    """
-    user = runtime.github_user_status(token)[1]
-    if not user:
+def create_fork(token: str, login: "str | None", upstream: str) -> "tuple[str | None, str | None]":
+    """Create login's fork of the city repository upstream (or return the existing one).
+    Returns (owner/repo, error message). The session knows the login (it used to be fetched
+    again here, C7). Fork creation is asynchronous, so wait briefly and confirm the fork
+    materialized."""
+    if not token or not login:
         return None, tr("hub.err_connect_first", "Connect to GitHub first")
-    login = user["login"]
-    existing = find_fork(token, login)
+    existing = find_fork(token, login, upstream)
     if existing:
         return existing, None
-    code, data = runtime.github_api(f"/repos/{runtime.upstream_nwo()}/forks", token, method="POST", payload={})
+    code, data = runtime.github_api(f"/repos/{upstream}/forks", token, method="POST", payload={})
     if code not in (200, 201, 202):
         msg = data.get("message") or f"HTTP {code}"
         if accounts.is_org_restriction(code, data):
@@ -2621,7 +2833,7 @@ def create_fork(token: str) -> "tuple[str | None, str | None]":
         return None, tr("hub.err_fork_failed", "Could not create the copy: {reason}", reason=msg)
     for _ in range(20):  # wait up to 40 seconds for the fork to materialize
         time.sleep(2)
-        nwo = find_fork(token, login)
+        nwo = find_fork(token, login, upstream)
         if nwo:
             return nwo, None
     return data.get("full_name"), None
@@ -2708,7 +2920,12 @@ class Handler(runtime.LocalHandler):
                     self._error(tr("hub.err_viewer_missing",
                                    "The 3D view component was not found"), 404)
                 else:
-                    self._bytes(viewer.read_bytes(), "text/html; charset=utf-8")
+                    # Served as the attribute editor serves it: the city's map settings, the theme
+                    # and the viewer's language pack (its t() and viewer.* keys); raw bytes stop
+                    # the page before it loads the building.
+                    data = attr_editor_module().city_map_html(viewer.read_bytes(), self.root)
+                    self._bytes(runtime.page(data, "attr_editor", self.root), "text/html; charset=utf-8",
+                                cache="no-cache")
             elif path == "/api/status":
                 # Merge in the authentication progress (userCode / waiting / login)
                 # so the dashboard can also show "Connect" (the device flow).
@@ -2725,6 +2942,10 @@ class Handler(runtime.LocalHandler):
                 self._json(s.hub.feedback_defaults())
             elif path == "/api/contributions":
                 self._json({"ok": True, **s.hub.contributions()})
+            elif path == "/api/reviews/permission":
+                self._json(s.hub.review_entry())
+            elif path == "/api/reviews/pending-runs":
+                self._json(s.hub.pending_runs())
             elif path == "/api/reviews":
                 self._json(s.hub.review_queue(include_examples=query.get("demo") == ["1"]))
             elif re.fullmatch(r"/api/reviews/\d+/asset", path):
@@ -2797,27 +3018,18 @@ class Handler(runtime.LocalHandler):
                 # Forget this city's binding (account and clone registration). The clone folder stays.
                 city = s.city
                 s.account.disconnect(delete=False)
-                clone = str(s.hub.root) if s.hub is not None else None
-
-                def same_path(a, b) -> bool:
-                    try:
-                        return bool(a) and bool(b) and Path(a).expanduser().resolve() == Path(b).resolve()
-                    except OSError:
-                        return False
 
                 def forget(cfg: dict) -> None:
                     cities = cfg.get("cities")
                     if isinstance(cities, dict):
                         cities.pop(city, None)
-                    if same_path(cfg.get("repo"), clone):
-                        cfg.pop("repo", None)   # the legacy "last used" pointer would re-adopt the clone
                 if city:
                     runtime.update_config(forget)
                 self._json({"ok": True})
                 return
             if path == "/api/setup/fork":
                 try:
-                    nwo, err = create_fork(s.account.token())
+                    nwo, err = create_fork(s.account.token(), s.login, s.upstream())
                 except (urllib.error.URLError, OSError):
                     nwo, err = None, tr("hub.err_github_offline",
                                         "GitHub could not be reached. Check the internet connection and try again.")
@@ -2856,6 +3068,8 @@ class Handler(runtime.LocalHandler):
                     self._error(tr("hub.shortcut_failed", "Could not create the icon: {reason}", reason=str(e)))
             elif path == "/api/refresh":
                 self._json({"ok": True, **s.hub.contributions(force=True)})
+            elif re.fullmatch(r"/api/reviews/pending-runs/\d+/approve", path):
+                self._json(s.hub.approve_run(int(path.split("/")[4])))
             elif re.fullmatch(r"/api/reviews/\d+/decision", path):
                 number = int(path.split("/")[3])
                 self._json(s.hub.submit_review(number, demo=bool(body.get("demo"))))
@@ -2911,10 +3125,11 @@ def main() -> None:
     # repository routing): the clone's config and the city's account are the only sources.
     accounts.scrub_git_env()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (auto-detected if omitted)")
+    parser.add_argument("--repo", type=Path, help="local clone of the city repository (auto-detected if omitted)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
+    runtime.migrate_config()   # once, before anything reads the settings (S18); not for --help
 
     # Clone location: explicit → ancestor detection → the remembered clone OF THIS CITY.
     # A remembered clone of another city is never adopted (the start script's city
@@ -2924,12 +3139,7 @@ def main() -> None:
     if repo_root is not None and args.repo is None and city and runtime.clone_city(repo_root) != city:
         repo_root = None
     if repo_root is None:
-        if city:
-            repo_root = runtime.saved_clone_for(city)
-        else:
-            saved = runtime.read_config().get("repo")
-            if saved and runtime.has_building_data(Path(saved)):
-                repo_root = Path(saved)
+        repo_root = runtime.saved_clone_for(city) if city else runtime.last_clone()
 
     if repo_root is not None and runtime.has_building_data(Path(repo_root)):
         # Already running for this clone (the same starter double-clicked twice)? Open it instead —

@@ -184,7 +184,7 @@
   <div id="left">
     <div style="position:relative; min-height:0;">
       <div id="map"></div>
-      <div id="loading"><span class="spinner"></span>&nbsp;<span data-i18n="editor.loading_mesh">Loading mesh…</span></div>
+      <div id="loading"><span class="spinner"></span>&nbsp;<span data-i18n="editor.loading_mesh">Loading tile…</span></div>
     </div>
     <div id="pane3d">
       <div id="pane3dLabel" data-i18n="editor.pane3d_label">3D preview | LOD1 / LOD2</div>
@@ -232,7 +232,7 @@
     <div class="sub" id="modalTarget"></div>
     <div id="prPreview"></div>
     <table id="modalTable"><thead><tr><th data-i18n="editor.th_item">Item</th><th data-i18n="editor.th_old">Before</th><th data-i18n="editor.th_new">After</th><th data-i18n="editor.th_source">Source</th></tr></thead><tbody></tbody></table>
-    <label style="font-weight:600; font-size:12px;" data-i18n="editor.reason_label">Notes / supporting document URL (optional)</label>
+    <label style="font-weight:600; font-size:12px;" data-i18n="editor.reason_label">Reason and supporting evidence (required)</label>
     <textarea id="prReason" data-i18n-placeholder="editor.reason_placeholder" placeholder="e.g. survey date, URLs of documents you checked, anything the maintainer should know"></textarea>
     <div id="pretestResult"><div class="pretestNote" data-i18n="editor.pretest_note_initial">Before sending, your changes are checked on this computer.</div></div>
     <div id="submitConfirm" style="display:none"></div>
@@ -294,11 +294,12 @@ const GROUP_DEFS = [
 
 // ---- Map ----
 // Initial position and tile type follow the clone's 4dcitygml.json (injected by the server as CITY_MAP).
-// Without a setting, default to GSI and leave it to fitBounds after the tile list is fetched.
+// Without a setting: OpenStreetMap from a world view, then fitBounds after the tile list is fetched
+// (GSI tiles cover Japan only and are used when the city declares map.tiles "gsi").
 const CITY_MAP = window.CITY_MAP || {};
 const map = L.map('map', { zoomControl: true })
-  .setView(CITY_MAP.center || [35.681, 139.767], CITY_MAP.zoom || 13);
-if (CITY_MAP.tiles === 'osm') {
+  .setView(CITY_MAP.center || [20, 0], CITY_MAP.zoom || 2);
+if (CITY_MAP.tiles !== 'gsi') {
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
@@ -423,6 +424,7 @@ function clearSelection() {
 }
 
 function missingSourceKeys() {
+  if (!selected || !selected.src) return [];   // the city's data has no source code list
   return [...changes.keys()].filter(key => !sourceSelections.has(key));
 }
 
@@ -436,7 +438,7 @@ function updateActionHint() {
   } else if (selected) {
     $('headerInfo').textContent = t('editor.hint_click_value', 'Next: click a value on the right that you want to change');
   } else if (currentTile) {
-    $('headerInfo').textContent = t('editor.hint_pick_building', 'Next: click one light-blue building on the map (mesh {code})', {code: currentTile.code});
+    $('headerInfo').textContent = t('editor.hint_pick_building', 'Next: click one light-blue building on the map (tile {code})', {code: currentTile.code});
   } else {
     $('headerInfo').textContent = t('editor.hint_pick_mesh', 'Select a blue square on the map in the top left');
   }
@@ -922,7 +924,7 @@ $('btnPr').onclick = () => {
   $('prPreview').appendChild(previewText);
   loadPrPreview(previewText, $('prPreview'));
   $('modalTarget').textContent =
-    t('editor.modal_target', 'Target: {id} (mesh {code} / one building only)',
+    t('editor.modal_target', 'Target: {id} (tile {code} / one building only)',
       {id: selected.buildingID || selected.gid, code: currentTile.code});
   $('modalResult').innerHTML = '';
   $('btnCancel').style.display = '';

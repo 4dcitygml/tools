@@ -250,12 +250,9 @@ def login_for_clone(root) -> "str | None":
     (CITYGML_ACCOUNT) counts only for a clone without a 4dcitygml.json."""
     city = runtime.clone_city(root) if root is not None else None
     if city:
-        bound = city_login(city)
-        if bound:
-            return bound
-        cities = runtime.read_config().get("cities")
-        if isinstance(cities, dict) and city in cities:
-            return None   # the city is known and has no account (disconnected): nothing applies
+        # the settings file is the one owner (S18, F5): an unbound or forgotten city has no
+        # account, whatever login the editor was started with
+        return city_login(city) or None
     env = os.environ.get("CITYGML_ACCOUNT", "").strip()
     try:
         return safe_login(env) if env and load_account(env) else None

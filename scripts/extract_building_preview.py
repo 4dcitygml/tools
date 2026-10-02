@@ -19,19 +19,16 @@ import argparse
 import base64
 import gzip
 import json
-import subprocess
 import sys
 from pathlib import Path
-from xml.etree import ElementTree
 
 # Repository root (this script lives in <root>/scripts/).
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-# XML namespaces used by CityGML 2.0 documents.
-NS_CORE = "http://www.opengis.net/citygml/2.0"
-NS_BLDG = "http://www.opengis.net/citygml/building/2.0"
-NS_GML = "http://www.opengis.net/gml"
-NS_APP = "http://www.opengis.net/citygml/appearance/2.0"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts import citygml_dialect, citygml_faces  # noqa: E402
+from scripts.safe_xml import safe_fromstring  # noqa: E402
+from scripts.repo_git import blob  # noqa: E402
 
 # GitHub caps a PR comment body at 65,536 characters. We keep the generated
 # URL comfortably below that so it can be embedded in a comment together with
@@ -40,24 +37,22 @@ NS_APP = "http://www.opengis.net/citygml/appearance/2.0"
 MAX_URL_LEN = 60000
 
 
-def _get_file_at_sha(repo: Path, sha: str, rel_path: str) -> bytes | None:
-    """Return the raw bytes of ``rel_path`` at commit ``sha``, or None if absent.
-
-    Uses ``git show`` so the working tree state is irrelevant; a non-zero exit
-    (file missing at that revision, bad sha, ...) yields None.
-    """
-    result = subprocess.run(
-        ["git", "-C", str(repo), "show", f"{sha}:{rel_path}"],
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout
-
-
 def _split_floats(text: str) -> list[float]:
     """Parse a whitespace-separated coordinate string into a list of floats."""
     return [float(token) for token in text.split()]
+
+
+def _points(text: str, tf, zs: float) -> list[list[float]]:
+    """[lat, lon, z] of a posList in the file's own CRS (a projected CRS is converted)."""
+    values = _split_floats(text)
+    out = []
+    for i in range(0, len(values) - 2, 3):
+        if tf is None:
+            out.append([values[i], values[i + 1], values[i + 2]])
+        else:
+            lat, lon = tf(values[i], values[i + 1])
+            out.append([round(lat, 7), round(lon, 7), round(values[i + 2] * zs, 3)])
+    return out
 
 
 def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
@@ -65,63 +60,67 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
 
     Each summary carries the measured height, the base elevation, a 2D
     footprint, and optionally LOD1 top elevation and LOD2 wall/roof polygons.
-    Buildings lacking an id or a usable footprint are silently skipped.
+    The file is read in its own CityGML version and CRS (citygml_dialect): a
+    projected CRS is converted to latitude/longitude, heights in feet to metres.
+    The footprint is the LOD0 roof edge, else the LOD1 solid, else the lowest
+    LOD2 face (data with LOD2 only). Buildings lacking an id or any of these
+    are skipped.
     """
-    root = ElementTree.fromstring(xml_bytes)
+    root = safe_fromstring(xml_bytes, huge_tree=True)
+    ns = citygml_dialect.ns_for_root(root)
+    tf = citygml_dialect.file_transformer(root, ns)
+    zs = getattr(tf, "z_scale", 1.0) if tf is not None else 1.0
+    gml, bldg = ns["gml"], ns["bldg"]
     buildings: dict[str, dict] = {}
 
-    for member in root.findall(f"{{{NS_CORE}}}cityObjectMember"):
-        building = member.find(f"{{{NS_BLDG}}}Building")
-        if building is None:
-            continue
-
-        gml_id = building.get(f"{{{NS_GML}}}id")
+    for building in root.iter(f"{{{bldg}}}Building"):
+        gml_id = building.get(f"{{{gml}}}id")
         if not gml_id:
             continue
 
-        # Measured height, defaulting to zero when the element is missing.
-        height = 0.0
-        height_el = building.find(f"{{{NS_BLDG}}}measuredHeight")
-        if height_el is not None and height_el.text:
-            height = float(height_el.text)
-
-        # Footprint: prefer the LOD0 roof edge ring, fall back to the LOD1
-        # solid's rings.
+        # Footprint: the LOD0 roof edge ring, else the LOD1 solid's first ring.
         pos_text = None
-        lod0 = building.find(f"{{{NS_BLDG}}}lod0RoofEdge")
+        lod0 = building.find(f"{{{bldg}}}lod0RoofEdge")
         if lod0 is not None:
-            ring_pos = lod0.find(f".//{{{NS_GML}}}LinearRing/{{{NS_GML}}}posList")
+            ring_pos = lod0.find(f".//{{{gml}}}LinearRing/{{{gml}}}posList")
             if ring_pos is not None and ring_pos.text:
                 pos_text = ring_pos.text
+        lod1 = building.find(f"{{{bldg}}}lod1Solid")
+        lod1_rings = lod1.findall(f".//{{{gml}}}posList") if lod1 is not None else []
+        if pos_text is None and lod1_rings and lod1_rings[0].text:
+            pos_text = lod1_rings[0].text
 
-        lod1 = building.find(f"{{{NS_BLDG}}}lod1Solid")
-        if pos_text is None and lod1 is not None:
-            ring_pos = lod1.find(f".//{{{NS_GML}}}LinearRing/{{{NS_GML}}}posList")
-            if ring_pos is not None and ring_pos.text:
-                pos_text = ring_pos.text
+        # LOD2 geometry: the boundedBy polygons, BuildingParts included, holes as holes
+        # (scripts/citygml_faces.py, the one reader the editors use too)
+        faces = [citygml_faces.public_face(f) for f in citygml_faces.lod2_faces(building, ns, tf, zs, gml_id)]
 
-        if not pos_text:
+        if pos_text:
+            ring = _points(pos_text, tf, zs)
+        elif faces:
+            low = min(faces, key=lambda f: sum(p[2] for p in f["pts"]) / len(f["pts"]))
+            ring = [[lat, lon, z] for lon, lat, z in low["pts"]]
+        else:
             continue
-
-        values = _split_floats(pos_text)
-        # Coordinates come as (lat, lon, alt) triplets; keep only [lat, lon].
-        coords = [
-            [values[i], values[i + 1]] for i in range(0, len(values) - 2, 3)
-        ]
+        coords = [[lat, lon] for lat, lon, _z in ring]
         if len(coords) < 3:
             continue
 
-        # Base elevation: third component of the first vertex of the first
-        # ring inside the LOD1 solid.
+        # Base elevation: the first vertex of the LOD1 solid, else the lowest LOD2 point.
+        lod2_z = [p[2] for f in faces for p in f["pts"]]
         base = 0.0
-        if lod1 is not None:
-            first_ring = lod1.find(
-                f".//{{{NS_GML}}}LinearRing/{{{NS_GML}}}posList"
-            )
-            if first_ring is not None and first_ring.text:
-                tokens = first_ring.text.split()
-                if len(tokens) >= 3:
-                    base = float(tokens[2])
+        if lod1_rings and lod1_rings[0].text:
+            first = _points(lod1_rings[0].text, tf, zs)
+            base = first[0][2] if first else 0.0
+        elif lod2_z:
+            base = min(lod2_z)
+
+        # Measured height (in the data's units); for data with LOD2 only, the LOD2 extent.
+        height = 0.0
+        height_el = building.find(f"{{{bldg}}}measuredHeight")
+        if height_el is not None and height_el.text:
+            height = float(height_el.text) * zs
+        elif not pos_text and lod2_z:
+            height = round(max(lod2_z) - min(lod2_z), 3)
 
         entry: dict = {
             "id": gml_id,
@@ -130,43 +129,12 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
             "coords": coords,
         }
 
-        # LOD1 top elevation: third token of the very last posList found
-        # anywhere under the LOD1 solid (typically the roof face).
-        if lod1 is not None:
-            pos_lists = lod1.findall(f".//{{{NS_GML}}}posList")
-            if pos_lists:
-                last = pos_lists[-1]
-                tokens = (last.text or "").split()
-                if len(tokens) >= 3:
-                    entry["lod1top"] = round(float(tokens[2]), 3)
+        # LOD1 top elevation: the very last posList under the LOD1 solid (typically the roof face).
+        if lod1_rings:
+            last = _points(lod1_rings[-1].text or "", tf, zs)
+            if last:
+                entry["lod1top"] = round(last[0][2], 3)
 
-        # LOD2 geometry: one entry per polygon found under each boundedBy
-        # surface (walls, roofs, ground).
-        faces: list[dict] = []
-        for bounded in building.findall(f"{{{NS_BLDG}}}boundedBy"):
-            for polygon in bounded.iter(f"{{{NS_GML}}}Polygon"):
-                poly_id = polygon.get(f"{{{NS_GML}}}id") or ""
-                for pos_list in polygon.iter(f"{{{NS_GML}}}posList"):
-                    values = _split_floats(pos_list.text or "")
-                    # CityGML in EPSG:6697 stores axes as (lat, lon, alt);
-                    # the viewer wants GeoJSON-style [lon, lat, alt], so the
-                    # first two components are swapped here.
-                    pts = [
-                        [
-                            round(values[i + 1], 7),
-                            round(values[i], 7),
-                            round(values[i + 2], 3),
-                        ]
-                        for i in range(0, len(values) - 2, 3)
-                    ]
-                    if len(pts) < 3:
-                        continue
-                    # Drop the closing vertex if the ring repeats its start.
-                    if pts[0] == pts[-1]:
-                        pts = pts[:-1]
-                    if len(pts) < 3:
-                        continue
-                    faces.append({"id": poly_id, "pts": pts})
         if faces:
             entry["lod2"] = faces
 
@@ -176,40 +144,19 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
 
 
 def _extract_texmap(xml_bytes: bytes) -> dict[str, dict]:
-    """Collect texture assignments: polygon id -> {"img": uri, "uv": [...]}.
-
-    Walks every ParameterizedTexture in the document. The image URI is kept
-    verbatim (a relative path) rather than reduced to its basename, because
-    identical file names may exist in different appearance folders and would
-    collide otherwise. Later assignments for the same polygon overwrite
-    earlier ones.
-    """
-    root = ElementTree.fromstring(xml_bytes)
+    """Texture of every LOD2 face: face id -> {"img", "uv"[, "holes"]}, looked up by the face's
+    own rings (scripts/citygml_faces.py). The image URI is kept verbatim (a relative path):
+    identical file names may exist in different appearance folders."""
+    root = safe_fromstring(xml_bytes, huge_tree=True)
+    ns = citygml_dialect.ns_for_root(root)
+    by_ring, by_poly = citygml_faces.texture_rings(root, ns)
     texmap: dict[str, dict] = {}
-
-    for tex in root.iter(f"{{{NS_APP}}}ParameterizedTexture"):
-        uri_el = tex.find(f"{{{NS_APP}}}imageURI")
-        image_uri = (uri_el.text or "").strip() if uri_el is not None else ""
-        if not image_uri:
-            continue
-
-        for target in tex.findall(f"{{{NS_APP}}}target"):
-            poly_id = (target.get("uri") or "").lstrip("#")
-            if not poly_id:
-                continue
-            coords_el = target.find(f".//{{{NS_APP}}}textureCoordinates")
-            if coords_el is None or not coords_el.text:
-                continue
-            try:
-                values = _split_floats(coords_el.text)
-            except ValueError:
-                continue
-            uv = [
-                [round(values[i], 4), round(values[i + 1], 4)]
-                for i in range(0, len(values) - 1, 2)
-            ]
-            texmap[poly_id] = {"img": image_uri, "uv": uv}
-
+    for building in root.iter(f"{{{ns['bldg']}}}Building"):
+        gml_id = building.get(f"{{{ns['gml']}}}id") or ""
+        for face in citygml_faces.lod2_faces(building, ns, gid=gml_id):
+            tex = citygml_faces.face_texture(face, by_ring, by_poly)
+            if tex is not None:
+                texmap[face["id"]] = tex
     return texmap
 
 
@@ -375,8 +322,8 @@ def main() -> None:
 
     all_pairs: list[dict] = []
     for rel_path in targets:
-        old_bytes = _get_file_at_sha(args.repo, args.base_sha, rel_path)
-        new_bytes = _get_file_at_sha(args.repo, args.head_sha, rel_path)
+        old_bytes = blob(args.repo, args.base_sha, rel_path)
+        new_bytes = blob(args.repo, args.head_sha, rel_path)
 
         old_bldgs = _extract_buildings(old_bytes) if old_bytes is not None else {}
         new_bldgs = _extract_buildings(new_bytes) if new_bytes is not None else {}
@@ -399,4 +346,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # run directly: the repository root
+    from scripts.gate_result import guarded
+    raise SystemExit(guarded(main))

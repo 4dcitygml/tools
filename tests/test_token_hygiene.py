@@ -16,6 +16,8 @@ places (the 0600 auth file and the Authorization request header):
 Everything runs with HTTP stubbed out; no network, no real files in $HOME."""
 from __future__ import annotations
 
+from tests.support import SUPPORTED  # noqa: E402  (the one list, tools/i18n/i18n_loader.py)
+
 import io
 import json
 import os
@@ -194,7 +196,7 @@ class TestScopeIsStatedBeforeAuthorization(unittest.TestCase):
         self.assertLess(html.index("hub.setup_connect_scope"), html.index("doConnect()"))
 
     def test_all_language_catalogs_state_the_scope(self):
-        for lang in ("en", "ja", "de"):
+        for lang in SUPPORTED:
             catalog = json.loads(
                 (REPO_ROOT / "tools" / "i18n" / "catalogs" / "hub" / f"{lang}.json")
                 .read_text(encoding="utf-8"))

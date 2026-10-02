@@ -68,6 +68,27 @@ class TestPushWithoutAccount(_PushFixture):
         self.assertEqual(gml.read_text(encoding="utf-8"), before)
         self.assertNotIn("edit/", git(self.clone, "branch", "--list"))
 
+    def test_texture_editor_failed_push_names_the_missing_account(self):
+        # hub-v1.4.0 D2: the texture editor asked attr.current_login(), which does not exist, so a
+        # failed push without an account raised AttributeError (a 500) instead of this message
+        from tests.support import load_app
+        tex = load_app("tex_push_paths", "tools/tex_editor/app.py")
+        git(self.clone, "remote", "set-url", "origin", str(Path(self.temp.name) / "nowhere.git"))
+        head = git(self.clone, "rev-parse", "HEAD")
+        repo = tex.TexRepo(self.clone)
+        gml = self.clone / "city/udx/bldg/53394611_bldg_6697_op.gml"
+
+        def apply_textures(self, code, gid, images):   # the texturing itself is not under test
+            gml.write_text(gml.read_text(encoding="utf-8") + "<!-- textured -->", encoding="utf-8")
+            return {"added": [], "replaced": [], "new": True}
+        with patch.object(tex.TexRepo, "_fresh_pr_base", lambda self, rel: head), \
+                patch.object(tex.TexRepo, "apply_textures", apply_textures):
+            with self.assertRaises(RuntimeError) as ctx:
+                repo.create_pr({"tile": "53394611", "gid": "gml-bldg-1", "images": [], "faceCount": 1,
+                                    "consentCC0": True, "reason": "test"})
+        self.assertIn("No GitHub account is connected", str(ctx.exception))
+        self.assertEqual(git(self.clone, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+
     def test_network_git_never_consults_the_computers_helpers(self):
         args = runtime.git_args(net=True, store=accounts.store_for(accounts.login_for_clone(self.clone)))
         self.assertIn("credential.helper=", args)
@@ -160,6 +181,30 @@ class TestPushWithAccount(_PushFixture):
         self.assertTrue(result.get("compareUrl"))
         self.assertIn("has not approved this tool", result.get("note") or "")
         self.assertIn("Organization access", result.get("note") or "")
+
+
+class TestEditorsAreStartedWithAClone(unittest.TestCase):
+    """S12: the editors' own first-run setup (a copy of the hub's clone job) was never reached from
+    the hub, which always passes --repo; an editor without a clone now says where to start."""
+
+    def test_no_clone_names_the_hub(self):
+        from types import SimpleNamespace
+        from tests.support import load_app
+        attr = load_app("attr_open_repo", "tools/attr_editor/app.py")
+        args = SimpleNamespace(repo=None, data=None, textures=None)
+        from tests.support import TempHome
+        with TempHome(), patch.object(runtime, "detect_repo", return_value=None), \
+                patch.object(runtime, "last_clone", return_value=None):   # a start migrates the settings: a temporary HOME
+            with self.assertRaisesRegex(SystemExit, "Start the editors from the hub"):
+                attr.open_repo(attr.Repo, args)
+
+    def test_the_texture_editor_posts_through_the_shared_handler(self):
+        src = (REPO_ROOT / "tools/tex_editor/app.py").read_text(encoding="utf-8")
+        self.assertNotIn("def do_POST", src)          # its copy of the error handling is gone (C6)
+        self.assertNotIn("sync_upstream_main(", src)   # no sync at start racing the hub's (S12)
+        attr_src = (REPO_ROOT / "tools/attr_editor/app.py").read_text(encoding="utf-8")
+        for gone in ('"/api/setup"', '"/api/edit"', '"/api/revert"', '"/codelists/"', "CloneJob("):
+            self.assertNotIn(gone, attr_src)
 
 
 if __name__ == "__main__":

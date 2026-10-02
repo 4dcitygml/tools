@@ -6,7 +6,7 @@
 Beyond `validate_citygml` (well-formed + XSD), this checks only **geometric structural failures
 that are universal to any CityGML data**. **Does not depend on specific data conventions like PLATEAU**
 (convention-dependent checks such as sentinel unknowns, codelists, valid ranges are separated
-into `plateau_lint.py`). This is the data equivalent of standard SE assertion/invariant/property-based
+into `plausibility_lint.py`). This is the data equivalent of standard SE assertion/invariant/property-based
 tests; this layer is **reusable for any CityGML**.
 
 Check rules (error = structural failure that never appears in correct data, 0 cases in real data):
@@ -19,7 +19,7 @@ warning (structurally valid but suspicious, non-blocking):
     - duplicate_geometry different buildings in same file with identical geometry (possible duplicate/containment)
 
 This module exposes a lint engine (`run_lint`/`collect_ci_files`/`render_markdown`) and geometry parsing helpers,
-which `plateau_lint.py` reuses for convention-layer checks. Coordinate dimension assumes 3D (e.g., EPSG:6697).
+which `plausibility_lint.py` reuses for convention-layer checks. Coordinate dimension assumes 3D (e.g., EPSG:6697).
 
 Usage:
     python scripts/citygml_lint.py FILE.gml [FILE2.gml ...]        # check all buildings
@@ -59,7 +59,7 @@ Source = object  # Path | str | bytes
 CheckFn = Callable[[etree._Element, Optional[dict]], dict]
 
 
-# --- Geometry parsing (public helpers also reused by plateau_lint) ----------
+# --- Geometry parsing (public helpers also reused by plausibility_lint) ----------
 def ring_points(ring: etree._Element) -> dict:
     """Get (coordinate-value count, point list or None) from a LinearRing. Numerifies posList.
 
@@ -107,7 +107,7 @@ def footprint_rings(building: etree._Element) -> list:
 
 
 def number_by_localname(building: etree._Element, localname: str) -> Optional[float]:
-    """Take exactly one numeric value from the text of the element with the given localname (None if absent). Also used by plateau_lint."""
+    """Take exactly one numeric value from the text of the element with the given localname (None if absent). Also used by plausibility_lint."""
     for el in building.iter():
         _, name = _local(el)
         if name == localname:
@@ -196,7 +196,7 @@ def check_building(building: etree._Element, geom_index: Optional[dict] = None) 
     return {"errors": errors, "warnings": warnings}
 
 
-# --- Generic lint engine (also imported and used by plateau_lint) ------------
+# --- Generic lint engine (also imported and used by plausibility_lint) ------------
 def geom_index_from_map(bmap: dict) -> dict:
     """Build a geometry-hash -> [id] index from load_buildings' {id:(attrs,geom)}."""
     index: dict = {}
@@ -256,12 +256,12 @@ def collect_ci_files(
     When check_fn_for(path) is given, use the check function it returns per file
     (for checks that depend on the file's location, such as codelist consistency).
     """
-    from scripts.extract_building_preview import _get_file_at_sha
+    from scripts.repo_git import blob
 
     results: list = []
     for rel in gml_files:
-        old_map = load_buildings(_get_file_at_sha(repo, base_sha, rel))
-        head_bytes = _get_file_at_sha(repo, head_sha, rel)
+        old_map = load_buildings(blob(repo, base_sha, rel))
+        head_bytes = blob(repo, head_sha, rel)
         if head_bytes is None:
             continue
         new_map = load_buildings(head_bytes)
@@ -318,7 +318,7 @@ def render_markdown(files: list, marker: str, title: str, label: dict = None) ->
 
 
 def build_cli(description: str):
-    """Argument parser shared by citygml_lint / plateau_lint."""
+    """Argument parser shared by citygml_lint / plausibility_lint."""
     p = argparse.ArgumentParser(description=description)
     p.add_argument("files", nargs="*", type=Path, help=".gml files to check (all buildings)")
     p.add_argument("--json", action="store_true", help="output as JSON (default: Markdown)")
@@ -326,12 +326,14 @@ def build_cli(description: str):
     p.add_argument("--base-sha", default=None)
     p.add_argument("--head-sha", default=None)
     p.add_argument("--file-list", type=Path, default=None, help="[CI] list of changed .gml files")
+    p.add_argument("--counts-json", type=Path, default=None,
+                   help="[CI] write {errors, warnings} here for the gate result (scripts/gate_result.py)")
     return p
 
 
 def run_main(argv, check_fn: CheckFn, marker: str, title: str, label: dict = None,
              check_fn_for: Optional[Callable] = None) -> int:
-    """Main body shared by citygml_lint / plateau_lint.
+    """Main body shared by citygml_lint / plausibility_lint.
 
     When check_fn_for(path) is given, use the check function it returns per file (default is check_fn).
     """
@@ -355,7 +357,14 @@ def run_main(argv, check_fn: CheckFn, marker: str, title: str, label: dict = Non
         sys.stdout.write("\n")
     elif files:
         sys.stdout.write(render_markdown(files, marker, title, label))
-    return 1 if sum(f["n_errors"] for f in files) > 0 else 0
+    errors = sum(f["n_errors"] for f in files)
+    if args.counts_json is not None:
+        args.counts_json.write_text(json.dumps({"errors": errors, "warnings": sum(f["n_warnings"] for f in files)}),
+                                    encoding="utf-8")
+    return 1 if errors > 0 else 0
+
+
+from scripts.gate_result import guarded  # noqa: E402,F401 - the entry wrapper plausibility_lint imports from here
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -363,4 +372,4 @@ def main(argv: Optional[list] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(guarded(main))

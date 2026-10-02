@@ -135,5 +135,21 @@ class TestIdGrantNewTexture(unittest.TestCase):
         self.assertTrue(all(f["img"] != res["newAtlas"]["img"] for f in res2["faces"]))
 
 
+
+class TestRingIds(unittest.TestCase):
+    """Polygons with IDs whose rings have none (Munich): new textures failed with
+    'exterior ring has no gml:id'. The exterior ring gets <pid>_r0; an existing ring ID is kept."""
+
+    def test_rings_get_an_id_and_nothing_else_changes(self):
+        raw = ('<B gml:id="b"><gml:Polygon gml:id="P1"><gml:exterior><gml:LinearRing>'
+               '<gml:posList>0 0 0</gml:posList></gml:LinearRing></gml:exterior><gml:interior><gml:LinearRing>'
+               '</gml:LinearRing></gml:interior></gml:Polygon>'
+               '<gml:Polygon gml:id="P2"><gml:exterior><gml:LinearRing gml:id="own">'
+               '</gml:LinearRing></gml:exterior></gml:Polygon></B>').encode()
+        out, ids = tex.grant_ring_ids(raw, 0, len(raw), ["P1", "P2", "P3"])
+        self.assertEqual(ids, {"P1": "P1_r0", "P2": "own"})
+        self.assertEqual(out, raw.replace(b"<gml:exterior><gml:LinearRing>", b'<gml:exterior><gml:LinearRing gml:id="P1_r0">', 1))
+
+
 if __name__ == "__main__":
     unittest.main()

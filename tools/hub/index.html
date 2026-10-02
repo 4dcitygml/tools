@@ -151,7 +151,7 @@
   </section>
   <div class="grid">
     <div>
-      <section id="reviewEntry">
+      <section id="reviewEntry" hidden>
         <h2 data-i18n="hub.admin_section">For maintainers</h2>
         <div class="reviewRow">
           <div class="reviewIcon">✅</div>
@@ -208,7 +208,7 @@
         <summary data-i18n="hub.feedback_details_summary">Desired behavior, target building, environment, etc. (optional)</summary>
         <label for="feedbackExpected" data-i18n="hub.feedback_label_expected">What would make it easier to use?</label>
         <textarea id="feedbackExpected" maxlength="3000"></textarea>
-        <label for="feedbackBuilding" data-i18n="hub.feedback_label_building">Target building / mesh</label>
+        <label for="feedbackBuilding" data-i18n="hub.feedback_label_building">Target building / tile</label>
         <input id="feedbackBuilding" maxlength="500" data-i18n-placeholder="hub.feedback_building_placeholder" placeholder="e.g. 13101-bldg-3728">
         <label for="feedbackContext" data-i18n="hub.feedback_label_context">Environment</label>
         <textarea id="feedbackContext" maxlength="1000"></textarea>
@@ -234,7 +234,15 @@ const hubQuery = new URLSearchParams(location.search);
 const firstSession = hubQuery.get('welcome') === '1';
 const adminPanelMode = (hubQuery.get('admin') || 'on').toLowerCase();
 const showAdminPanel = !['off', '0', 'false'].includes(adminPanelMode);
-$('reviewEntry').hidden = !showAdminPanel;
+// The maintainer card is shown only to an account that can approve in this city (and not in a
+// demo with ?admin=off); residents never see it. Checked once per connection.
+async function loadReviewEntry(connected) {
+  let can = false;
+  if (connected && showAdminPanel) {
+    try { can = !!(await api('/api/reviews/permission')).canReview; } catch (e) { can = false; }
+  }
+  $('reviewEntry').hidden = !can;
+}
 let welcomeMode = firstSession;
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function toast(msg) {
@@ -280,6 +288,7 @@ async function loadStatus() {
   clearTimeout(ghPollTimer);
   if (g.waiting) ghPollTimer = setTimeout(loadStatus, 2000);
   if (g.login && ghWasConnected === false) loadContributions(true);
+  if (!!g.login !== ghWasConnected) loadReviewEntry(!!g.login);
   ghWasConnected = !!g.login;
   return s;
 }
@@ -303,21 +312,26 @@ let updateDismissed = false;
 async function loadUpdate() {
   let u; try { u = await api('/api/update'); } catch (e) { return; }
   const box = $('updateBanner'); if (!box) return;
-  if (updateDismissed || !u.available || !u.latest) { box.hidden = true; return; }
+  // below the city's min_hub: viewing works, sending and retries do not; the banner stays
+  const blocked = u.minHubOk === false && !!u.minHub;
+  if (!u.minHubFinal || (!u.checked && !blocked)) setTimeout(loadUpdate, 2000);   // judged again after the sync
+  if (!blocked && (updateDismissed || !u.available || !u.latest)) { box.hidden = true; return; }
   const f = u.fetch || {};
-  let text = t('hub.update_available', 'A newer version of the editing tools is available: {tag}', { tag: esc(u.latest) });
-  if (u.minHubOk === false && u.minHub) text += ' ' + t('hub.update_min_required', 'This city requires {tag} or newer.', { tag: esc(u.minHub) });
+  let text = u.latest && u.available
+    ? t('hub.update_available', 'A newer version of the editing tools is available: {tag}', { tag: esc(u.latest) }) : '';
+  if (blocked) text += ' ' + t('hub.update_min_blocked',
+    'This city accepts proposals from {tag} on: you can view, but sending and retries need the update.', { tag: esc(u.minHub) });
   let actions = '';
   if (f.state === 'running') text = t('hub.update_fetching', 'Downloading and verifying {tag} …', { tag: esc(f.tag || u.latest) });
   else if (f.state === 'done') text = t('hub.update_ready', '{tag} is ready. It will be used from the next start.', { tag: esc(f.tag || u.latest) });
   else {
     if (f.state === 'failed') text += '<br>' + t('hub.update_failed', 'Could not get {tag}: {reason}', { tag: esc(f.tag || u.latest), reason: esc(f.message || '') });
-    actions += `<button onclick="fetchUpdate()">${t('hub.update_fetch', 'Get it now')}</button>`;
+    if (u.latest && u.available) actions += `<button onclick="fetchUpdate()">${t('hub.update_fetch', 'Get it now')}</button>`;
   }
   if (u.notesUrl) actions += `<a href="${esc(u.notesUrl)}" target="_blank" rel="noopener">${t('hub.update_notes', 'Release notes ↗')}</a>`;
-  if (f.state !== 'running') actions += `<button onclick="updateDismissed=true;loadUpdate()">${t('hub.update_later', 'Later')}</button>`;
-  $('updateText').innerHTML = text; $('updateActions').innerHTML = actions; box.hidden = false;
-  if (!u.checked || f.state === 'running') setTimeout(loadUpdate, 2000);
+  if (f.state !== 'running' && !blocked) actions += `<button onclick="updateDismissed=true;loadUpdate()">${t('hub.update_later', 'Later')}</button>`;
+  $('updateText').innerHTML = text.trim(); $('updateActions').innerHTML = actions; box.hidden = false;
+  if (f.state === 'running') setTimeout(loadUpdate, 2000);
 }
 async function fetchUpdate() {
   try { await api('/api/update/fetch', postJson({})); } catch (e) {}

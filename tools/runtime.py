@@ -32,6 +32,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -39,7 +40,7 @@ SHARED_DIR = Path(__file__).resolve().parent
 WINDOWS = sys.platform.startswith("win")
 
 # The shared modules next to this file (accounts, git_sync, shortcuts, pr_classification,
-# pr_markers, building_identity, the i18n and themes packages) import by name. In the source
+# pr_markers, pr_reason, building_identity, the i18n and themes packages) import by name. In the source
 # tree the modules shared with CI live in scripts/; in the bundle they are copied next to the hub.
 for _dir in (SHARED_DIR.parent / "scripts", SHARED_DIR):
     if _dir.is_dir() and str(_dir) not in sys.path:
@@ -248,9 +249,10 @@ def git_output(root, *args: str, timeout: int = 60) -> str:
 
 # ---- the shared settings file (contract §3): merge, atomic replace, one writer at a time ----
 
-class _FileLock:
-    """An advisory lock around read-modify-write of the settings file, so two tools (two
-    cities' hubs, an editor) writing at the same moment cannot lose each other's keys."""
+class FileLock:
+    """An advisory lock between processes on <path>.lock: around read-modify-write of the
+    settings file (two cities' hubs, an editor), and around git's work in a clone
+    (git_sync.clone_lock). It blocks until the other process lets go."""
 
     def __init__(self, path: Path):
         self._path = Path(path)
@@ -261,7 +263,14 @@ class _FileLock:
             self._fh = open(self._path.with_name(self._path.name + ".lock"), "a+")
             if WINDOWS:
                 import msvcrt
-                msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+                self._fh.seek(0)
+                while True:   # LK_LOCK gives up after about 10 seconds; a send may take longer
+                    try:
+                        msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+                        break
+                    except OSError as e:
+                        if getattr(e, "errno", None) not in (13, 36):   # EACCES / EDEADLOCK: still held
+                            raise
             else:
                 import fcntl
                 fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
@@ -293,7 +302,7 @@ def update_config(mutate) -> dict:
     """Read-modify-write of the settings file: mutate(cfg) edits the dict in place; keys
     it does not touch survive; the file is replaced atomically under an advisory lock."""
     path = config_path()
-    with _FileLock(path):
+    with FileLock(path):
         current = read_json(path)
         mutate(current)
         try:
@@ -306,6 +315,53 @@ def update_config(mutate) -> dict:
     return current
 
 
+CONFIG_VERSION = 2
+
+
+def migrate_config() -> bool:
+    """Bring the settings file to the current form, once (S18; maintainer, 2026-09-30).
+
+    Version 2: the city entries (`cities[<owner/repo>]`, keys in lower case) are the one place
+    for a city's clone and account; the single `repo` slot of hub-v1.0 to v1.3 ("the last used
+    clone") is folded into the entry of that clone's city and removed. The last used clone is the
+    city entry with the newest `last_used`. The old file is kept once as <file>.v1.bak.
+
+    Runs at the start of the hub and of each editor, before anything else reads the settings;
+    idempotent, under the settings file's lock. Returns True when it changed the file."""
+    changed = []
+
+    def mutate(cfg: dict) -> None:
+        if not cfg or cfg.get("version") == CONFIG_VERSION:
+            return
+        backup = config_path().with_name(config_path().name + ".v1.bak")
+        if not backup.exists():
+            try:
+                backup.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError:
+                pass
+        raw = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
+        cities: dict = {}
+        for key, entry in raw.items():
+            city = city_key(key)
+            if city and isinstance(entry, dict):
+                cities[city] = {**cities.get(city, {}), **entry}   # "Owner/Repo" and "owner/repo" were one city
+        legacy = str(cfg.pop("repo", "") or "")
+        if legacy and has_building_data(legacy):
+            city = clone_city(legacy)
+            if city:
+                entry = cities.get(city, {})
+                if not entry.get("repo"):
+                    entry["repo"] = legacy
+                entry.setdefault("last_used", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+                cities[city] = entry
+        cfg["cities"] = cities
+        cfg["version"] = CONFIG_VERSION
+        changed.append(True)
+
+    update_config(mutate)
+    return bool(changed)
+
+
 def save_config(values: dict) -> dict:
     """Merge values into the settings file (never replaces keys another tool wrote)."""
     return update_config(lambda cfg: cfg.update(values))
@@ -313,7 +369,7 @@ def save_config(values: dict) -> dict:
 
 # ---- the city (contract §1) ----
 
-DEFAULT_CITY_URL = "https://github.com/4dcitygml/sample-tokyo-station"   # the practice city
+DEFAULT_CITY_URL = "https://github.com/4dcitygml/sample-munich-station"   # the default practice city
 
 
 def normalize_upstream(value) -> "str | None":
@@ -327,6 +383,14 @@ def normalize_upstream(value) -> "str | None":
     return f"https://github.com/{m.group(1) if m.lastindex else v}"
 
 
+def github_nwo(value) -> "str | None":
+    """owner/repo of a GitHub repository given as owner/repo, https URL or ssh URL, case kept
+    (for API paths and links); None otherwise. One parser for the hub and the editors (S11: two
+    lenient copies returned "a/b/" for a URL with a trailing slash)."""
+    url = normalize_upstream(value)
+    return url.split("github.com/", 1)[1] if url else None
+
+
 def city_key(value) -> "str | None":
     """owner/repo in lower case (the settings key), or None when value is not a GitHub repo."""
     url = normalize_upstream(value)
@@ -336,6 +400,31 @@ def city_key(value) -> "str | None":
 def city_meta(root) -> dict:
     """The clone's 4dcitygml.json (data only; {} when absent)."""
     return read_json(Path(root) / "4dcitygml.json")
+
+
+def min_hub(root) -> "str | None":
+    """The oldest hub a city accepts proposals from (4dcitygml.json `min_hub`), or None."""
+    value = city_meta(root).get("min_hub")
+    return str(value) if version_tuple(value) else None
+
+
+def below_min_hub(root) -> "str | None":
+    """The city's `min_hub` when this program is older, else None. A program that does not run
+    as an installed version (a tools checkout) is never below it."""
+    required, running = min_hub(root), running_hub_tag()
+    return required if required and running and version_tuple(required) > version_tuple(running) else None
+
+
+def require_min_hub(root) -> None:
+    """Refuse to send for a city whose `min_hub` this program does not meet (maintainer,
+    2026-09-30: from hub-v1.5.0 on, an older hub can view but cannot send or request a retry).
+    One rule for the hub and both editors."""
+    required = below_min_hub(root)
+    if required:
+        raise RuntimeError(tr("hub", "hub.min_hub_blocked",
+                              "This city accepts proposals from {tag} on; this is {running}. Update the "
+                              "editing tools from the dashboard (Get it now), then start them again.",
+                              tag=required, running=running_hub_tag()))
 
 
 def clone_city(root) -> "str | None":
@@ -374,14 +463,11 @@ def requested_city() -> "str | None":
 
 
 def upstream_url(root=None, *, ignore_env: bool = False) -> str:
-    """URL of the city repository. Priority: CITYGML_UPSTREAM > the clone's 4dcitygml.json
-    > the clone's git remote `upstream` > the practice city. ignore_env=True asks for the
-    clone's own city only (the sync target: a launcher for another city must never
-    rewrite this clone)."""
-    if not ignore_env:
-        env = normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
-        if env:
-            return env
+    """URL of the city repository. Priority: the clone's 4dcitygml.json > the clone's git
+    remote `upstream` > CITYGML_UPSTREAM > the practice city. The city of a clone is the
+    clone's own (S18, F7: the environment came first, so an editor started with another
+    city's variable sent there); the variable chooses the city while there is no clone.
+    ignore_env=True asks for the clone's own city only (the sync target)."""
     if root:
         declared = normalize_upstream(city_meta(root).get("repo", ""))
         if declared:
@@ -389,6 +475,10 @@ def upstream_url(root=None, *, ignore_env: bool = False) -> str:
         remote = normalize_upstream(git_output(root, "remote", "get-url", "upstream", timeout=10))
         if remote:
             return remote
+    if not ignore_env:
+        env = normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
+        if env:
+            return env
     return DEFAULT_CITY_URL
 
 
@@ -420,10 +510,10 @@ def detect_repo() -> "Path | None":
 
 
 def remember_clone(city, dest) -> None:
-    """Record dest as the clone of city (cities[<city>].repo) and as the last used clone
-    (repo). The city's entry is merged, never replaced: its account binding and any key
-    another tool wrote survive."""
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    """Record dest as the clone of city (cities[<city>].repo), used now (last_used). The city's
+    entry is merged, never replaced: its account binding and any key another tool wrote survive."""
+    # to the microsecond: last_clone() orders by it, and two clones can be opened within a second
+    stamp = datetime.now().astimezone().isoformat(timespec="microseconds")
 
     def mutate(cfg: dict) -> None:
         cities = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
@@ -431,33 +521,29 @@ def remember_clone(city, dest) -> None:
             entry = cities.get(city) if isinstance(cities.get(city), dict) else {}
             cities[city] = {**entry, "repo": str(dest), "last_used": stamp}
         cfg["cities"] = cities
-        cfg["repo"] = str(dest)
 
     update_config(mutate)
 
 
 def saved_clone_for(city: str) -> "Path | None":
-    """The remembered clone of city, verified against the clone's own 4dcitygml.json.
-
-    Falls back to the legacy single `repo` entry once, migrating it into `cities`
-    when it turns out to belong to this city. A clone of another city is never
-    returned, whatever the settings say."""
-    cfg = read_config()
-    cities = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
-    entry = cities.get(city) if isinstance(cities.get(city), dict) else {}
+    """The remembered clone of city, verified against the clone's own 4dcitygml.json: a clone
+    of another city is never returned, whatever the settings say."""
+    cities = read_config().get("cities")
+    entry = cities.get(city) if isinstance(cities, dict) and isinstance(cities.get(city), dict) else {}
     own = str(entry.get("repo") or "")
-    for cand in (own, str(cfg.get("repo") or "")):
-        if cand and has_building_data(cand) and clone_city(cand) == city:
-            if cand != own:
-                remember_clone(city, cand)   # migrate the legacy entry
-            return Path(cand)
-    return None
+    return Path(own) if own and has_building_data(own) and clone_city(own) == city else None
 
 
 def last_clone() -> "Path | None":
-    """The last used clone (legacy single slot), for tools started without a city."""
-    saved = str(read_config().get("repo") or "")
-    return Path(saved) if saved and has_building_data(saved) else None
+    """The clone used last (the city entry with the newest last_used), for tools started
+    without a city."""
+    cities = read_config().get("cities")
+    entries = [e for e in (cities.values() if isinstance(cities, dict) else []) if isinstance(e, dict)]
+    for entry in sorted(entries, key=lambda e: str(e.get("last_used") or ""), reverse=True):
+        repo = str(entry.get("repo") or "")
+        if repo and has_building_data(repo):
+            return Path(repo)
+    return None
 
 
 # ---- GitHub over HTTPS (no CLI) ----

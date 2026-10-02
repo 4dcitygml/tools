@@ -32,6 +32,9 @@ LIB = f"{ROOT}/program"
 FLAVORS = {"macos": "macos", "windows": "windows-full"}
 BUNDLE_DIRS = ("PortableGit", "PythonPortable")        # Windows flavor only
 PACK_SUFFIXES = {".py", ".html", ".json"}
+# Team tools inside the editor folders that run from a tools checkout, not from the hub:
+# tone_battle needs scripts/retone_textures.py and Pillow, which the bundle does not carry (D9).
+CHECKOUT_ONLY = {"tools/tex_editor/tone_battle.py"}
 WINDOWS_SIZE_LIMIT = 70 * 1024 * 1024
 EXEC = 0o755
 PLAIN = 0o644
@@ -58,11 +61,12 @@ def manifest(repo_root: Path, flavor: str) -> "list[tuple[Path, str, int]]":
     entries: list[tuple[Path, str, int]] = [(hub / "app.py", f"{LIB}/hub.py", PLAIN)]
     entries += [(p, f"{LIB}/{p.name}", PLAIN) for p in sorted(hub.glob("*.html"))]   # every screen of the hub
     entries.append((hub / "preset.json", f"{LIB}/preset.json", PLAIN))
+    entries.append((hub / "operator_explanation.py", f"{LIB}/operator_explanation.py", PLAIN))   # the report contract (A10)
     if flavor == "windows":
         entries.append((hub / "packaging" / "start-windows.bat", f"{LIB}/start-windows.bat", PLAIN))
     # the shared modules (the A5 classification table, the A10 marker table and the building
     # identity rule are shared with CI)
-    for name in ("pr_classification.py", "pr_markers.py", "building_identity.py"):
+    for name in ("pr_classification.py", "pr_markers.py", "pr_reason.py", "building_identity.py", "citygml_dialect.py", "citygml_faces.py"):
         entries.append((repo_root / "scripts" / name, f"{LIB}/{name}", PLAIN))
     for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py"):
         entries.append((repo_root / "tools" / name, f"{LIB}/{name}", PLAIN))
@@ -75,22 +79,34 @@ def manifest(repo_root: Path, flavor: str) -> "list[tuple[Path, str, int]]":
     for sub in ("attr_editor", "tex_editor", "i18n", "themes"):
         base = repo_root / "tools" / sub
         for p in sorted(base.rglob("*")):
-            if p.is_file() and p.suffix in PACK_SUFFIXES and "__pycache__" not in p.parts:
+            if (p.is_file() and p.suffix in PACK_SUFFIXES and "__pycache__" not in p.parts
+                    and p.relative_to(repo_root).as_posix() not in CHECKOUT_ONLY):
                 entries.append((p, f"{LIB}/{sub}/{p.relative_to(base).as_posix()}", PLAIN))
     return entries
+
+
+def supported_languages(repo_root: "Path | None" = None) -> "tuple[str, ...]":
+    """The languages the tools speak: SUPPORTED of tools/i18n/i18n_loader.py, the one list (read
+    from the file, as this script runs before the tools are on sys.path)."""
+    import ast
+    tree = ast.parse(((repo_root or repo_root_default()) / "tools" / "i18n" / "i18n_loader.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "SUPPORTED" for t in node.targets):
+            return tuple(ast.literal_eval(node.value))
+    raise RuntimeError("tools/i18n/i18n_loader.py defines no SUPPORTED")
 
 
 def required(flavor: str) -> "list[str]":
     """Archive names a distribution zip must contain (checked after assembly and by tests)."""
     names = [f"{LIB}/hub.py", f"{LIB}/index.html", f"{LIB}/review.html", f"{LIB}/setup.html", f"{LIB}/settings.html",
-             f"{LIB}/preset.json", f"{LIB}/runtime.py", f"{LIB}/accounts.py", f"{LIB}/git_sync.py",
-             f"{LIB}/shortcuts.py", f"{LIB}/pr_classification.py", f"{LIB}/pr_markers.py", f"{LIB}/building_identity.py", f"{LIB}/citygml.sh", f"{LIB}/citygml.ps1",
+             f"{LIB}/preset.json", f"{LIB}/operator_explanation.py", f"{LIB}/runtime.py", f"{LIB}/accounts.py", f"{LIB}/git_sync.py",
+             f"{LIB}/shortcuts.py", f"{LIB}/pr_classification.py", f"{LIB}/pr_markers.py", f"{LIB}/pr_reason.py", f"{LIB}/building_identity.py", f"{LIB}/citygml_dialect.py", f"{LIB}/citygml_faces.py", f"{LIB}/citygml.sh", f"{LIB}/citygml.ps1",
              f"{LIB}/LICENSE", f"{LIB}/NOTICE", f"{LIB}/THIRD_PARTY_NOTICES.md",
-             f"{LIB}/attr_editor/app.py", f"{LIB}/attr_editor/index.html", f"{LIB}/attr_editor/setup.html",
+             f"{LIB}/attr_editor/app.py", f"{LIB}/attr_editor/index.html",
              f"{LIB}/attr_editor/viewer.html", f"{LIB}/tex_editor/app.py", f"{LIB}/tex_editor/index.html",
              f"{LIB}/i18n/i18n_loader.py", f"{LIB}/themes/theme_loader.py"]
     names += [f"{LIB}/i18n/catalogs/{app}/{lang}.json" for app in ("hub", "attr_editor", "tex_editor")
-              for lang in ("en", "ja", "de")]
+              for lang in supported_languages()]
     if flavor == "windows":
         names += [f"{LIB}/start-windows.bat", f"{LIB}/PythonPortable/python.exe", f"{LIB}/PythonPortable/LICENSE.txt",
                   f"{LIB}/PortableGit/cmd/git.exe", f"{LIB}/PortableGit/LICENSE.txt"]

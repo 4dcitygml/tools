@@ -28,6 +28,14 @@
   .sideHead h2 { margin:0; font-size:15px; }
   .sideHead button { margin-left:auto; }
   .queueNote { color:var(--muted); font-size:12px; line-height:1.6; margin:0 4px 14px; }
+  #pendingRuns { border:1px solid #d4a72c; background:#fff8c5; border-radius:10px; padding:10px 12px; margin:0 0 14px; }
+  #pendingRuns h2 { margin:0 0 4px; font-size:14px; }
+  #pendingRuns .runNote { color:var(--muted); font-size:12px; line-height:1.6; margin:0 0 8px; }
+  #pendingRuns .run { border-top:1px solid #eadca0; padding:8px 0; font-size:13px; line-height:1.5; }
+  #pendingRuns .runMeta { color:var(--muted); font-size:12px; }
+  #pendingRuns .runFiles { font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); word-break:break-all; }
+  #pendingRuns .runWarn { color:#9a3412; font-size:12px; }
+  #pendingRuns button { margin-top:6px; }
   .queue { display:flex; flex-direction:column; gap:8px; }
   .queueSectionTitle { display:flex; align-items:center; justify-content:space-between; margin:2px 3px 8px;
     color:#116329; font-size:12px; font-weight:750; }
@@ -65,6 +73,7 @@
   .qsource.reviewer { color:#512a97; background:#fbefff; }
   .qsource.latest { color:#633c01; background:var(--warn-bg); }
   .qsource.checking { color:#57606a; background:#eef1f4; }
+  .qsource.approval { color:#7d4e00; background:#fff8c5; }
   main { min-width:0; padding:22px 26px 120px; max-width:1180px; width:100%; margin:0 auto; }
   .empty { color:var(--muted); text-align:center; padding:80px 20px; line-height:1.8; }
   .spinner { display:inline-block; width:15px; height:15px; border:2px solid #c7ccd1;
@@ -82,17 +91,21 @@
   .overall { display:flex; align-items:center; gap:10px; margin-bottom:11px; font-weight:750; }
   .overall.pass { color:var(--ok); }
   .overall.fail { color:var(--danger); }
-  .overall.pending { color:var(--warn); }
+  .overall.pending { color:var(--accent); }
   .checkpointStrip { display:flex; flex-wrap:wrap; gap:8px; }
   button.checkpoint { border-width:2px; border-radius:999px; padding:8px 12px; font-weight:700; background:#fff; }
   button.checkpoint.pass { color:#116329; border-color:#56b870; background:var(--ok-bg); }
   button.checkpoint.fail { color:#82071e; border-color:#ff8182; background:var(--danger-bg); }
-  button.checkpoint.pending { color:#633c01; border-color:#d4a72c; background:var(--warn-bg); }
+  button.checkpoint.pending { color:#0550ae; border-color:#80ccff; background:#ddf4ff; }
+  button.checkpoint.warn { color:#633c01; border-color:#d4a72c; background:var(--warn-bg); }
+  button.checkpoint.error { color:#6e40c9; border-color:#c297ff; background:#fbefff; }
   button.checkpoint.na { color:#57606a; border-color:#afb8c1; background:#eef1f4; }
   button.checkpoint.active { box-shadow:0 0 0 3px rgba(9,105,218,.14); }
   .checkpointDetail { margin-top:11px; padding:10px 12px; border-radius:8px; line-height:1.65; background:#f6f8fa; }
   .checkpointDetail.fail { background:var(--danger-bg); color:#82071e; }
-  .checkpointDetail.pending { background:var(--warn-bg); color:#633c01; }
+  .checkpointDetail.pending { background:#ddf4ff; color:#0550ae; }
+  .checkpointDetail.warn { background:var(--warn-bg); color:#633c01; }
+  .checkpointDetail.error { background:#fbefff; color:#6e40c9; }
   .checkpointDetail.na { color:#57606a; background:#eef1f4; }
   .checkpointDetail .response { margin-top:4px; font-weight:700; }
   .retryPanel { display:flex; align-items:center; gap:10px; margin-top:11px; padding:9px 11px;
@@ -228,6 +241,7 @@
 <div id="demoBanner" hidden data-i18n="review.demo_banner">Demo mode — approving changes nothing in the real data or history</div>
 <div class="layout">
   <aside>
+    <section id="pendingRuns" hidden></section>
     <div class="sideHead"><h2 data-i18n="review.building_list">Buildings</h2><button id="reload" data-i18n="review.reload">Refresh</button></div>
     <p class="queueNote" data-i18n="review.queue_note">Only proposals awaiting the reviewer are shown at the top. Everything else is grouped, with reasons, under "Waiting for the proposer".</p>
     <div class="queue" id="queue"><div class="empty"><span class="spinner"></span> <span data-i18n="review.loading">Loading…</span></div></div>
@@ -285,7 +299,10 @@ async function loadQueue() {
   try {
     queueData=await api('/api/reviews'+(demo?'?demo=1':''));
     $('account').innerHTML=`${t('review.reviewer_label','Reviewer')} <b>@${esc(queueData.login)}</b><br>${queueData.canReview?t('review.can_review','Can approve'):t('review.view_only','View only')}`;
-    let items=[...queueData.items];
+    // A reviewer starts a first-time contributor's checks in the panel above; the proposal joins
+    // this list once they run. A view-only account has no panel and sees it here, labelled.
+    let items=queueData.items.filter(it=>!(queueData.canReview && !demo && it.waitingSource==='approval'));
+    scheduleQueueRefresh(items);
     if (demo) items.sort((a,b)=>(b.example?1:0)-(a.example?1:0));
     if (!items.length) { $('queue').innerHTML='<div class="empty">'+t('review.queue_empty','Nothing is waiting for approval.')+'</div>'; return; }
     const groupBuildings=list=>{
@@ -297,7 +314,7 @@ async function loadQueue() {
         return {buildingId,proposals,latest:(demo?proposals.find(x=>x.example):null)||proposals[0]};
       });
     };
-    const sourceLabel={reviewer:t('review.source_reviewer','Question from the reviewer'),latest:t('review.source_latest','Merge in the latest version'),checking:t('review.source_checking','Automated checks running'),draft:t('review.source_draft','Draft in progress'),ci:t('review.source_ci','CI found issues')};
+    const sourceLabel={reviewer:t('review.source_reviewer','Question from the reviewer'),latest:t('review.source_latest','Merge in the latest version'),checking:t('review.source_checking','Automated checks running'),approval:t('review.source_approval','Checks wait for your permission (first-time contributor)'),draft:t('review.source_draft','Draft in progress'),ci:t('review.source_ci','CI found issues')};
     const renderBuildings=(buildings,state='reviewer_waiting')=>buildings.map(g=>`<button class="queueItem ${state==='reviewer_waiting'?'':'adjusting'} ${g.proposals.some(x=>selected===x.number)?'active':''}" data-n="${g.latest.number}" data-building="${esc(g.buildingId)}">
       <div class="qtop"><span class="kind ${esc(g.latest.kind)}">${kindLabel(g.latest.kind)}</span>
       ${g.proposals.length>1?`<span class="num">${t('review.proposals_count','{n} proposals',{n:g.proposals.length})}</span>`:''}
@@ -373,10 +390,10 @@ function renderEvidence(d) {
   if (!d.evidenceLinks?.length) return '<p class="noEvidence">'+t('review.no_evidence','No links to documents. Review the proposer\'s explanation and the before/after values.')+'</p>';
   return `<ul class="evidence">${d.evidenceLinks.map(x=>`<li>📎 <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.label)} ↗</a></li>`).join('')}</ul>`;
 }
-function checkpointIcon(status) { return status==='pass'?'✓':status==='fail'?'✕':status==='na'?'−':'…'; }
+function checkpointIcon(status) { return {pass:'✓',warn:'⚠',fail:'✕',error:'⚙',na:'−'}[status] || '…'; }
 function renderCheckpoints(d) {
   const points=d.checkpoints || [];
-  const overall=d.allGreen?'pass':points.some(x=>x.status==='fail')?'fail':'pending';
+  const overall=d.allGreen?'pass':points.some(x=>['fail','error'].includes(x.status))?'fail':'pending';
   const message=overall==='pass'?t('review.ci_passed','Automated checks passed'):
     overall==='fail'?t('review.ci_attention','CI found issues to address'):t('review.ci_checking','Automated checks running');
   return `<section class="card statusCard"><div class="overall ${overall}">${checkpointIcon(overall)} ${message}</div>
@@ -396,11 +413,11 @@ function showCheckpoint(key) {
   document.querySelectorAll('button.checkpoint').forEach(b=>b.classList.toggle('active',b.dataset.checkpoint===key));
   const box=$('checkpointDetail'); box.className=`checkpointDetail ${p.status}`;
   box.innerHTML=`<b>${checkpointIcon(p.status)} ${esc(p.label)}</b>${t('review.checkpoint_sep',' — ')}${esc(p.reason)}
-    ${['fail','pending'].includes(p.status)?`<div class="response">${t('review.response_label','Action: ')}${esc(p.action)}</div>`:''}`;
+    ${['fail','error','warn','pending'].includes(p.status)?`<div class="response">${t('review.response_label','Action: ')}${esc(p.action)}</div>`:''}`;
 }
 function bindCheckpoints(d) {
   document.querySelectorAll('button.checkpoint').forEach(b=>b.onclick=()=>showCheckpoint(b.dataset.checkpoint));
-  const first=d.checkpoints?.find(x=>x.status==='fail') || d.checkpoints?.find(x=>x.status==='pending') || d.checkpoints?.[0];
+  const first=['fail','error','pending','warn'].map(s=>d.checkpoints?.find(x=>x.status===s)).find(Boolean) || d.checkpoints?.[0];
   if (first) showCheckpoint(first.key);
   const retry=$('retryCi'); if (retry) retry.onclick=requestRetry;
 }
@@ -527,8 +544,48 @@ async function approve() {
 }
 $('confirmed').onchange=updateApprove;
 $('approve').onclick=approve;
-$('reload').onclick=()=>loadQueue();
-loadQueue();
+// While checks run, the list refreshes itself every minute (at most 30 times) so a proposal
+// moves on when they finish.
+let queueTimer=null, queueRefreshes=0;
+function scheduleQueueRefresh(items) {
+  clearTimeout(queueTimer);
+  if (!items.some(it=>it.waitingSource==='checking') || queueRefreshes>=30) { queueRefreshes=0; return; }
+  queueTimer=setTimeout(()=>{ queueRefreshes++; loadQueue(); }, 60000);
+}
+
+// First-time contributors: GitHub holds the checks of their fork PRs until a maintainer starts
+// them once. Shown only to an account that can approve; starting runs the checks, nothing else,
+// and the proposal then moves to the list below and waits for them to finish.
+async function loadPendingRuns() {
+  const box=$('pendingRuns');
+  if (demo || !queueData || !queueData.canReview) { box.hidden=true; return; }
+  let data;
+  try { data=await api('/api/reviews/pending-runs'); } catch (e) { box.hidden=true; return; }
+  if (!data.runs || !data.runs.length) { box.hidden=true; return; }
+  box.innerHTML=`<h2>${t('review.pending_title','First-time contributors: start their checks ({n})',{n:data.runs.length})}</h2>
+    <p class="runNote">${t('review.pending_note','A first-time contributor\'s proposal needs a maintainer to start its checks once. After you start them, the proposal moves to the list below and waits for the checks to finish; review it there as usual.')}</p>`+
+    data.runs.map(r=>{
+      const files=r.files.join(', ')+(r.fileCount>r.files.length?` … (+${r.fileCount-r.files.length})`:'');
+      const action=r.touchesWorkflows
+        ? `<div class="runWarn">${t('review.pending_workflows','Changes files under .github/: check it on GitHub and allow it there.')}</div>`
+        : `<button type="button" data-run="${esc(r.runId)}">${t('review.pending_approve','Start the checks')}</button>`;
+      return `<div class="run"><b>#${esc(r.number)}</b> ${esc(r.title)}
+        <div class="runMeta">@${esc(r.author)} · ${esc(r.workflow)} · ${ago(r.created)} · <a href="${esc(r.url)}" target="_blank" rel="noopener">GitHub ↗</a></div>
+        <div class="runFiles">${esc(files)}</div>${action}</div>`;
+    }).join('');
+  box.hidden=false;
+  box.querySelectorAll('button[data-run]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;
+    try {
+      await api(`/api/reviews/pending-runs/${b.dataset.run}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      toast(t('review.pending_done','The checks started. The proposal is now in the list and waits for them to finish.'));
+    } catch (e) { toast(e.message); }
+    await loadQueue();
+    loadPendingRuns();
+  });
+}
+$('reload').onclick=()=>{ loadQueue().then(loadPendingRuns); };
+loadQueue().then(loadPendingRuns);
 </script>
 </body>
 </html>

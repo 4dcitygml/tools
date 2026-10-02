@@ -19,7 +19,7 @@
   "ci.inspection_heading": "Ergebnisse der automatischen Prüfung",
   "ci.col_check": "Prüfung",
   "ci.col_result": "Ergebnis",
-  "ci.inspection_footnote": "Im Review-Bildschirm ist Bestanden grün, Nicht anwendbar grau und Ungelöstes rot.",
+  "ci.inspection_footnote": "Im Review-Bildschirm ist Bestanden grün, eine Warnung gelb, Nicht anwendbar grau und Ungelöstes rot. ⚙️ kennzeichnet einen Systemfehler: kein Problem der Daten; CI oder ein Maintainer wiederholt die Prüfung.",
   "ci.resubmit_heading": "Zu bestätigende Punkte aus den automatischen Prüfungen",
   "ci.resubmit_intro": "Der Vorschlag ist eingegangen. Die folgenden Punkte werden zwischen einreichender Person und CI geklärt.",
   "ci.resubmit_freshness": "Eine andere Änderung wurde zuerst übernommen. Bitte die neueste Version einpflegen und erneut einreichen.",
@@ -44,5 +44,11 @@
   "ci.classify_contract": "Vollständige Regeln: Exchange Contract, Abschnitt A5.",
   "ci.repo_scope_heading": "Dateien, die dieses Stadt-Repository nicht annimmt",
   "ci.repo_scope_intro": "Ein Stadt-Repository enthält Daten, Dokumente und Konfiguration. Werkzeuge, Skripte und anderer Code gehören nach 4dcitygml/tools — bitte dort vorschlagen. Workflow-Dateien dürfen nur ihren CITYGML_TOOLS_REF-Pin ändern.",
-  "ci.repo_scope_label_note": "Betreuende können eine CI-Wartungsänderung mit dem Label `tooling` annehmen; der Bericht hält das fest."
+  "ci.repo_scope_label_note": "Betreuende können eine CI-Wartungsänderung mit dem Label `tooling` annehmen; der Bericht hält das fest.",
+  "ci.label_warn": "Warnung (blockiert nicht)",
+  "ci.label_error": "Systemfehler (nicht Ihre Daten)",
+  "ci.error_heading": "Einige Prüfungen konnten nicht laufen",
+  "ci.error_body": "Das ist kein Problem Ihrer Daten. Eine erneute Ausführung der automatischen Prüfungen behebt es meist; tritt es wiederholt auf, sehen sich die Betreuenden die Prüfung selbst an.",
+  "ci.warnings_heading": "Warnungen (keine Aktion nötig)",
+  "ci.warnings_body": "Diese Prüfungen haben etwas Auffälliges bemerkt; sie blockieren den Vorschlag nicht. Details stehen in ihren eigenen Kommentaren."
 }

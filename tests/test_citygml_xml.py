@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import re
 import sys
 import tempfile
 import unittest
@@ -42,6 +43,28 @@ class TestVocabulary(unittest.TestCase):
         self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
         self.assertIsInstance(X.open_source(b"<a/>"), io.BytesIO)
         self.assertEqual(X.open_source(Path("/x/y.gml")), "/x/y.gml")
+
+
+class TestEveryParseIsHardened(unittest.TestCase):
+    """Fork-PR data reaches the scripts: every parse goes through scripts/safe_xml.py (A8)."""
+
+    def test_no_script_parses_on_its_own(self):
+        own = re.compile(r"\b(?:etree|ET|ElementTree)\.(?:parse|fromstring|iterparse|XMLParser)\(|import xml\.etree|from xml\.etree")
+        found = [f"{p.name}:{n}" for p in sorted((REPO_ROOT / "scripts").glob("*.py")) if p.name != "safe_xml.py"
+                 for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if own.search(line)]
+        self.assertEqual(found, [])
+
+    def test_the_ci_preview_does_not_resolve_entities(self):
+        from scripts import extract_building_preview as preview
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = Path(tmp) / "secret.txt"
+            secret.write_text("TOP-SECRET", encoding="utf-8")
+            doc = (f'<?xml version="1.0"?><!DOCTYPE m [<!ENTITY x SYSTEM "{secret.as_uri()}">]>'
+                   f'<core:CityModel xmlns:core="{X.CORE}"><core:name>&x;</core:name></core:CityModel>').encode()
+            try:
+                self.assertNotIn("TOP-SECRET", repr(preview._extract_buildings(doc)))
+            except etree.XMLSyntaxError:
+                pass   # refusing the document is as good
 
 
 if __name__ == "__main__":

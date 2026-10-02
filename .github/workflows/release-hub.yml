@@ -61,7 +61,8 @@ env:
 jobs:
   validate-release:
     # One switch for a development copy: the repository variable CITYGML_CI set to `off`
-    # skips every automatic run (the other jobs need this one); a manual run still works,
+    # skips every automatic run (the other jobs need this one); `no-windows` runs everything
+    # but the Windows build (the costliest runner); a manual run always runs everything,
     # so one workflow can be exercised on demand. Production sets nothing.
     if: vars.CITYGML_CI != 'off' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -87,6 +88,7 @@ jobs:
 
   windows:
     needs: validate-release
+    if: vars.CITYGML_CI != 'no-windows' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -102,7 +104,10 @@ jobs:
             tools/themes
             scripts/pr_classification.py
             scripts/pr_markers.py
+            scripts/pr_reason.py
             scripts/building_identity.py
+            scripts/citygml_dialect.py
+            scripts/citygml_faces.py
             tools/git_sync.py
             tools/shortcuts.py
             tools/accounts.py
@@ -278,7 +283,10 @@ jobs:
             tools/themes
             scripts/pr_classification.py
             scripts/pr_markers.py
+            scripts/pr_reason.py
             scripts/building_identity.py
+            scripts/citygml_dialect.py
+            scripts/citygml_faces.py
             tools/git_sync.py
             tools/shortcuts.py
             tools/accounts.py

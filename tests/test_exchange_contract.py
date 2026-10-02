@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.commit_building_scope import _trailers  # noqa: E402
+from scripts.building_identity import trailers as parse_trailers  # noqa: E402
 
 _attr_spec = importlib.util.spec_from_file_location(
     "attr_app", REPO_ROOT / "tools" / "attr_editor" / "app.py")
@@ -28,16 +28,17 @@ DOC = (REPO_ROOT / "docs" / "exchange-contract.md").read_text(encoding="utf-8")
 
 
 class TestCreatedByTrailer(unittest.TestCase):
-    def test_with_and_without_release_tag(self):
+    def test_the_running_hub_version(self):
+        # maintainer decision 8: the running hub's version; a city carries no install/ (A11), so the
+        # earlier source never gave one
+        from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.assertEqual(attr.created_by_trailer(root, "citygml-attr-editor"),
-                             "Created-By: citygml-attr-editor")
-            (root / "install").mkdir()
-            (root / "install" / "tools-release.json").write_text(
-                json.dumps({"tag": "tools-v1.2.3"}), encoding="utf-8")
-            self.assertEqual(attr.created_by_trailer(root, "citygml-attr-editor"),
-                             "Created-By: citygml-attr-editor/tools-v1.2.3")
+            with patch.object(attr.runtime, "running_hub_tag", return_value=None):   # a tools checkout
+                self.assertEqual(attr.created_by_trailer(root, "citygml-attr-editor"), "Created-By: citygml-attr-editor")
+            with patch.object(attr.runtime, "running_hub_tag", return_value="hub-v1.5.0"):
+                self.assertEqual(attr.created_by_trailer(root, "citygml-attr-editor"),
+                                 "Created-By: citygml-attr-editor/1.5.0")
 
     def test_commit_gate_ignores_created_by(self):
         # Part B says Created-By is convention, not enforcement: the commit
@@ -45,7 +46,7 @@ class TestCreatedByTrailer(unittest.TestCase):
         message = ("Update attributes (Usage): 401 → 402\n\n"
                    "Building: 13101-bldg-1\n"
                    "Created-By: some-third-party-tool/9.9 (mail@example.com)\n")
-        trailers = _trailers(message)
+        trailers = parse_trailers(message)
         self.assertEqual(trailers.get("Building"), ["13101-bldg-1"])
         self.assertNotIn("Created-By", trailers)
 
@@ -55,7 +56,7 @@ class TestContractDocMatchesCode(unittest.TestCase):
     contract must be updated in the same change."""
 
     def test_version_and_rfc2119(self):
-        self.assertIn("Exchange Contract v3.1.0", DOC)   # current version (title)
+        self.assertIn("Exchange Contract v3.4.0", DOC)   # current version (title)
         for published in ("v3.1.0", "v3.0.0", "v2.1.0", "v2.0.0"):   # the changelog keeps every published version
             self.assertIn(f"**{published}**", DOC)
 
@@ -79,8 +80,8 @@ class TestContractDocMatchesCode(unittest.TestCase):
 
     def test_trailers_read_by_the_scope_gate_are_all_documented(self):
         # Every trailer the commit scope gate parses must appear in the contract, and vice versa (A2).
-        from scripts.commit_building_scope import _TRAILER_RE
-        pattern = _TRAILER_RE.pattern
+        from scripts.building_identity import TRAILER_RE
+        pattern = TRAILER_RE.pattern
         names = pattern[pattern.index("^(") + 2:pattern.index("):")].split("|")
         for name in names:
             self.assertIn(f"`{name}:`", DOC, name)
@@ -142,6 +143,80 @@ class TestContractDocMatchesCode(unittest.TestCase):
                     "file-scope", "schema", "minimal-diff", "texture", "structure",
                     "plausibility", "topology", "model"):
             self.assertIn(f"`{key}`", DOC)
+
+
+def ticks(text: str) -> "list[str]":
+    """The `code` spans of a piece of the contract, in order."""
+    import re
+    return re.findall(r"`([^`]+)`", text)
+
+
+def between(start: str, end: str) -> str:
+    i = DOC.index(start)
+    return DOC[i + len(start):DOC.index(end, i)]
+
+
+class TestContractTablesFollowTheCode(unittest.TestCase):
+    """Maintainer decision 9 (2026-10-01): the code is the master of every list the contract
+    restates; these tests keep the two equal in both directions (no generated tables)."""
+
+    def test_a1_headings_and_placeholders(self):
+        from scripts import pr_reason
+        self.assertEqual(ticks(between("CI falls back to these exact headings:", "New clients")),
+                         list(pr_reason.HEADINGS))
+        self.assertEqual(ticks(between("NOT contain a placeholder literal:", "The section holds")),
+                         list(pr_reason.PLACEHOLDERS))
+        self.assertIn(f"≥ {pr_reason.MIN_LENGTH} characters", DOC)
+
+    def test_a2_change_types(self):
+        from scripts.commit_building_scope import ACCEPTED_CHANGE_TYPES
+        listed = set(ticks(between("The accepted values are exactly:", "Any other value")))
+        self.assertEqual(listed, set(ACCEPTED_CHANGE_TYPES))
+
+    def test_a2_trailers_the_gate_reads(self):
+        from scripts.building_identity import TRAILER_RE
+        pattern = TRAILER_RE.pattern
+        names = pattern[pattern.index("^(") + 2:pattern.index("):")].split("|")
+        listed = [t.rstrip(":") for t in ticks(between("The complete list of trailers the commit scope gate reads:",
+                                                       "`Identity-Evidence:` is read"))]
+        self.assertEqual(sorted(listed), sorted(names))
+
+    def test_a5_classification_table(self):
+        from scripts import pr_classification as pc
+        for cls, prefixes in pc.BRANCH_PREFIXES.items():
+            row = next(line for line in DOC.splitlines() if line.startswith(f"| `{cls}` |"))
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            self.assertEqual(ticks(cells[1]), list(prefixes), cls)
+            self.assertEqual(ticks(cells[2]), list(pc.TITLE_PREFIXES[cls]), cls)
+            self.assertEqual(ticks(cells[3]), list(pc.TITLE_KEYWORDS.get(cls, ())), cls)
+
+    def test_a6_rows_severity_and_statuses(self):
+        from scripts import gate_result as g
+        self.assertEqual(ticks(between("keyed by a\nstable `<!--cp:key-->` anchor:", "(`reproduction` =")),
+                         [r.key for r in g.ROWS])
+        self.assertEqual(set(ticks(between("Four rows are advisory:", "(a 3D preview"))) - {"warn", "fail"},
+                         {r.key for r in g.ROWS if r.severity == g.ADVISORY})
+        table = [line for line in between("| Status | Sign | Meaning | Blocks |", "Four rows").splitlines()
+                 if line.startswith("| `")]
+        self.assertEqual([ticks(line)[0] for line in table], list(g.STATUSES))
+        self.assertEqual({ticks(line)[0] for line in table if line.rstrip(" |").endswith("yes")}, set(g.BLOCKS))
+
+    def test_a9_labels(self):
+        from scripts import pr_markers, repo_scope
+        table = between("| Label | Effect |", "No other label")
+        self.assertEqual([ticks(line)[0] for line in table.splitlines() if line.startswith("| `")],
+                         list(pr_markers.LABELS))
+        self.assertEqual(repo_scope.TOOLING_LABEL, pr_markers.TOOLING_LABEL)
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        for label in (pr_markers.TEXTURE_OVERRIDE_LABEL, pr_markers.IDENTITY_REVIEW_LABEL):
+            self.assertIn(f'index("{label}")', driver)
+
+    def test_a10_markers_both_ways(self):
+        import re
+        from scripts import pr_markers
+        table = between("| Marker | Meaning |", "Analysis comments carry")
+        listed = set(re.findall(r"<!-- [a-z0-9-]+(?::[^>]*)? -->", table)) - {pr_markers.STATUS_ACTIVE, pr_markers.STATUS_RESOLVED}
+        self.assertEqual(listed, set(pr_markers.COMMENT_MARKERS))
 
 
 if __name__ == "__main__":

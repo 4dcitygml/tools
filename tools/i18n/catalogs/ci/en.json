@@ -18,7 +18,7 @@
   "ci.inspection_heading": "Automated inspection results",
   "ci.col_check": "Check",
   "ci.col_result": "Result",
-  "ci.inspection_footnote": "In the review screen, pass is green, not applicable is gray, and unresolved is red.",
+  "ci.inspection_footnote": "In the review screen, pass is green, a warning is yellow, not applicable is gray, and unresolved is red. ⚙️ marks a system error: not a problem in the data; CI or a maintainer repeats the check.",
   "ci.resubmit_heading": "Items to confirm from the automated checks",
   "ci.resubmit_intro": "The proposal has been received. The following items are being worked out between the proposer and CI.",
   "ci.resubmit_freshness": "Another change was applied first. Please merge in the latest version and resubmit.",
@@ -43,5 +43,12 @@
   "ci.classify_contract": "Full rules: Exchange Contract, section A5.",
   "ci.repo_scope_heading": "Files this city repository does not accept",
   "ci.repo_scope_intro": "A city repository holds data, documents and configuration. Tools, scripts and other code belong in 4dcitygml/tools — please propose them there. Workflow files may change only their CITYGML_TOOLS_REF pin.",
-  "ci.repo_scope_label_note": "Maintainers can accept a CI maintenance change by applying the `tooling` label; the report records that."
+  "ci.repo_scope_label_note": "Maintainers can accept a CI maintenance change by applying the `tooling` label; the report records that.",
+  "ci.check_reproduction": "Bulk conversion reproduction",
+  "ci.label_warn": "Warning (does not block)",
+  "ci.label_error": "System error (not your data)",
+  "ci.error_heading": "Some checks could not run",
+  "ci.error_body": "This is not a problem with your data. A re-run of the automated checks usually resolves it; if it keeps happening, the maintainers look into the check itself.",
+  "ci.warnings_heading": "Warnings (no action required)",
+  "ci.warnings_body": "These checks noted something worth a look; they do not block the proposal. Details are in their own comments."
 }

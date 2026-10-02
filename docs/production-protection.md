@@ -55,9 +55,9 @@ itself, which is why the rules below allow no bypass.
   history-preserving operation (see "Practice reset" below).
 - Practice repositories keep `practice-auto-merge.yml`: it approves in-scope
   practice pull requests and enables auto-merge, and GitHub merges them once
-  the required `analyze` check passes. That is compatible with a no-bypass
-  ruleset; the review requirements decide how much the path allowlist is
-  backed by CODEOWNERS (see "Open decision" below).
+  the required `analyze` check passes. In scope are attribute edits of the
+  demo tiles only; a pull request that adds or changes a texture image waits
+  for the maintainer's review (decision below).
 
 ### Practice reset (replaces the daily reset)
 
@@ -83,24 +83,30 @@ guarded by `vars.PRACTICE_REPO`, using only `GITHUB_TOKEN`:
 
 Prerequisites: CI must accept `Change-Type: practice-reset` as an
 administrative change (commit scope gate, Exchange Contract A2; tools since
-2026-09-13), otherwise the reset pull request fails `analyze`; and the
+2026-09-13) and exempt a reset-only pull request from the one-building rule
+(tools since 2026-09-30), otherwise the reset pull request fails `analyze`; and the
 repository setting "Allow GitHub Actions to create and approve pull requests"
 must be on, otherwise the workflow cannot open the pull request (the practice
 auto-merge needs the same setting for its approval). `vars.PRACTICE_REPO`
 must name the repository itself, or both workflows stay inert.
 
-### Open decision: review requirements of the practice repositories
+### Decision (2026-09-30): what merges without a person in the practice repositories
 
-- *1 approval + code-owner review + no bypass*: the single account cannot
-  approve its own pull requests, so the owner's maintenance changes to a
-  practice repository could never be merged. Not workable with one account.
-- *0 approvals + no bypass*: workable; the CODEOWNERS layer behind the
-  auto-merge is then only as strong as the workflow's path allowlist.
-- *0 approvals + code-owner review + no bypass*: keeps the CODEOWNERS layer
-  if GitHub still demands the owner's review for owned paths at count 0.
-  To be verified in the rehearsal; adopt it if it holds.
-The reset pull request is authored by the bot, so the owner may approve it
-under any of these settings.
+- Attribute edits of the demo tiles (a demo tile's `.gml` modified, nothing
+  else) merge automatically: `practice-auto-merge.yml` approves the checked
+  commit and enables auto-merge, and GitHub merges once `analyze` passes.
+- Texture images never merge without the maintainer's review. A reset keeps
+  the history, so an image merged unchecked (a face, a plate, a nameplate)
+  would stay public for good; the data contribution policy forbids such
+  content and only a person can see it.
+- CODEOWNERS keeps `*` owned by the maintainer and lists the demo tile files,
+  one by one, as the only paths without an owner: the exception exists for
+  the attribute auto-merge and does not cover images or appearance folders.
+- The owner's own maintenance pull requests (workflows, documents) merge by
+  the practice rulesets' existing administrator bypass; the single account
+  cannot approve its own pull requests.
+- The reset pull request is authored by the bot, so the owner approves it
+  like any other.
 
 ### 2. Release tags (tools): keep the tag ruleset, gate the release itself
 
@@ -148,9 +154,11 @@ deliberate step.
    Actions minutes on a private copy are metered, so a copy keeps the
    repository variable `CITYGML_CI` at `off`: every automatic run of every
    workflow is skipped, and a manual run (`workflow_dispatch`) still works for
-   debugging one workflow. Before a change is handed to production the copy
-   sets `CITYGML_CI` to `on`, the pull request is refreshed so every workflow
-   runs once, and the variable goes back to `off`. Production sets nothing.
+   debugging one workflow. `no-windows` runs everything except the Windows
+   hub build, for a check run in a copy that does not need that archive.
+   Before a change is handed to production the copy sets `CITYGML_CI` to
+   `on`, the pull request is refreshed so every workflow runs once, and the
+   variable goes back to `off`. Production sets nothing.
 2. **Fix what the rehearsal breaks** in the development copies, then in
    production through the normal pull-request route.
 3. **Apply to production** from the common-settings thread, one repository at

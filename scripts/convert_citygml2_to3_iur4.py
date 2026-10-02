@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.safe_xml import safe_iterparse, safe_parser  # noqa: E402
+from scripts.safe_xml import safe_iterparse, safe_parse  # noqa: E402
 
 
 VERSION = "0.1.0"
@@ -532,8 +532,7 @@ def restore_ade(
     if len(source_building_ids) != len(set(source_building_ids)):
         raise ConversionError("duplicate uro:buildingID in source")
 
-    parser = safe_parser(remove_blank_text=False, huge_tree=True)
-    tree = etree.parse(str(core_target), parser)
+    tree = safe_parse(str(core_target), remove_blank_text=False, huge_tree=True)
     root = _root_with_namespaces(tree, i4dur_namespace)
 
     targets: dict[str, etree._Element] = {}

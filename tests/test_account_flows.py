@@ -153,7 +153,8 @@ class TestAccountFlows(unittest.TestCase):
         root = self.make_clone()
         self.acc.save_account("alice", "tok-a", 1)
         self.acc.bind_city_login("4dcitygml/sample-tokyo-station", "alice")
-        runtime.save_config({"repo": str(root)})
+        runtime.save_config({"repo": str(root)})   # a hub-v1.3 settings file
+        runtime.migrate_config()                    # as the hub does at start (S18)
         self.activate(root)
         self.assertEqual(hub.SESSION.login, "alice")         # recorded account adopted at start
         s = self.get("/api/settings")
@@ -170,6 +171,7 @@ class TestAccountFlows(unittest.TestCase):
         cfg = runtime.read_config()
         self.assertNotIn("4dcitygml/sample-tokyo-station", cfg.get("cities", {}))
         self.assertNotIn("repo", cfg)
+        self.assertIsNone(runtime.last_clone())                  # nothing left that would re-adopt the clone
         self.assertIn('"MODE": "account"', self.get("/", raw=True))
 
     def test_revoked_token_while_running_unbinds_and_explains(self):
