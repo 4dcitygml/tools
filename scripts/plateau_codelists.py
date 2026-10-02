@@ -9,7 +9,7 @@ PLATEAU encodes values of classification attributes (e.g., `bldg:usage`) and ref
 and is the source material to **exhaustively generate** the unified definition of "unknown" (`scripts/sentinels.py`) from conventions.
 
 Use cases:
-- **Lint (`plateau_lint`)**: verify code values exist in codelists (codelist consistency). Unknown codes are "unknown" = not anomalous.
+- **Lint (`plausibility_lint`)**: verify code values exist in codelists (codelist consistency). Unknown codes are "unknown" = not anomalous.
 - **Statistics (`data_stats`)**: compute distribution and "unknown rate" excluding unknown codes.
 - **Monitoring**: unknown rate (unknown code ratio) over time = maintenance progress indicator.
 

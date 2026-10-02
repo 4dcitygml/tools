@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Data quality metrics (#13 extension) — output attribute statistics with sentinels excluded and compute "unknown rate".
 
-Whereas lint (`citygml_lint`/`plateau_lint`) identifies anomalies at the **point level (single building)**,
+Whereas lint (`citygml_lint`/`plausibility_lint`) identifies anomalies at the **point level (single building)**,
 this tool observes **distribution across the dataset**. Excludes unknown-value sentinels
 (`sentinels.py` numeric ±9999 / `plateau_codelists.py` unknown codes) from statistics
 and outputs the "**unknown rate (sentinel ratio)**" itself as a quality indicator.

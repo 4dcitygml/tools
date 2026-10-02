@@ -18,7 +18,7 @@ minimal diff. Shared machinery (GML parsing, leaf replacement, git/PR,
 first-run setup) is reused by importing tools/attr_editor/app.py.
 
 Usage:
-    python app.py [--repo ~/sample-tokyo-station] [--port 8766] [--no-browser]
+    python app.py [--repo ~/<city clone>] [--port 8766] [--no-browser]
 """
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ import base64
 import hashlib
 import re
 import sys
-from datetime import datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
 
@@ -479,25 +478,16 @@ class TexRepo(attr.Repo):
         if ids_added:
             spans = attr.building_spans(raw)
             s, e = spans[gid]
-        span = raw[s:e]
 
-        # textureCoordinates ring target = each polygon's exterior ring gml:id
-        ring_ids: dict = {}
+        # textureCoordinates ring target = each polygon's exterior ring gml:id; an exterior ring
+        # without one (polygons with IDs, rings without: Munich etc.) gets <pid>_r0
+        raw, ring_ids = grant_ring_ids(raw, s, e, list(layout["uv"]))
         for pid in layout["uv"]:
-            pm = re.search(
-                rb'<gml:Polygon gml:id="'
-                + re.escape(pid.encode("utf-8"))
-                + rb'".*?</gml:Polygon>',
-                span,
-                re.DOTALL,
-            )
-            rm = pm and re.search(rb'<gml:LinearRing gml:id="([^"]+)"', pm.group(0))
-            if not rm:
+            if pid not in ring_ids:
                 raise ValueError(tr(
                     "tex.err_ring_no_id",
                     "Cannot add textures because the exterior ring has no gml:id: {pid}",
                     pid=pid))
-            ring_ids[pid] = rm.group(1).decode("utf-8")
 
         # Image path: <tile stem without _op>_appearance/tex_<sha256 first 12>.jpg
         stem = path.stem[:-3] if path.stem.endswith("_op") else path.stem
@@ -550,10 +540,12 @@ class TexRepo(attr.Repo):
                 raise ValueError(tr(
                     "tex.err_no_cityobjectmember", "cityObjectMember not found"))
             i = m.start()
+            # the appearance module of the file's own CityGML version (1.0 data reads appearance/1.0)
+            version = "1.0" if b"http://www.opengis.net/citygml/1.0" in raw[:8192] else "2.0"
             block = eol.join(
                 [
                     '<app:appearanceMember xmlns:app='
-                    '"http://www.opengis.net/citygml/appearance/2.0">'
+                    f'"http://www.opengis.net/citygml/appearance/{version}">'
                     "<app:Appearance><app:theme>rgbTexture</app:theme>",
                     "\t\t\t" + sdm,  # lines 2+ of sdm carry their own indentation
                     "\t\t</app:Appearance></app:appearanceMember>",
@@ -576,7 +568,8 @@ class TexRepo(attr.Repo):
         }
 
     # ---- PR (commit GML + new images) ----
-    def create_tex_pr(self, body: dict) -> dict:
+    def create_pr(self, body: dict) -> dict:
+        """Send a texture proposal (the editors share Handler's /api/pr and send_proposal)."""
         code = body["tile"]
         gid = body["gid"]
         images = body.get("images") or []
@@ -593,192 +586,99 @@ class TexRepo(attr.Repo):
             raise FileNotFoundError(code)
         rel = str(path.relative_to(self.root))
 
-        with self._git_lock:
-            # Cut the edit branch from the freshly fetched upstream main (same as the attribute editor)
-            pr_base = self._fresh_pr_base(rel)
-            # No tracked files under udx/ changed other than the target (same criterion as the attribute editor)
-            status = self._git("status", "--porcelain").stdout.splitlines()
-            others = [
-                ln
-                for ln in status
-                if ln.strip()
-                and not ln.startswith("??")
-                and "/udx/" in ln[3:]
-                and ln[3:].strip() != rel
-            ]
-            if others:
-                raise RuntimeError(tr(
-                    "tex.err_udx_dirty",
-                    "There are changes to files other than the target under udx/."
-                    " Please clean them up first:\n{list}",
-                    list="\n".join(others[:10]),
-                ))
-
+        def apply() -> "attr.Edit":
+            # inside the send lock, on the freshly fetched base
             result_apply = self.apply_textures(code, gid, images)
             added = result_apply["added"]
             is_new = bool(result_apply.get("new"))  # new texturing (#119) or replacement
 
-            # Resolve buildingID (the stable ID)
-            raw = path.read_bytes()
-            spans = attr.building_spans(raw)
-            building_id = gid
-            if gid in spans:
-                s, e = spans[gid]
-                building_id = attr.stable_building_id_from_span(
-                    raw[s:e],
-                    gid,
-                    getattr(self, "_bid_type", "uro:buildingID"),
-                    getattr(self, "_bid_invalid_values", ()),
+            def describe(building_id: str) -> "tuple[str, str, str]":
+                verb = "Add" if is_new else "Update"
+                subject = f"{verb} textures ({face_count} faces): {building_id}"
+                lines = [subject, ""]
+                lines += [
+                    f"- {'(no existing texture)' if is_new else r['orig']} → {r['new']}"
+                    for r in result_apply["replaced"]
+                ]
+                lines.append("")
+                if reason:
+                    lines += [reason, ""]
+                lines.append(f"Building: {building_id}")
+                lines.append(attr.created_by_trailer(self.root, "citygml-tex-editor"))
+                message = "\n".join(lines)
+
+                # PR title and body are repo-facing: they resolve in the repository's
+                # working language (4dcitygml.json "lang"). The commit subject above
+                # stays English (history contract). The ja/de title prefixes
+                # (pr.title_tex_* catalog values) match hub/CI title fallbacks —
+                # contract-tested; classification is branch-first (tex/) anyway.
+                rlang = attr.read_repo_lang(self.root)
+                no_texture = tr_lang(rlang, "pr.tex_no_existing", "(no existing texture)")
+                rows = "\n".join(
+                    (f"| {no_texture} | `" + r["new"] + "` |")
+                    if is_new
+                    else f"| `{r['orig']}` | `{r['new']}` |"
+                    for r in result_apply["replaced"]
+                )
+                ids_note = (
+                    " " + tr_lang(rlang, "pr.tex_ids_note",
+                                  "Missing polygon IDs (gml:id) were added to the target"
+                                  " building first (standard GML attributes; coordinates"
+                                  " unchanged).")
+                    if result_apply.get("idsAdded") else ""
+                )
+                mechanism = (
+                    tr_lang(rlang, "pr.tex_mechanism_new",
+                            "**New textures** for a building without any (appearance block"
+                            " added with new images, #119). Coordinates are unchanged; the"
+                            " UVs are generated from wall clusters (consistent with R1/R3).")
+                    + ids_note
+                    if is_new
+                    else tr_lang(rlang, "pr.tex_mechanism_update",
+                                 "Existing images are never overwritten: new images are"
+                                 " added and the imageURI values are swapped (consistent with"
+                                 " R1/R3). UVs and the XML structure are unchanged.")
+                )
+                heading = (tr_lang(rlang, "pr.heading_tex_new", "New textures")
+                           if is_new else
+                           tr_lang(rlang, "pr.heading_tex_update", "Texture update"))
+                if is_new:
+                    pr_title = tr_lang(rlang, "pr.title_tex_add",
+                                       "Add textures ({n} faces): {bid}",
+                                       n=face_count, bid=building_id)
+                else:
+                    pr_title = tr_lang(rlang, "pr.title_tex_update",
+                                       "Update textures ({n} faces): {bid}",
+                                       n=face_count, bid=building_id)
+                # "(please fill in)" is a fixed literal in every language: it is one of
+                # CI's placeholder strings, so an empty reason keeps failing the
+                # reason check regardless of the repo language. Do not translate.
+                pr_body = (
+                    f"## {heading} ({building_id} / `{gid}` / {face_count} faces)\n\n"
+                    + tr_lang(rlang, "pr.tex_columns",
+                              "| Before image | After image (newly added) |")
+                    + f"\n|---|---|\n{rows}\n\n"
+                    f"{mechanism}\n\n"
+                    f"## {tr_lang(rlang, 'pr.heading_reason', 'Reason and supporting evidence')}"
+                    f" {attr.pr_markers.SECTION_REASON}\n\n"
+                    f"{reason or '(please fill in)'}\n\n"
+                    f"## {tr_lang(rlang, 'pr.heading_rights', 'Rights confirmation')}\n\n"
+                    + tr_lang(rlang, "pr.rights_body",
+                              "The submitter agrees that the photos used are their own,"
+                              " that they are provided as **CC0 1.0** (moral rights will not"
+                              " be exercised), and that they have confirmed the notes on"
+                              " portrait rights and personal information"
+                              " ([Data Contribution Policy]({url}) v2).",
+                              url="../blob/main/docs/data-contribution-policy.md")
+                    + "\n"
                 )
 
-            now = datetime.now()
-            safe_bid = re.sub(r"[^A-Za-z0-9._-]", "-", building_id)
-            branch = f"tex/{safe_bid}-{now:%Y%m%d-%H%M%S}"
+                return message, pr_title, pr_body
 
-            verb = "Add" if is_new else "Update"
-            subject = f"{verb} textures ({face_count} faces): {building_id}"
-            lines = [subject, ""]
-            lines += [
-                f"- {'(no existing texture)' if is_new else r['orig']} → {r['new']}"
-                for r in result_apply["replaced"]
-            ]
-            lines.append("")
-            if reason:
-                lines += [reason, ""]
-            lines.append(f"Building: {building_id}")
-            lines.append(attr.created_by_trailer(self.root, "citygml-tex-editor"))
-            message = "\n".join(lines)
+            return attr.Edit(describe, added=[str((self.bldg_dir / a).relative_to(self.root)) for a in added],
+                             extra={"added": added})
 
-            prev = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-
-            def _rollback() -> None:
-                self._git("checkout", prev, check=False)
-                self._git("checkout", "--", rel, check=False)
-                for a in added:  # new images are untracked, so delete them manually
-                    p = self.bldg_dir / a
-                    p.unlink(missing_ok=True)
-                    if p.parent != self.bldg_dir and not any(p.parent.iterdir()):
-                        p.parent.rmdir()  # also clean up the appearance folder created by new texturing
-                self._tile_cache.pop(code, None)
-
-            try:
-                self._checkout_pr_branch(branch, pr_base)
-                add_paths = [rel] + [
-                    str((self.bldg_dir / a).relative_to(self.root)) for a in added
-                ]
-                self._git("add", *add_paths)
-                # Path-limited commit: unrelated staged changes in the index are not swept in
-                self._git("commit", "-m", message, "--", *add_paths)
-                commit = self._git("rev-parse", "--short", "HEAD").stdout.strip()
-            except RuntimeError:
-                _rollback()
-                raise
-
-            result: dict = {
-                "ok": True,
-                "branch": branch,
-                "commit": commit,
-                "buildingID": building_id,
-                "added": added,
-            }
-
-            push = self._git("push", "-u", "origin", branch, check=False)
-            if push.returncode != 0:
-                _rollback()
-                self._git("branch", "-D", branch, check=False)
-                if not attr.current_login():
-                    raise RuntimeError(tr(
-                        "tex.err_push_no_account",
-                        "No GitHub account is connected for this city, so nothing can be sent."
-                        " Your edits remain on this screen. Open the hub, choose the account"
-                        " (Settings → GitHub account), then press Send again."))
-                raise RuntimeError(tr(
-                    "tex.err_push_failed",
-                    "Could not send to GitHub. Your edits remain on this screen."
-                    " Check your internet connection and try again.\n{stderr}",
-                    stderr=push.stderr.strip(),
-                ))
-            result["pushed"] = True
-
-            # PR title and body are repo-facing: they resolve in the repository's
-            # working language (4dcitygml.json "lang"). The commit subject above
-            # stays English (history contract). The ja/de title prefixes
-            # (pr.title_tex_* catalog values) match hub/CI title fallbacks —
-            # contract-tested; classification is branch-first (tex/) anyway.
-            rlang = attr.read_repo_lang(self.root)
-            no_texture = tr_lang(rlang, "pr.tex_no_existing", "(no existing texture)")
-            rows = "\n".join(
-                (f"| {no_texture} | `" + r["new"] + "` |")
-                if is_new
-                else f"| `{r['orig']}` | `{r['new']}` |"
-                for r in result_apply["replaced"]
-            )
-            ids_note = (
-                " " + tr_lang(rlang, "pr.tex_ids_note",
-                              "Missing polygon IDs (gml:id) were added to the target"
-                              " building first (standard GML attributes; coordinates"
-                              " unchanged).")
-                if result_apply.get("idsAdded") else ""
-            )
-            mechanism = (
-                tr_lang(rlang, "pr.tex_mechanism_new",
-                        "**New textures** for a building without any (appearance block"
-                        " added with new images, #119). Coordinates are unchanged; the"
-                        " UVs are generated from wall clusters (consistent with R1/R3).")
-                + ids_note
-                if is_new
-                else tr_lang(rlang, "pr.tex_mechanism_update",
-                             "Existing images are never overwritten: new images are"
-                             " added and the imageURI values are swapped (consistent with"
-                             " R1/R3). UVs and the XML structure are unchanged.")
-            )
-            heading = (tr_lang(rlang, "pr.heading_tex_new", "New textures")
-                       if is_new else
-                       tr_lang(rlang, "pr.heading_tex_update", "Texture update"))
-            if is_new:
-                pr_title = tr_lang(rlang, "pr.title_tex_add",
-                                   "Add textures ({n} faces): {bid}",
-                                   n=face_count, bid=building_id)
-            else:
-                pr_title = tr_lang(rlang, "pr.title_tex_update",
-                                   "Update textures ({n} faces): {bid}",
-                                   n=face_count, bid=building_id)
-            # "(please fill in)" is a fixed literal in every language: it is one of
-            # CI's placeholder strings, so an empty reason keeps failing the
-            # reason check regardless of the repo language. Do not translate.
-            pr_body = (
-                f"## {heading} ({building_id} / `{gid}` / {face_count} faces)\n\n"
-                + tr_lang(rlang, "pr.tex_columns",
-                          "| Before image | After image (newly added) |")
-                + f"\n|---|---|\n{rows}\n\n"
-                f"{mechanism}\n\n"
-                f"## {tr_lang(rlang, 'pr.heading_reason', 'Reason and supporting evidence')}"
-                f" <!--sec:reason-->\n\n"
-                f"{reason or '(please fill in)'}\n\n"
-                f"## {tr_lang(rlang, 'pr.heading_rights', 'Rights confirmation')}\n\n"
-                + tr_lang(rlang, "pr.rights_body",
-                          "The submitter agrees that the photos used are their own,"
-                          " that they are provided as **CC0 1.0** (moral rights will not"
-                          " be exercised), and that they have confirmed the notes on"
-                          " portrait rights and personal information"
-                          " ([Data Contribution Policy]({url}) v2).",
-                          url="../blob/main/docs/data-contribution-policy.md")
-                + "\n"
-            )
-
-            pr_url, api_note = self._create_pr_api(branch, pr_title, pr_body)
-            # hub-v1.2.1: never through the computer's GitHub CLI (another identity)
-            if pr_url:
-                result["prUrl"] = pr_url
-            else:
-                result["compareUrl"] = self._compare_url(branch)
-                if api_note:
-                    result["note"] = api_note
-
-            self._git("checkout", prev, check=False)
-            self._tile_cache.pop(code, None)
-            return result
-
+        return self.send_proposal("texture", code, gid, rel, apply)
 
 class TexHandler(attr.Handler):
     APP_ID = "tex_editor"
@@ -819,45 +719,42 @@ class TexHandler(attr.Handler):
         except BrokenPipeError:
             return
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
             return
         super().do_GET()
 
-    def do_POST(self) -> None:
-        path = urlparse(self.path).path
-        if path in ("/api/texture", "/api/pr"):
-            try:
-                import json as _json
 
-                length = int(self.headers.get("Content-Length") or 0)
-                body = _json.loads(self.rfile.read(length) or b"{}")
-                if self.repo is None:
-                    self._error(tr("tex.err_setup_incomplete", "Setup is not complete"), 409)
-                elif path == "/api/texture":
-                    self._json(self.repo.apply_textures(body["tile"], body["gid"], body["images"]))
-                else:
-                    self._json(self.repo.create_tex_pr(body))
-            except (ValueError, RuntimeError) as e:
-                self._error(str(e))
-            except FileNotFoundError as e:
-                self._error(tr("tex.err_tile_not_found",
-                               "Tile not found: {exc}", exc=e), 404)
-            except KeyError as e:
-                self._error(tr("tex.err_missing_field",
-                               "A required field is missing: {exc}", exc=e), 400)
-            except BrokenPipeError:
-                pass
-            except Exception as e:  # noqa: BLE001
-                self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
-            return
-        super().do_POST()
+
+def grant_ring_ids(raw: bytes, s: int, e: int, pids: list) -> "tuple[bytes, dict]":
+    """The exterior ring gml:id of each polygon pid in the building span [s, e); a ring without
+    one gets gml:id="<pid>_r0" (nothing else changes). Returns (raw, {pid: ring id}); a pid whose
+    polygon is not found is absent."""
+    ids: dict = {}
+    for pid in pids:
+        span = raw[s:e]
+        pm = re.search(rb'<(?:\w+:)?Polygon\b[^>]*\sgml:id="' + re.escape(pid.encode("utf-8")) + rb'"[^>]*>', span)
+        if pm is None:
+            continue
+        rm = re.search(rb"<(?:\w+:)?LinearRing\b([^>]*)>", span[pm.end():])
+        if rm is None:
+            continue
+        own = re.search(rb'gml:id="([^"]+)"', rm.group(1))
+        if own:
+            ids[pid] = own.group(1).decode("utf-8")
+            continue
+        at = s + pm.end() + rm.start(1)
+        added = f' gml:id="{pid}_r0"'.encode()
+        raw = raw[:at] + added + raw[at:]
+        e += len(added)
+        ids[pid] = f"{pid}_r0"
+    return raw, ids
 
 
 def main() -> None:
     runtime.console_safe()
     accounts.scrub_git_env()   # the shell's git overrides never reach the clone
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (can be omitted when run from inside clone)")
+    parser.add_argument("--repo", type=Path, help="local clone of the city repository (can be omitted when run from inside the clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
     parser.add_argument("--textures", type=Path,
                         help="texture replacement directory (for 3D tone variant comparison)")
@@ -865,21 +762,7 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    repo_root = args.repo or runtime.detect_repo() or runtime.last_clone()
-    if repo_root is None:
-        sys.exit(
-            "Error: clone not found. Specify with --repo or run first-time setup "
-            "in the attribute editor (tools/attr_editor/app.py) first"
-        )
-
-    attr.sync_upstream_main(repo_root)
-    try:
-        TexHandler.repo = TexRepo(repo_root, args.data)
-    except RuntimeError as e:
-        sys.exit(f"Error: {e}")
-    if args.textures:
-        TexHandler.repo.tex_override = args.textures.resolve()
-        print(f"  Texture replacement: {TexHandler.repo.tex_override}")
+    TexHandler.repo = attr.open_repo(TexRepo, args)
 
     runtime.serve(TexHandler, args.port, ["CityGML Texture Editor: {url}", f"  Data: {TexHandler.repo.bldg_dir}"],
                   open_browser=not args.no_browser)

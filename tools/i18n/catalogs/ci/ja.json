@@ -19,7 +19,7 @@
   "ci.inspection_heading": "自動検査の結果",
   "ci.col_check": "検査項目",
   "ci.col_result": "結果",
-  "ci.inspection_footnote": "レビュー画面では、合格は緑・対象外はグレー・未解決は赤で表示されます。",
+  "ci.inspection_footnote": "レビュー画面では、合格は緑・警告は黄・対象外はグレー・未解決は赤で表示されます。⚙️ は仕組みのエラーで、データの問題ではありません。CI または管理者が検査をやり直します。",
   "ci.resubmit_heading": "自動検査からの確認事項",
   "ci.resubmit_intro": "提案は受け付けられています。以下の項目を、提案者と CI の間で解消していきます。",
   "ci.resubmit_freshness": "先に別の変更が取り込まれました。最新版を取り込んで再提出してください。",
@@ -44,5 +44,11 @@
   "ci.classify_contract": "規則の全文：Exchange Contract A5。",
   "ci.repo_scope_heading": "この都市リポジトリが受け付けないファイル",
   "ci.repo_scope_intro": "都市リポジトリが持つのはデータ・文書・設定です。ツール、スクリプトなどのコードは 4dcitygml/tools に提案してください。ワークフローの変更は CITYGML_TOOLS_REF の固定値だけに限られます。",
-  "ci.repo_scope_label_note": "CI の保守のための変更は、管理者が `tooling` ラベルを付けることで受け付けられます（報告に記録されます）。"
+  "ci.repo_scope_label_note": "CI の保守のための変更は、管理者が `tooling` ラベルを付けることで受け付けられます（報告に記録されます）。",
+  "ci.label_warn": "警告（マージは止めません）",
+  "ci.label_error": "仕組みのエラー（データの問題ではありません）",
+  "ci.error_heading": "一部のチェックを実行できませんでした",
+  "ci.error_body": "データの問題ではありません。自動チェックを再実行すると、多くの場合は解消します。繰り返し起きる場合は、管理者がチェックの仕組みを確認します。",
+  "ci.warnings_heading": "警告（対応は不要です）",
+  "ci.warnings_body": "次のチェックが気になる点を見つけました。提案を止めるものではありません。詳しくは各チェックのコメントをご覧ください。"
 }

@@ -150,6 +150,19 @@ class TestLifecycle(unittest.TestCase):
         # C exists semantically.
         self.assertIn("C", building_spans(r.output))
 
+    def test_deleting_a_member_on_the_citymodel_line_keeps_the_citymodel_tag(self):
+        # D12: CityGML 1.0 files (Munich) start the first members on the CityModel tag's line.
+        # Deleting one ate back to the line start, removed the CityModel tag and its namespaces,
+        # and the self-check crashed; the analysis driver read the crash as formatting churn.
+        base = _model(_bldg("A"), _bldg("B")).replace(b">\r\n\t<core:cityObjectMember>", b"><core:cityObjectMember>", 1)
+        self.assertIn(b"><core:cityObjectMember>", base)          # A shares the CityModel line
+        head = base.replace(_span_bytes(base, "A"), b"")
+        r = reconstruct(base, head)
+        self.assertTrue(r.verified)
+        self.assertEqual((r.deleted, r.classification), (["A"], "lifecycle"))
+        self.assertIn(b"<core:CityModel ", r.output)
+        self.assertEqual(sorted(building_spans(r.output)), ["B"])
+
     def test_merge_delete_two_add_one(self):
         # Merge: delete A and B, add M (several buildings -> one). C unchanged.
         base = _model(_bldg("A"), _bldg("B"), _bldg("C"))
@@ -162,6 +175,31 @@ class TestLifecycle(unittest.TestCase):
         self.assertEqual(_span_bytes(r.output, "C"), _span_bytes(base, "C"))
         self.assertNotIn("A", building_spans(r.output))
         self.assertNotIn("B", building_spans(r.output))
+
+
+class TestExitCodes(unittest.TestCase):
+    def test_a_crash_is_not_reported_as_churn(self):
+        # D13: CI reads exit 1 as formatting churn; an exception also exited 1 and passed silently
+        import subprocess, sys, tempfile
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as t:
+            base, head = Path(t) / "base.gml", Path(t) / "head.gml"
+            base.write_bytes(_model(_bldg("A")))
+            head.mkdir()                                        # unreadable input: the check itself fails
+            run = lambda: subprocess.run([sys.executable, str(root / "scripts/reconstruct_minimal.py"), str(base),
+                                          str(head), "--check"], capture_output=True, text=True, cwd=root)
+            r = run()
+            self.assertEqual(r.returncode, 3, r.stderr[-300:])
+            self.assertIn("could not process the files", r.stderr)
+            # a file that is not well-formed XML has no minimal diff: a person reads it (2), no crash
+            head.rmdir()
+            head.write_bytes(b"<core:CityModel><not xml")
+            r = run()
+            self.assertEqual(r.returncode, 2, r.stderr[-300:])
+            self.assertIn("not well-formed XML", r.stderr)
+        driver = (root / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertIn('echo "::error::The minimal-diff check could not process ${f} (exit ${rc}); see the log above."', driver)
 
 
 class TestMultiModified(unittest.TestCase):

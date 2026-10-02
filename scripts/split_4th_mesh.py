@@ -30,7 +30,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_xml import APP, CORE, GML, iter_coords, write_plateau_gml  # noqa: E402
-from scripts.safe_xml import safe_parser  # noqa: E402
+from scripts.safe_xml import safe_parse  # noqa: E402
 
 
 Q_CORE = f"{{{CORE}}}cityObjectMember"
@@ -201,8 +201,7 @@ def split(input_path: Path, outdir: Path) -> dict:
     suffix = input_path.name[len(code):]  # e.g. _bldg_6697_op.gml
     lat_min, lon_min, dlat, dlon = cell_bounds_from_mesh(code)
 
-    parser = safe_parser(huge_tree=True, remove_blank_text=False)
-    tree = etree.parse(str(input_path), parser)
+    tree = safe_parse(str(input_path), huge_tree=True, remove_blank_text=False)
     root = tree.getroot()
 
     # Save the srs attributes of the original Envelope

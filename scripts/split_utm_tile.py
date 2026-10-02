@@ -28,7 +28,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_xml import GML, bbox as member_bbox  # noqa: E402
-from scripts.safe_xml import safe_parser  # noqa: E402
+from scripts.safe_xml import safe_parse  # noqa: E402
 
 
 
@@ -54,8 +54,7 @@ def main() -> None:
     origin_e, origin_n = tile_origin_from_name(args.input.name)
     outdir = args.outdir or args.input.parent
 
-    parser = safe_parser(huge_tree=True, remove_blank_text=False)
-    root = etree.parse(str(args.input), parser).getroot()
+    root = safe_parse(str(args.input), huge_tree=True, remove_blank_text=False).getroot()
 
     if any(etree.QName(c).localname == "appearanceMember" for c in root
            if isinstance(c.tag, str)):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the 1 commit = 1 buildingID gate."""
+"""Tests for the 1 commit = 1 building ID gate."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.commit_building_scope import inspect_range, main, render
+from scripts.commit_building_scope import inspect_range, main, pr_facts, pr_scope, practice_reset_only, render
 
 
 def _gml(a: int, b: int) -> str:
@@ -207,6 +207,116 @@ class TestCommitBuildingScope(unittest.TestCase):
         with_building = self.repo.commit_gml(5, 1, f"reset\n\nChange-Type: practice-reset\nReset-To: {self.base}\nBuilding: 13101-bldg-1")
         result = inspect_range(self.repo.root, no_target, with_building)
         self.assertTrue(any("per-building" in e for e in result[0].errors), result[0].errors)
+
+    def test_a_reset_of_two_buildings_is_reported_as_reset_only(self):
+        # the analysis driver reads practiceResetOnly to lift the one-building rule
+        self.repo.commit_gml(5, 1, "practice edit\n\nBuilding: 13101-bldg-1")
+        practice = self.repo.commit_gml(5, 6, "practice edit\n\nBuilding: 13101-bldg-2")
+        reset = self.repo.commit_gml(1, 1, f"reset\n\nChange-Type: practice-reset\nReset-To: {self.base}")
+        out = Path(self.tmp.name) / "scope.json"
+        self.assertEqual(main(["--repo", str(self.repo.root), "--base-sha", practice, "--head-sha", reset,
+                               "--json-output", str(out)]), 0)
+        self.assertTrue(json.loads(out.read_text(encoding="utf-8"))["practiceResetOnly"])
+
+    def test_reset_only_needs_every_commit_to_be_an_accepted_reset(self):
+        practice = self.repo.commit_gml(5, 6, "practice edit\n\nBuilding: 13101-bldg-1")
+        reset = self.repo.commit_gml(1, 1, f"reset\n\nChange-Type: practice-reset\nReset-To: {self.base}")
+        after = self.repo.commit_gml(7, 1, "edit after the reset\n\nBuilding: 13101-bldg-1")
+        self.assertFalse(practice_reset_only(inspect_range(self.repo.root, practice, after)))   # a reset plus an edit
+        partial = self.repo.commit_gml(1, 2, f"partial reset\n\nChange-Type: practice-reset\nReset-To: {self.base}")
+        self.assertFalse(practice_reset_only(inspect_range(self.repo.root, after, partial)))    # a rejected reset
+        self.assertFalse(practice_reset_only([]))
+        edit = self.repo.commit_gml(3, 2, "edit\n\nBuilding: 13101-bldg-2")
+        out = Path(self.tmp.name) / "scope.json"
+        main(["--repo", str(self.repo.root), "--base-sha", partial, "--head-sha", edit, "--json-output", str(out)])
+        self.assertFalse(json.loads(out.read_text(encoding="utf-8"))["practiceResetOnly"])
+
+    def test_pr_facts_read_the_trailers_once_for_the_driver(self):
+        practice = self.repo.commit_gml(5, 1, "practice edit\n\nBuilding: 13101-bldg-1")
+        reset = self.repo.commit_gml(1, 1, f"reset\n\nChange-Type: practice-reset\nReset-To: {self.base}")
+        facts = pr_facts(inspect_range(self.repo.root, practice, reset))
+        self.assertEqual((facts["changeTypes"], facts["administrative"], facts["practiceReset"], facts["bulk"]),
+                         (["practice-reset"], True, True, False))
+        edit = self.repo.commit_gml(3, 1, "edit\n\nBuilding: 13101-bldg-1")
+        facts = pr_facts(inspect_range(self.repo.root, reset, edit))
+        self.assertEqual((facts["administrative"], facts["practiceReset"], facts["scopeMunicipalities"]), (False, False, []))
+        # trailer values are read as the gate reads them: surrounding blanks do not matter
+        spaced = self.repo.commit_gml(1, 1, f"reset\n\nChange-Type:  practice-reset  \nReset-To: {self.base}")
+        self.assertTrue(pr_facts(inspect_range(self.repo.root, edit, spaced))["practiceReset"])
+
+    def test_an_unknown_change_type_is_rejected_and_not_administrative(self):
+        # D3: any Change-Type used to make the PR administrative and skip the classification gate
+        head = self.repo.commit_gml(2, 1, "edit\n\nBuilding: 13101-bldg-1\nChange-Type: foo-bar")
+        result = inspect_range(self.repo.root, self.base, head)
+        self.assertTrue(any("Unknown Change-Type 'foo-bar'" in e for e in result[0].errors), result[0].errors)
+        self.assertFalse(pr_facts(result)["administrative"])
+
+    def scope_counts(self, base: str, head: str) -> tuple:
+        got = pr_scope(self.repo.root, base, head)
+        return (got["modified"], got["added"], got["deleted"], got["renamed"], got["class"])
+
+    def two(self, a_gml="gml-13101-bldg-1", a_storeys=1, b_storeys=1) -> str:
+        return _gml_members([("13101-bldg-1", "13101", a_storeys), ("13101-bldg-2", "13101", b_storeys)]) \
+            .replace('gml:id="gml-13101-bldg-1"', f'gml:id="{a_gml}"')
+
+    def test_pr_scope_counts_by_stable_id_and_meaning(self):
+        # S1: the one count of the PR's buildings; each case is one the quality step's gml:id count got wrong
+        base = self.base                                   # setUp's baseline holds self.two()
+        one = self.repo.commit_text(self.two(a_storeys=2), "edit\n\nBuilding: 13101-bldg-1")
+        self.assertEqual(self.scope_counts(base, one), (["13101-bldg-1"], [], [], [], "single"))
+        renamed = self.repo.commit_text(self.two(a_gml="gml-new"), "id only\n\nBuilding: 13101-bldg-1")
+        self.assertEqual(self.scope_counts(base, renamed), ([], [], [], ["13101-bldg-1"], "rename"))       # D14
+        both = self.repo.commit_text(self.two(a_gml="gml-new2", a_storeys=3), "id and value\n\nBuilding: 13101-bldg-1")
+        self.assertEqual(self.scope_counts(base, both), (["13101-bldg-1"], [], [], [], "single"))        # D21
+        churn = self.repo.commit_text(self.two().replace("><bldg:", ">\n  <bldg:"), "format only")
+        self.assertEqual(self.scope_counts(base, churn), ([], [], [], [], "none"))
+
+    def test_pr_scope_counts_the_buildings_of_whole_files(self):
+        base = self.base
+        (self.repo.root / "other.gml").write_text(_gml_members([("13101-bldg-3", "13101", 1), ("13101-bldg-4", "13101", 1)]),
+                                                  encoding="utf-8")
+        self.repo.run("add", "other.gml")
+        self.repo.run("commit", "-q", "-m", "a new file")
+        added = self.repo.run("rev-parse", "HEAD")
+        self.assertEqual(self.scope_counts(base, added)[1:], (["13101-bldg-3", "13101-bldg-4"], [], [], "lifecycle"))   # D17
+        self.repo.run("rm", "-q", "tile.gml")
+        self.repo.run("commit", "-q", "-m", "a file removed")
+        removed = self.repo.run("rev-parse", "HEAD")
+        self.assertEqual(self.scope_counts(added, removed)[2], ["13101-bldg-1", "13101-bldg-2"])                        # D20
+
+    def test_the_quality_step_reads_the_scope_instead_of_counting(self):
+        driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertNotIn("/^BLDG renamed/", driver)          # D14's field was the word "renamed"
+        self.assertNotIn("--changed-buildings", driver)      # texture changes are in the scope now
+        self.assertNotIn("NEWFILE", driver)                  # D17: a new file counted as one building
+        self.assertIn('counts="$("$PY" -c "$scope_py" "$SCOPE_JSON" counts)" || {', driver)
+
+    def test_a_malformed_file_makes_the_scope_a_finding(self):
+        # snapshot broken-xml: the scope failed on a missing end tag and file-scope showed a system error
+        from unittest.mock import patch
+        from xml.etree import ElementTree
+        from scripts import commit_building_scope as cbs
+        with patch.object(cbs, "pr_scope", side_effect=ElementTree.ParseError("mismatched tag")):
+            self.assertTrue(cbs._scope_or_error(Path("."), "a", "b")["scopeMalformed"])
+        with patch.object(cbs, "pr_scope", side_effect=OSError("git failed")):
+            self.assertFalse(cbs._scope_or_error(Path("."), "a", "b")["scopeMalformed"])
+        driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertIn('sys.exit(1 if d.get("scopeMalformed") else 2)', driver)
+
+    def test_the_driver_reads_the_facts_instead_of_grepping_messages(self):
+        driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertNotIn("pr-messages", driver)
+        for key in ("administrative", "sourceBaseline", "practiceReset", "identity", "bulk", "scopeExtract"):
+            self.assertIn(f"$(flag {key})", driver)
+        self.assertIn('ref="$(fact manifestRef)"', driver)
+
+    def test_the_analysis_driver_lifts_the_one_building_rule_only_for_reset_only(self):
+        driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertIn('RESET_ONLY="$(flag practiceResetOnly)"', driver)
+        reads, rule = driver.index('RESET_ONLY="$('), driver.index("An ordinary PR changes")
+        self.assertLess(reads, rule)
+        self.assertIn('if [ "$CLASS" = "multi-modified" ] && [ "${RESET_ONLY:-false}" = "true" ]; then', driver)
+        self.assertIn('elif [ "$CLASS" = "multi-modified" ] && [ "${BULK_ENABLED:-false}" != "true" ]; then', driver)
 
     def test_scope_extract_rejects_target_omission_and_other_city(self):
         source = _gml_members([

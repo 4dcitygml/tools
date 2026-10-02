@@ -127,5 +127,36 @@ class TestEndToEndWithFixtures(unittest.TestCase):
         self.assertIn("`/measuredHeight`", md)
 
 
+class TestUnreadableFiles(unittest.TestCase):
+    def test_a_malformed_file_is_named_not_left_as_an_empty_comment(self):
+        # a changed file with a missing end tag: the summary crashed and left an empty summary.md, and the city poster stopped at it
+        from unittest.mock import patch
+        from scripts import ci_change_summary as cs
+        good = {"file": "b.gml", "summary": {}}
+        files = {"a.gml": b"<core:CityModel><not xml", "b.gml": b"<ok/>"}
+        def fake_diff(old, new, *_):
+            if new.startswith(b"<core"):
+                from xml.etree import ElementTree
+                raise ElementTree.ParseError("mismatched tag")
+            return good
+        unreadable: list = []
+        with patch.object(cs, "blob", side_effect=lambda repo, sha, path: files[path]), \
+                patch.object(cs, "diff_sources", side_effect=fake_diff), patch.object(cs, "_has_changes", return_value=True):
+            results = cs.collect_ci_results(Path("."), "a", "b", ["a.gml", "b.gml"], unreadable)
+            with self.assertRaises(Exception):          # without the list, a malformed file still raises
+                cs.collect_ci_results(Path("."), "a", "b", ["a.gml"])
+        self.assertEqual((results, unreadable), ([good], ["a.gml"]))
+        text = render_ci([], unreadable=["a.gml"])
+        self.assertTrue(text.startswith(SUMMARY_MARKER))
+        self.assertIn("`a.gml`", text)
+        self.assertIn("not well-formed XML", text)
+        self.assertEqual(render_ci([]), "")
+
+    def test_the_driver_never_leaves_an_empty_comment_file(self):
+        driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
+        self.assertIn("""trap 'find out -maxdepth 1 -name "*.md" -empty -delete""", driver)
+        self.assertNotIn("[ -s out/", driver)   # per-step cleanups ran only when their subshell got that far
+
+
 if __name__ == "__main__":
     unittest.main()

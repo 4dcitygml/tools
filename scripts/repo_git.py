@@ -6,6 +6,7 @@
     git(repo, "rev-parse", "HEAD")                    -> stdout as text (not stripped)
     git(repo, "show", f"{sha}:{path}", binary=True)   -> stdout as bytes
     git(repo, "rev-parse", "HEAD", strip=True)        -> stdout with surrounding whitespace removed
+    blob(repo, sha, path)                             -> the file's bytes at that commit, or None
 
 A failing command raises GitError, which is both a RuntimeError and a
 subprocess.CalledProcessError, so callers may catch either; its message names
@@ -34,3 +35,12 @@ def git(repo, *args: str, binary: bool = False, strip: bool = False):
         return proc.stdout
     text = proc.stdout.decode("utf-8", errors="replace")
     return text.strip() if strip else text
+
+
+def blob(repo, sha: str, path: str) -> "bytes | None":
+    """The bytes of path at commit sha, or None when git cannot show it (no such file at that
+    commit, unknown sha). The working tree does not matter."""
+    try:
+        return git(repo, "show", f"{sha}:{path}", binary=True)
+    except GitError:
+        return None

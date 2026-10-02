@@ -4,7 +4,8 @@
   "url": "https://github.com/4dcitygml/tools",
   "description": {
     "en": "Review 3DCityDB changes and propose minimal-diff GitHub pull requests.",
-    "ja": "Review 3DCityDB changes and propose minimal-diff GitHub pull requests."
+    "ja": "3DCityDB の変更を確認し、最小差分の GitHub プルリクエストとして提案します。",
+    "de": "Änderungen in der 3DCityDB prüfen und als GitHub-Pull-Requests mit minimalem Diff vorschlagen."
   },
   "vendor": {
     "name": "4dcitygml",

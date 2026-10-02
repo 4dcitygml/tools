@@ -101,9 +101,22 @@ class TestManifest(unittest.TestCase):
         archive_names = {arc for _, arc, _ in build_bundle.manifest(REPO_ROOT, "macos")}
         for page in (REPO_ROOT / "tools" / "hub").glob("*.html"):
             self.assertIn(f"{build_bundle.LIB}/{page.name}", archive_names)
-        for rel in ("attr_editor/setup.html", "attr_editor/viewer.html", "i18n/catalogs/hub/de.json",
+        for rel in ("attr_editor/index.html", "attr_editor/viewer.html", "i18n/catalogs/hub/de.json",
                     "themes/theme_loader.py", "runtime.py", "accounts.py"):
             self.assertIn(f"{build_bundle.LIB}/{rel}", archive_names)
+
+    def test_a_shipped_file_finds_the_scripts_it_calls(self):
+        # D9: tex_editor/tone_battle.py shipped but called scripts/retone_textures.py, which did not
+        entries = build_bundle.manifest(REPO_ROOT, "macos")
+        shipped = {Path(arc).name for _, arc, _ in entries}
+        missing = {}
+        for src, arc, _ in entries:
+            if src.suffix == ".py":
+                for name in re.findall(r'"scripts"\s*/\s*"(\w+\.py)"', src.read_text(encoding="utf-8")):
+                    if name not in shipped:
+                        missing.setdefault(arc, []).append(name)
+        self.assertEqual(missing, {})
+        self.assertNotIn(f"{build_bundle.LIB}/tex_editor/tone_battle.py", {arc for _, arc, _ in entries})
 
     def test_sparse_checkout_of_both_jobs_covers_the_manifest(self):
         text = WORKFLOW.read_text(encoding="utf-8")

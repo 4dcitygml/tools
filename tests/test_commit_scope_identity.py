@@ -183,5 +183,54 @@ class IdentityCommitScopeTest(unittest.TestCase):
         self.assertTrue(any("does not belong in an identity PR" in e for e in results[-1].errors), results[-1].errors)
 
 
+
+def _bin_members(bins: list[str]) -> str:
+    """A CityGML 1.0 tile whose stable ID is the BIN generic attribute (New York's rule)."""
+    return ('<CityModel xmlns="http://www.opengis.net/citygml/1.0" xmlns:bldg="http://www.opengis.net/citygml/building/1.0" '
+            'xmlns:gen="http://www.opengis.net/citygml/generics/1.0" xmlns:gml="http://www.opengis.net/gml">\n'
+            + "".join(f'<cityObjectMember><bldg:Building gml:id="gml_{i}"><gen:stringAttribute name="BIN">'
+                      f"<gen:value>{b}</gen:value></gen:stringAttribute></bldg:Building></cityObjectMember>\n"
+                      for i, b in enumerate(bins))
+            + "</CityModel>\n")
+
+
+class AnyCityIdentityTest(unittest.TestCase):
+    """The identity checks read the city's own building ID (they knew only uro:buildingID: every
+    identity commit of a gml:id or gen:BIN city failed as 'bytes changed beyond the buildingID')."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = GitRepo(Path(self.tmp.name))
+        (self.repo.root / "4dcitygml.json").write_text(json.dumps({"building_id": {"type": "gen:BIN"}}), encoding="utf-8")
+        self.repo.run("add", "4dcitygml.json")
+        self.repo.commit_text(_bin_members(["101", "102"]), "baseline")
+        (self.repo.root / "other").mkdir()
+        (self.repo.root / "other" / "far.gml").write_text(_bin_members(["109"]), encoding="utf-8")
+        self.repo.run("add", "other/far.gml")
+        self.repo.run("commit", "-q", "-m", "second tile")
+        self.base = self.repo.run("rev-parse", "HEAD")
+
+    tearDown = IdentityCommitScopeTest.tearDown
+    _write_manifest = IdentityCommitScopeTest._write_manifest
+    _identity_commit = IdentityCommitScopeTest._identity_commit
+
+    def test_repository_ids_are_the_citys_own(self) -> None:
+        # lifecycle and identity uniqueness read these: a gen:BIN city had none, so every lifecycle commit failed
+        from scripts.building_identity import IdentityRule
+        from scripts.commit_building_scope import _repository_building_ids
+        ids = _repository_building_ids(self.repo.root, self.base, IdentityRule("gen:BIN"))
+        self.assertEqual(ids, {"101": ["tile.gml"], "102": ["tile.gml"], "109": ["other/far.gml"]})
+
+    # The bulk manifest schema (Exchange Contract) still names PLATEAU IDs; the commits below are
+    # checked up to the byte rule, which runs before the manifest's own checks.
+    def test_byte_preservation_is_enforced(self) -> None:
+        data = self._write_manifest([("101", "121", "B")])
+        changed = _bin_members(["121", "102"]).replace('gml:id="gml_0"', 'gml:id="gml_X"')
+        head = self._identity_commit("101", "121", data, content=changed)
+        errors = inspect_range(self.repo.root, self.base, head)[0].errors
+        self.assertTrue(any("bytes changed beyond" in e for e in errors), errors)
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,6 +63,20 @@ class TestVersions(unittest.TestCase):
         self.assertEqual(best["notesUrl"], "https://example/hub-v1.9.0")
         self.assertIsNone(hub.latest_hub_release([]))
 
+    def test_the_check_asks_the_repository_the_launcher_installs_from(self):
+        # D10: the check was fixed to 4dcitygml/tools while the launcher honoured CITYGML_TOOLS_REPO
+        with patch.dict(os.environ, {"CITYGML_TOOLS_REPO": "", "CITYGML_RELEASES_API": ""}):
+            self.assertEqual(hub.releases_api(), "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30")
+        with patch.dict(os.environ, {"CITYGML_TOOLS_REPO": "someone/tools-copy", "CITYGML_RELEASES_API": ""}):
+            self.assertEqual(hub.releases_api(), "https://api.github.com/repos/someone/tools-copy/releases?per_page=30")
+        with patch.dict(os.environ, {"CITYGML_TOOLS_REPO": "bad/../x?y", "CITYGML_RELEASES_API": ""}):
+            self.assertIn("/repos/4dcitygml/tools/", hub.releases_api())
+        with patch.dict(os.environ, {"CITYGML_RELEASES_API": "http://127.0.0.1:9/releases"}):
+            self.assertEqual(hub.releases_api(), "http://127.0.0.1:9/releases")
+        launcher = (REPO_ROOT / "install/citygml.sh").read_text(encoding="utf-8")
+        self.assertIn('RELEASES_API="${CITYGML_RELEASES_API:-https://api.github.com/repos/${TOOLS_REPO}/releases?per_page=30}"',
+                      launcher)
+
     def test_running_tag_from_env_or_folder(self):
         with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}):
             runtime.reset_caches()
@@ -153,13 +167,50 @@ class TestUpdateManager(unittest.TestCase):
             snap = self._wait(um, "checked", True)
             self.assertFalse(snap["available"])
 
-    def test_min_hub_is_advisory_and_explains(self):
-        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}), patch.object(runtime, "hubs_dir", return_value=self.root):
+    def test_below_min_hub_blocks_sending_and_is_judged_offline(self):
+        # maintainer 2026-09-30: an older hub can view, not send or request a retry
+        (self.tmp / "4dcitygml.json").write_text(json.dumps({"repo": "o/r", "min_hub": "hub-v1.5.0"}))
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.3.3"}):
+            runtime.reset_caches()
+            self.assertEqual(runtime.below_min_hub(self.tmp), "hub-v1.5.0")
+            with self.assertRaisesRegex(RuntimeError, "hub-v1.5.0"):
+                runtime.require_min_hub(self.tmp)
+            um = hub.UpdateManager()
+            um.set_min_hub(self.tmp)                     # no network needed (it used to wait for the releases)
+            snap = um.snapshot()
+            self.assertEqual((snap["minHubOk"], snap["minHub"], snap["minHubFinal"]), (False, "hub-v1.5.0", False))
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.5.0"}):
+            runtime.reset_caches()
+            self.assertIsNone(runtime.below_min_hub(self.tmp))
+            runtime.require_min_hub(self.tmp)
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": ""}):
+            runtime.reset_caches()
+            self.assertIsNone(runtime.below_min_hub(self.tmp))   # a tools checkout is never below
+
+    def test_min_hub_is_judged_again_after_the_sync(self):
+        # the sync may bring the city's new min_hub: hub-v1.3.3 saw it only from the second start
+        import git_sync
+        (self.tmp / "4dcitygml.json").write_text(json.dumps({"repo": "o/r"}))
+        def sync(root, url, args, log):
+            (Path(root) / "4dcitygml.json").write_text(json.dumps({"repo": "o/r", "min_hub": "hub-v1.5.0"}))
+            return {"state": "updated", "head": "abc", "message": ""}
+        with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.4.0"}), patch.object(git_sync, "sync_main", sync):
             runtime.reset_caches()
             um = hub.UpdateManager()
-            um.check_async(min_hub="hub-v1.3.0", fetch_json=lambda: releases(("hub-v1.3.0", self.sha, False)))
-            snap = self._wait(um, "checked", True)
-            self.assertFalse(snap["minHubOk"]); self.assertEqual(snap["minHub"], "hub-v1.3.0"); self.assertTrue(snap["available"])
+            um.set_min_hub(self.tmp)
+            self.assertTrue(um.snapshot()["minHubOk"])
+            job = git_sync.BackgroundSync(self.tmp, lambda: "u", lambda: [],
+                                          on_done=lambda _s: um.set_min_hub(self.tmp, final=True)).start()
+            self.assertTrue(job.done.wait(10))
+            snap = um.snapshot()
+            self.assertEqual((snap["minHubOk"], snap["minHub"], snap["minHubFinal"]), (False, "hub-v1.5.0", True))
+
+    def test_the_editors_and_the_retry_refuse_below_min_hub(self):
+        for rel, needle in (("tools/attr_editor/app.py", "def send_proposal("),   # both editors send through it (S10)
+                            ("tools/hub/app.py", "def request_ci_retry(")):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            body = text[text.index(needle):][:1500]
+            self.assertIn("runtime.require_min_hub(self.root)", body, rel)
 
     def test_offline_check_is_silent(self):
         with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}):
@@ -171,11 +222,11 @@ class TestUpdateManager(unittest.TestCase):
             snap = self._wait(um, "checked", True)
             self.assertFalse(snap["available"]); self.assertIn("no network", snap["error"])
 
-    def test_min_hub_of_reads_clone_config(self):
+    def test_min_hub_reads_clone_config(self):
         (self.tmp / "4dcitygml.json").write_text(json.dumps({"repo": "o/r", "min_hub": "hub-v1.3.0"}))
-        self.assertEqual(hub.min_hub_of(self.tmp), "hub-v1.3.0")
+        self.assertEqual(runtime.min_hub(self.tmp), "hub-v1.3.0")
         (self.tmp / "4dcitygml.json").write_text(json.dumps({"repo": "o/r", "min_hub": "latest"}))
-        self.assertIsNone(hub.min_hub_of(self.tmp))
+        self.assertIsNone(runtime.min_hub(self.tmp))
 
 
 if __name__ == "__main__":

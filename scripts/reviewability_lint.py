@@ -31,7 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.citygml_constants import LARGE_CHANGE_THRESHOLD, LINT_MARKER  # noqa: E402
 from scripts.diff_citygml import attribute_diffs, load_buildings  # noqa: E402
-from scripts.extract_building_preview import _get_file_at_sha  # noqa: E402  (shared git show helper / X-2)
+from scripts.repo_git import blob  # noqa: E402
 
 BuildingMap = dict  # gml:id -> (attrs, geom_hash)
 
@@ -165,8 +165,8 @@ def collect_ci_files(
     """Diff base/head for each changed .gml and analyze only the files with changes."""
     files: list[dict] = []
     for rel_path in gml_files:
-        old_map = load_buildings(_get_file_at_sha(repo, base_sha, rel_path))
-        new_map = load_buildings(_get_file_at_sha(repo, head_sha, rel_path))
+        old_map = load_buildings(blob(repo, base_sha, rel_path))
+        new_map = load_buildings(blob(repo, head_sha, rel_path))
         result = analyze_file(old_map, new_map, rel_path)
         if sum(result["counts"].values()) > 0:
             files.append(result)
@@ -204,8 +204,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not files:
         return 0
     sys.stdout.write(render_markdown(files, threshold=args.threshold))
-    return 0
+    # a finding (exit 1) exactly when the report warns: per-building warnings or a large change
+    warns = any(f["warnings"] for f in files) or _changed_total(files) > args.threshold
+    return 1 if warns else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from scripts.gate_result import guarded
+    raise SystemExit(guarded(main))

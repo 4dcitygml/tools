@@ -87,7 +87,7 @@ viewer.scene.globe.enableLighting = false;
 // server as CITY_MAP). gsi = GSI aerial photo + standard map (served for Japan only),
 // osm = OSM standard map only (worldwide; no aerial layer, so the basemap toggle is hidden).
 const CITY_MAP = window.CITY_MAP || {};
-const INTL_TILES = CITY_MAP.tiles === 'osm';
+const INTL_TILES = CITY_MAP.tiles !== 'gsi';   // GSI only where the city declares it
 
 let photoLayer = null;
 let stdLayer;
@@ -460,50 +460,112 @@ function loadTex(imgRef, cb) {
 function uvTexCoords(face) {
   const ti = face.id && bldg.tex && bldg.tex[face.id];
   if (!ti || !ti.uv || ti.uv.length < face.pts.length) return undefined;
+  const holes = face.holes || [];
+  if (holes.length && !(ti.holes && holes.every((h, k) => ti.holes[k] && ti.holes[k].length >= h.length))) return undefined;
   const us = ti.uv.map(p => p[0]), vs = ti.uv.map(p => p[1]);
   const u0 = Math.min(...us), du = (Math.max(...us) - u0) || 1;
   const v0 = Math.min(...vs), dv = (Math.max(...vs) - v0) || 1;
-  return ti.uv.slice(0, face.pts.length).map(
-    p => new Cesium.Cartesian2((p[0] - u0) / du, (p[1] - v0) / dv));
+  const st = p => new Cesium.Cartesian2((p[0] - u0) / du, (p[1] - v0) / dv);
+  // the outer ring, then each hole: the same order as facePositions()
+  return [...ti.uv.slice(0, face.pts.length).map(st),
+          ...holes.flatMap((h, k) => ti.holes[k].slice(0, h.length).map(st))];
 }
 
-// Cesium internally reverses rings wound clockwise (CW) but does not reverse the
-// textureCoordinates you pass (PolygonGeometryLibrary.polygonsFromHierarchy).
-// So only faces judged CW get a mismatched vertex-to-UV mapping and distort. Run the
-// same test as Cesium (tangent-plane projection -> winding order) ahead of time and,
-// if CW, reverse the vertices and UVs together.
-function windingAligned(positions, tcs) {
-  try {
-    const tp = Cesium.EllipsoidTangentPlane.fromPoints(positions, Cesium.Ellipsoid.WGS84);
-    const p2 = tp.projectPointsOntoPlane(positions);
-    if (p2.length >= 3 &&
-        Cesium.PolygonPipeline.computeWindingOrder2D(p2) === Cesium.WindingOrder.CLOCKWISE) {
-      return [positions.slice().reverse(), tcs.slice().reverse()];
-    }
-  } catch (e) { /* degenerate rings etc. are left as-is */ }
-  return [positions, tcs];
+// The face's points: the outer ring, then each hole (a hole is a hole, not a face of its own)
+function facePositions(face) {
+  const c = ([lon, lat, z]) => Cesium.Cartesian3.fromDegrees(lon, lat, z);
+  const outer = face.pts.map(c), holes = (face.holes || []).map(h => h.map(c));
+  const holeIndices = [];
+  let n = outer.length;
+  for (const h of holes) { holeIndices.push(n); n += h.length; }
+  return { outer, holes, all: [...outer, ...holes.flat()], holeIndices };
+}
+
+// Textured faces are drawn as their own triangles. An entity polygon with perPositionHeight
+// becomes a CoplanarPolygonGeometry (Cesium 1.118), which reverses the positions and the
+// textureCoordinates as two separate rings, each when it finds it clockwise. For a wall the
+// positions' test runs on a plane whose side is decided by rounding (its normal is horizontal),
+// and it runs in a worker, so some walls got their vertices reversed but not their UVs and
+// showed the texture upside down or mirrored. Here the face is triangulated in its own plane
+// and vertex i keeps UV i; the entity stays for the outline and picking.
+function faceGeometry(positions, tcs, holeIndices = [], outerCount = positions.length) {
+  const C3 = Cesium.Cartesian3, n = new C3();
+  for (let i = 0; i < outerCount; i++) {        // Newell normal of the outer ring
+    const a = positions[i], b = positions[(i + 1) % outerCount];
+    n.x += (a.y - b.y) * (a.z + b.z); n.y += (a.z - b.z) * (a.x + b.x); n.z += (a.x - b.x) * (a.y + b.y);
+  }
+  if (C3.magnitude(n) === 0) return undefined;
+  C3.normalize(n, n);
+  const ax = C3.subtract(positions[1], positions[0], new C3());
+  C3.subtract(ax, C3.multiplyByScalar(n, C3.dot(ax, n), new C3()), ax);
+  if (C3.magnitude(ax) === 0) return undefined;
+  C3.normalize(ax, ax);
+  const ay = C3.cross(n, ax, new C3());
+  const flat = positions.map(p => {
+    const d = C3.subtract(p, positions[0], new C3());
+    return new Cesium.Cartesian2(C3.dot(d, ax), C3.dot(d, ay));
+  });
+  const indices = Cesium.PolygonPipeline.triangulate(flat, holeIndices.length ? holeIndices : undefined);
+  if (!indices || !indices.length) return undefined;
+  return Cesium.GeometryPipeline.computeNormal(new Cesium.Geometry({
+    attributes: {
+      position: new Cesium.GeometryAttribute({
+        componentDatatype: Cesium.ComponentDatatype.DOUBLE, componentsPerAttribute: 3,
+        values: new Float64Array(positions.flatMap(p => [p.x, p.y, p.z])),
+      }),
+      st: new Cesium.GeometryAttribute({
+        componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 2,
+        values: new Float32Array(tcs.flatMap(c => [c.x, c.y])),
+      }),
+    },
+    indices: new Uint16Array(indices),
+    primitiveType: Cesium.PrimitiveType.TRIANGLES,
+    boundingSphere: Cesium.BoundingSphere.fromPoints(positions),
+  }));
+}
+
+let texPrimitives = [];   // the textured faces of the current render()
+let renderGen = 0;        // a texture that arrives after a newer render() is dropped
+
+function showFaceTexture(entity, fp, tcs, image, gen) {
+  if (gen !== renderGen) return;
+  const geometry = tcs && faceGeometry(fp.all, tcs, fp.holeIndices, fp.outer.length);
+  if (!geometry) {          // no usable UVs: let Cesium map the image as before
+    entity.polygon.material = new Cesium.ImageMaterialProperty({ image, transparent: false });
+    return;
+  }
+  texPrimitives.push(viewer.scene.primitives.add(new Cesium.Primitive({
+    geometryInstances: new Cesium.GeometryInstance({ geometry, id: entity }),   // picks as the entity
+    appearance: new Cesium.MaterialAppearance({
+      material: Cesium.Material.fromType('Image', { image }), faceForward: true, closed: false,
+    }),
+    asynchronous: false,
+  })));
+  entity.polygon.fill = false;   // the entity keeps the outline (and picking)
+  // the photo is the face: no white edges over it, except on the face being worked on
+  if (!highlightPids.has(entity._facePid)) entity.polygon.outline = false;
 }
 
 // ---- Rendering ----
 function render() {
   entities.forEach(e => viewer.entities.remove(e));
   entities = [];
+  texPrimitives.forEach(p => viewer.scene.primitives.remove(p));
+  texPrimitives = [];
+  const gen = ++renderGen;
   if (!bldg) return;
   const color = Cesium.Color.fromCssColorString('#4fc3f7');
 
   if (currentLod === 'lod2' && bldg.lod2 && bldg.lod2.length) {
     faceEntities = {};
     for (const [i, face] of bldg.lod2.entries()) {
-      let positions = face.pts.map(([lon, lat, z]) =>
-        Cesium.Cartesian3.fromDegrees(lon, lat, z));
-      let tcs = uvTexCoords(face);
-      if (tcs) [positions, tcs] = windingAligned(positions, tcs);
+      const fp = facePositions(face);
+      const tcs = uvTexCoords(face);
       const entity = viewer.entities.add({
         name: `f${i}`,
         polygon: {
-          hierarchy: new Cesium.PolygonHierarchy(positions),
+          hierarchy: new Cesium.PolygonHierarchy(fp.outer, fp.holes.map(h => new Cesium.PolygonHierarchy(h))),
           perPositionHeight: true,
-          textureCoordinates: tcs && new Cesium.PolygonHierarchy(tcs),
           material: color.withAlpha(0.75),
           outline: true,
           outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
@@ -516,15 +578,11 @@ function render() {
       const texInfo = showTex && face.id && bldg.tex && bldg.tex[face.id];
       if (previewsOn && previewTex[face.id]) {
         // Preview images from the parent window (for the texture editor) take priority
-        entity.polygon.material = new Cesium.ImageMaterialProperty({
-          image: previewTex[face.id], transparent: false,
-        });
+        showFaceTexture(entity, fp, tcs, previewTex[face.id], gen);
       } else if (texInfo) {
         loadTex(texInfo.img, img => {
           if (!img) return;
-          entity.polygon.material = new Cesium.ImageMaterialProperty({
-            image: cropUV(img, texInfo.uv), transparent: false,
-          });
+          showFaceTexture(entity, fp, tcs, cropUV(img, texInfo.uv), gen);
         });
       }
       if (highlightPids.has(face.id)) {
@@ -601,8 +659,8 @@ function flyToBuilding(duration = 1.0) {
 async function load() {
   const tile = pageQuery.get('tile'), bid = pageQuery.get('bid');
   const info = document.getElementById('info');
-  if (!tile || !bid) { info.textContent = t('viewer.usage_hint', 'Specify ?tile=<mesh>&bid=<gml:id>'); return; }
-  info.textContent = t('viewer.loading_mesh', 'Loading… (mesh {tile})').replace('{tile}', tile);
+  if (!tile || !bid) { info.textContent = t('viewer.usage_hint', 'Specify ?tile=<tile>&bid=<gml:id>'); return; }
+  info.textContent = t('viewer.loading_mesh', 'Loading… (tile {tile})').replace('{tile}', tile);
   try {
     const r = await fetch(`/api/building/${tile}/${encodeURIComponent(bid)}`);
     const j = await r.json();

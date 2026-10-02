@@ -1,0 +1,4 @@
+{
+  "about": "The city repositories the contract tests read in CI (tests.yml, ci/city_checkouts.sh), each at the commit tools was last tested against. A change on both sides moves these refs in its own tools PR, after the city PRs are merged. Data folders are not checked out.",
+  "repositories": {}
+}

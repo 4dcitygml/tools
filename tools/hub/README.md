@@ -218,9 +218,11 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
 | **Achievement badges** | Shows a rank based on the number of merged PRs (✨→🌱→🌿→🌳→🏛️) and the remaining count to the next rank. |
 | **Trouble / suggestions** | Creates a UX feedback Issue from an in-hub form using the connected GitHub authentication. No re-login to GitHub is needed. The subject, purpose, and environment are pre-filled, and the poster's current achievement badge and merged-PR count are recorded automatically as reference for maintainers. |
 
-To hide the maintainer cards during a demo use `/?admin=off`; to show them use `/?admin=on`.
-They are also shown when there is no parameter. `admin=0` and `admin=false` are also treated
-as hidden.
+The maintainer cards are shown only to a connected account that can approve in this city
+(write, maintain or admin on the city repository); residents do not see them. The check runs
+when the dashboard connects, and an unreachable GitHub hides the cards. To hide them from a
+maintainer too, for example during a demo, use `/?admin=off` (`admin=0` and `admin=false` also
+hide them).
 
 ## Structure
 

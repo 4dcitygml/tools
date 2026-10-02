@@ -13,7 +13,7 @@
 # Contract with the wrapper (.github/workflows/pr-analysis.yml in city repos):
 #   - cwd = the city repository checkout (full history, base fetched)
 #   - TOOLS_DIR = absolute path of the tools checkout (this repo, pinned tag)
-#   - PREVIEW_BASE_URL = optional override for the Cesium preview base URL
+#   - PREVIEW_BASE_URL = where the Cesium preview viewer is served; unset = no preview link
 #   - Python 3.12 with lxml + xmlschema installed (pinned by the wrapper)
 #   - writes step outputs (run/kind for the val3dity toolchain steps) to
 #     $GITHUB_OUTPUT and cross-script state to $RUNNER_TEMP/citygml_outcomes.env
@@ -45,59 +45,49 @@ WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 
 OUTCOMES="${RUNNER_TEMP:-/tmp}/citygml_outcomes.env"
 : > "$OUTCOMES"
+# A12: results of an earlier run in the same temporary folder never count for this one, and
+# scratch files live in a folder of this run's own
+( cd "${RUNNER_TEMP:-/tmp}" && rm -rf gates citygml_commit_scope.json citygml_repo_scope.json citygml_lint_counts.json \
+    plausibility_lint_counts.json topology_scope_output.txt )
+SCRATCH="$(mktemp -d "${RUNNER_TEMP:-/tmp}/citygml-scratch.XXXXXX")"
 record() { printf '%s=%s\n' "$1" "$2" >> "$OUTCOMES"; }
+# gate KEY EXIT_CODE [extra gate_result args]: the row's result in its one form, $RUNNER_TEMP/gates/KEY.json
+# (S17; exit codes: 0 pass, 1 finding, >=2 error). A write that fails leaves no file, and the
+# summary then shows the row as not run (it blocks), never as passed.
+gate() {
+  local key="$1" code="$2"; shift 2
+  "$PY" "$TOOLS_DIR/scripts/gate_result.py" write --key "$key" --exit-code "$code" --out "${RUNNER_TEMP:-/tmp}" "$@" > /dev/null || true
+}
+gate_na() { "$PY" "$TOOLS_DIR/scripts/gate_result.py" write --key "$1" --not-applicable --out "${RUNNER_TEMP:-/tmp}" > /dev/null || true; }
 
 # --- Prepare output dir + carry PR number (hard step) ---
 # Pass the PR number to the posting side via the artifact (workflow_run.pull_requests is empty for forks).
 mkdir -p out
+# An empty comment file is never posted: whichever step stops (a step's subshell exits on its
+# first error, before any cleanup of its own), the driver removes empty files when it ends.
+trap 'find out -maxdepth 1 -name "*.md" -empty -delete 2>/dev/null || true' EXIT
 echo "$PR_NUMBER" > out/pr.txt
 
 # --- Base branch freshness (continue-on-error) ---
 set +e
-(
-  set -euo pipefail
-  if git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"; then
-    echo "Consistency with the latest version: OK"
-  else
-    echo "::warning::Another change was applied first. Merge in the latest version and resubmit."
-    exit 1
-  fi
-)
-[ $? -eq 0 ] && record FRESHNESS_OUTCOME success || record FRESHNESS_OUTCOME failure
+git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+rc=$?
 set -e
+case "$rc" in
+  0) echo "Consistency with the latest version: OK" ;;
+  1) echo "::warning::Another change was applied first. Merge in the latest version and resubmit." ;;
+  *) echo "::error::git could not compare the PR with the latest version (exit $rc); a re-run may help."; rc=2 ;;
+esac
+gate freshness "$rc"
 
 # --- Required explanation and evidence (continue-on-error) ---
 set +e
-"$PY" - "$EVENT" <<'PY'
-import json
-import re
-import sys
-
-event = json.load(open(sys.argv[1], encoding="utf-8"))
-body = str(event.get("pull_request", {}).get("body") or "")
-# Exchange format v2: prefer the <!--sec:reason--> anchor, fall back to heading strings
-match = re.search(
-    r"^##[^\n]*<!--\s*sec:reason\s*-->[^\n]*$\n(.*?)(?=^##\s+|\Z)",
-    body, flags=re.MULTILINE | re.DOTALL,
-) or re.search(
-    r"^##\s+(?:Reason and supporting evidence|Summary of changes"
-    r"|編集理由・根拠資料|変更理由|変更の理由|変更の概要)\s*$\n(.*?)(?=^##\s+|\Z)",  # Japanese literals: match contributor input — do not translate
-    body, flags=re.MULTILINE | re.DOTALL,
-)
-reason = match.group(1).strip() if match else ""
-reason = re.sub(r"<!--.*?-->", "", reason, flags=re.DOTALL).strip()
-placeholders = ("please fill in", "not filled in", "記入してください", "未記入", "TODO", "TBD")  # Japanese literals: match contributor input — do not translate
-ok = len(reason) >= 5 and not any(p.lower() in reason.lower() for p in placeholders)
-if ok:
-    print("Description and evidence: OK")
-else:
-    print("::warning::Please describe the reason for the change and the supporting evidence. CI will comment with items to confirm.")
-    raise SystemExit(1)
-PY
-[ $? -eq 0 ] && record REASON_OUTCOME success || record REASON_OUTCOME failure
+"$PY" "$TOOLS_DIR/scripts/pr_reason.py" "$EVENT"   # one rule with the hub and the editors (S5)
+rc=$?
+gate reason "$rc"
 set -e
 
-# --- Commit scope inspection (1 commit = 1 buildingID) (continue-on-error) ---
+# --- Commit scope inspection (1 commit = 1 building ID) (continue-on-error) ---
 set +e
 (
   set -uo pipefail
@@ -107,7 +97,7 @@ set +e
     --base-sha "$BASE_SHA" \
     --head-sha "$HEAD_SHA" \
     --json-output "${RUNNER_TEMP:-/tmp}/citygml_commit_scope.json" \
-    > /tmp/commit-scope.txt 2>&1
+    > "$SCRATCH/commit-scope.txt" 2>&1
   rc=$?
   {
     echo "<!-- citygml-commit-scope -->"
@@ -120,26 +110,53 @@ set +e
     fi
     echo ""
     echo '```text'
-    cat /tmp/commit-scope.txt
+    cat "$SCRATCH/commit-scope.txt"
     echo '```'
   } > out/commit-scope.md
-  cat /tmp/commit-scope.txt
+  cat "$SCRATCH/commit-scope.txt"
   exit "$rc"
 )
-[ $? -eq 0 ] && record COMMIT_SCOPE_OUTCOME success || record COMMIT_SCOPE_OUTCOME failure
+rc=$?
+gate commit-scope "$rc"
 set -e
+# The PR's trailers, parsed once by the gate above (commit_building_scope.pr_facts): every
+# decision below reads them here instead of grepping the commit messages. A missing or broken
+# file reads as empty (flags false), as the greps found nothing.
+fact() {
+  "$PY" -c 'import json, sys
+v = json.load(open(sys.argv[1])).get(sys.argv[2], "")
+print(("true" if v else "false") if isinstance(v, bool) else "\n".join(v) if isinstance(v, list) else v)' \
+    "${RUNNER_TEMP:-/tmp}/citygml_commit_scope.json" "$1" 2>/dev/null || true
+}
+flag() { [ "$(fact "$1")" = "true" ] && echo true || echo false; }
+# A PR made only of accepted practice-reset commits (the gate above verified each against its
+# Reset-To) returns many buildings at once; the one-building rule below does not apply to it.
+RESET_ONLY="$(flag practiceResetOnly)"
 
 # --- Find changed .gml files (hard step) ---
 git diff --name-only --diff-filter=AMR "$BASE_SHA" "$HEAD_SHA" > all_changed.txt
 grep -E '\.gml$' all_changed.txt > changed_gml.txt || true
 GML_COUNT="$(wc -l < changed_gml.txt | tr -d ' ')"
 record GML_COUNT "$GML_COUNT"
-record CHANGED_OUTCOME success
+
+# Texture images are the image files inside the city's data directories (4dcitygml.json
+# data_dirs, read at the base); a city that declares none treats every image as data.
+DATA_IMAGES_RE="$("$PY" - "$BASE_SHA" <<'PY'
+import json, re, subprocess, sys
+raw = subprocess.run(["git", "show", f"{sys.argv[1]}:4dcitygml.json"], capture_output=True).stdout
+try:
+    dirs = [str(d).strip("/") for d in (json.loads(raw or b"{}").get("data_dirs") or []) if str(d).strip("/")]
+except ValueError:
+    dirs = []
+prefix = "^(" + "|".join(re.escape(d) for d in dirs) + ")/.*" if dirs else ""
+print(prefix + r"\.(jpg|jpeg|png|tif|tiff)$")
+PY
+)"
 
 # IMAGES_CHANGED makes the summary's texture row applicable whenever image files
 # are touched, even if the PR title/branch classifies as an attribute change
 # (otherwise a bogus "image" in an attribute-titled PR would surface in no row).
-IMAGES_CHANGED="$(grep -qE '_appearance/.*\.(jpg|jpeg|png|tif|tiff)$' all_changed.txt && echo true || echo false)"
+IMAGES_CHANGED="$(grep -qE "$DATA_IMAGES_RE" all_changed.txt && echo true || echo false)"
 record IMAGES_CHANGED "$IMAGES_CHANGED"
 
 # --- Classification (Exchange Contract A5) (hard step) ---
@@ -149,27 +166,37 @@ record IMAGES_CHANGED "$IMAGES_CHANGED"
 # (the inspection summary appends the how-to-fix table). No silent default.
 # CITYGML_CLASSIFICATION_WARN_ONLY=true (repository variable) turns the rejection
 # into a warning for a city's first release under contract v3.0.0.
-git log --format=%B "${BASE_SHA}..${HEAD_SHA}" > /tmp/pr-messages.txt
 DATA_CHANGED=false
 if [ "$GML_COUNT" != "0" ] || [ "$IMAGES_CHANGED" = "true" ]; then DATA_CHANGED=true; fi
-ADMINISTRATIVE=false
-if grep -qE '^(Change-Type|Provenance-Manifest):' /tmp/pr-messages.txt; then ADMINISTRATIVE=true; fi
-PR_CLASS="$("$PY" "$TOOLS_DIR/scripts/pr_classification.py" --branch "$PR_BRANCH" --title "$PR_TITLE" \
-  --data-changed "$DATA_CHANGED" --administrative "$ADMINISTRATIVE" || true)"
-CHECK_KIND="$("$PY" "$TOOLS_DIR/scripts/pr_classification.py" --branch "$PR_BRANCH" --title "$PR_TITLE" \
-  --data-changed "$DATA_CHANGED" --administrative "$ADMINISTRATIVE" --print kind)"
-record PR_CLASS "$PR_CLASS"
-if [ "$PR_CLASS" = "unclassified" ]; then
+ADMINISTRATIVE="$(flag administrative)"
+# One call gives the class and the kind for checks (S3; both were computed separately, and the
+# summary computed the kind a third time without the trailers). A failing call is not a success
+# (A12: `|| true` turned a crash into "classified").
+if classified="$("$PY" "$TOOLS_DIR/scripts/pr_classification.py" --branch "$PR_BRANCH" --title "$PR_TITLE" \
+  --data-changed "$DATA_CHANGED" --administrative "$ADMINISTRATIVE" --print both)"; then
+  read -r PR_CLASS CHECK_KIND <<<"$classified"
+else
+  PR_CLASS="error"; CHECK_KIND="attribute"
+fi
+record CHECK_KIND "$CHECK_KIND"
+if [ "$PR_CLASS" = "error" ]; then
+  echo "::error::The classification could not be computed (scripts/pr_classification.py failed); see the log."
+  record CLASSIFICATION_OUTCOME failure
+  gate classification 2
+elif [ "$PR_CLASS" = "unclassified" ]; then
   if [ "${CITYGML_CLASSIFICATION_WARN_ONLY:-}" = "true" ]; then
     echo "::warning::This data proposal has no classification (branch prefix or title). It will be required; see the guidance comment."
     record CLASSIFICATION_OUTCOME warning
+    gate classification 0 --warnings 1
   else
     echo "::error::This data proposal has no classification. Rename the branch (edit/ tex/ geom/) or edit the title; see the guidance comment."
     record CLASSIFICATION_OUTCOME failure
+    gate classification 1
   fi
 else
   echo "Classification: $PR_CLASS"
   record CLASSIFICATION_OUTCOME success
+  gate classification 0
 fi
 
 # --- Repository scope (Exchange Contract A11) (continue-on-error) ---
@@ -179,9 +206,10 @@ fi
 # label. The result folds into the `file-scope` row of the inspection summary.
 set +e
 "$PY" "$TOOLS_DIR/scripts/repo_scope.py" --repo "$WORKSPACE" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" \
-  --event "$EVENT" --json-output "${RUNNER_TEMP:-/tmp}/citygml_repo_scope.json" > /tmp/repo-scope.txt 2>&1
+  --event "$EVENT" --json-output "${RUNNER_TEMP:-/tmp}/citygml_repo_scope.json" > "$SCRATCH/repo-scope.txt" 2>&1
 rc=$?
-cat /tmp/repo-scope.txt
+REPO_SCOPE_RC="$rc"
+cat "$SCRATCH/repo-scope.txt"
 [ "$rc" -eq 0 ] && record REPO_SCOPE_OUTCOME success || record REPO_SCOPE_OUTCOME failure
 set -e
 
@@ -202,38 +230,24 @@ if [ "$GML_COUNT" != "0" ]; then
     --github-output "$SCOPE_OUT"
   TOPOLOGY_RUN="$(sed -n 's/^run=//p' "$SCOPE_OUT" | tail -1)"
   [ -n "$TOPOLOGY_RUN" ] || TOPOLOGY_RUN="false"
-  cat "$SCOPE_OUT" >> "${GITHUB_OUTPUT:-/dev/null}"
+  grep -v '^run=' "$SCOPE_OUT" >> "${GITHUB_OUTPUT:-/dev/null}" || true   # run= is written once, below (S4)
 fi
 echo "kind=${PROPOSAL_KIND}" >> "${GITHUB_OUTPUT:-/dev/null}"
 echo "run=${TOPOLOGY_RUN}" >> "${GITHUB_OUTPUT:-/dev/null}"
 record TOPOLOGY_APPLICABLE "$TOPOLOGY_RUN"
-record PROPOSAL_KIND "$PROPOSAL_KIND"
+[ "$TOPOLOGY_RUN" = "true" ] || gate_na topology     # when it runs, ci/topology_gate.sh writes the row
 
 # --- Detect municipality scope extraction (continue-on-error) ---
 SCOPE_ENABLED="false"
 SCOPE_MUNICIPALITY=""
-set +e
-(
-  set -euo pipefail
-  git log --format=%B "${BASE_SHA}..${HEAD_SHA}" > /tmp/pr-messages.txt
-  if grep -q '^Change-Type: scope-extract$' /tmp/pr-messages.txt; then
-    grep '^Scope-Municipality:' /tmp/pr-messages.txt \
-      | sed 's/^Scope-Municipality:[[:space:]]*//' \
-      | sort -u > /tmp/scope-municipalities.txt
-    if [ "$(grep -c . /tmp/scope-municipalities.txt || true)" != "1" ]; then
-      echo "::error::Scope-Municipality for scope-extract cannot be determined uniquely."
-      exit 1
-    fi
-    echo "enabled" > /tmp/scope-extract-enabled
+if [ "$(flag scopeExtract)" = "true" ]; then
+  municipalities="$(fact scopeMunicipalities)"
+  if [ "$(printf '%s\n' "$municipalities" | grep -c .)" != "1" ]; then
+    echo "::error::Scope-Municipality for scope-extract cannot be determined uniquely."
   else
-    rm -f /tmp/scope-extract-enabled
+    SCOPE_ENABLED="true"
+    SCOPE_MUNICIPALITY="$municipalities"
   fi
-)
-scope_rc=$?
-set -e
-if [ "$scope_rc" -eq 0 ] && [ -f /tmp/scope-extract-enabled ]; then
-  SCOPE_ENABLED="true"
-  SCOPE_MUNICIPALITY="$(cat /tmp/scope-municipalities.txt)"
 fi
 record SCOPE_EXTRACT "$SCOPE_ENABLED"
 
@@ -243,40 +257,27 @@ record SCOPE_EXTRACT "$SCOPE_ENABLED"
 # meaningless there and would only produce comments too large to post; the
 # commit-scope gate already verifies the baseline semantics (no GML before it,
 # no per-building trailers). Format, structure and plausibility checks still run.
-BASELINE_ENABLED="false"
-if grep -q '^Change-Type: source-baseline$' /tmp/pr-messages.txt 2>/dev/null; then
-  BASELINE_ENABLED="true"
-fi
+BASELINE_ENABLED="$(flag sourceBaseline)"
 record SOURCE_BASELINE "$BASELINE_ENABLED"
 
 # --- Detect a practice reset (a practice repository returning to its baseline) ---
 # The commit-scope gate verifies the tree against the Reset-To commit; per-building
 # reviewability and the 3D preview would only describe practice edits being undone.
-RESET_ENABLED="false"
-if grep -q '^Change-Type: practice-reset$' /tmp/pr-messages.txt 2>/dev/null; then
-  RESET_ENABLED="true"
-fi
+RESET_ENABLED="$(flag practiceReset)"
 record PRACTICE_RESET "$RESET_ENABLED"
 
 # --- Detect bulk (manifest-backed) submissions: identity-baseline / identity-correction / source-update ---
 # Accepted by reproduction (docs/bulk-submission-provenance.md): the commit scope
 # gate has already checked every commit against the provenance manifest; here the
 # manifest's materials are re-fetched and the manifest regenerated and compared.
-IDENTITY_ENABLED="false"
-if grep -qE '^Change-Type: identity-(baseline|correction)$' /tmp/pr-messages.txt 2>/dev/null; then
-  IDENTITY_ENABLED="true"
-fi
-record IDENTITY_KIND "$IDENTITY_ENABLED"
-BULK_ENABLED="false"
-if grep -q '^Provenance-Manifest:' /tmp/pr-messages.txt 2>/dev/null; then
-  BULK_ENABLED="true"
-fi
+IDENTITY_ENABLED="$(flag identity)"
+BULK_ENABLED="$(flag bulk)"
 record BULK_KIND "$BULK_ENABLED"
 if [ "$BULK_ENABLED" = "true" ]; then
   set +e
   (
     set -euo pipefail
-    ref="$(grep -m1 '^Provenance-Manifest:' /tmp/pr-messages.txt | sed 's/^Provenance-Manifest:[[:space:]]*//')"
+    ref="$(fact manifestRef)"
     manifest="${ref%%@sha256:*}"
     [ -f "$manifest" ] || { echo "::error::Provenance manifest not found at PR head: $manifest"; exit 1; }
     kind="$(jq -r '.kind // ""' "$manifest")"
@@ -297,7 +298,7 @@ if [ "$BULK_ENABLED" = "true" ]; then
     rm -rf "$materials"; mkdir -p "$materials"
     "$PY" "$TOOLS_DIR/scripts/fetch_materials.py" --manifest "$manifest" --outdir "$materials"
     "$PY" "$TOOLS_DIR/scripts/$tool" verify --manifest "$manifest" --materials-dir "$materials"
-  ) > /tmp/bulk-reproduction.txt 2>&1
+  ) > "$SCRATCH/bulk-reproduction.txt" 2>&1
   rc=$?
   set -e
   {
@@ -307,12 +308,12 @@ if [ "$BULK_ENABLED" = "true" ]; then
     if [ "$rc" = "0" ]; then echo "✅ The provenance manifest regenerates identically from its declared materials."; else echo "❌ The conversion could not be reproduced from the declared materials."; fi
     echo ""
     echo '```text'
-    tail -c 4000 /tmp/bulk-reproduction.txt
+    tail -c 4000 "$SCRATCH/bulk-reproduction.txt"
     echo '```'
   } > out/reproduction.md
-  [ "$rc" -eq 0 ] && record REPRODUCTION_OUTCOME success || record REPRODUCTION_OUTCOME failure
+  gate reproduction "$rc"
 else
-  record REPRODUCTION_OUTCOME skipped
+  gate_na reproduction
 fi
 
 # --- Scope extraction reproducibility (continue-on-error, scope-extract only) ---
@@ -326,12 +327,12 @@ if [ "$SCOPE_ENABLED" = "true" ] && [ "$GML_COUNT" != "0" ]; then
         echo "::error::scope-extract cannot add new GML files: ${f}"
         exit 1
       fi
-      git show "${BASE_SHA}:${f}" > /tmp/scope-source.gml
+      git show "${BASE_SHA}:${f}" > "$SCRATCH/scope-source.gml"
       "$PY" "$TOOLS_DIR/scripts/extract_municipality.py" \
         --municipality "$SCOPE_MUNICIPALITY" \
-        --input /tmp/scope-source.gml \
-        --output /tmp/scope-expected.gml
-      if ! cmp -s /tmp/scope-expected.gml "$f"; then
+        --input "$SCRATCH/scope-source.gml" \
+        --output "$SCRATCH/scope-expected.gml"
+      if ! cmp -s "$SCRATCH/scope-expected.gml" "$f"; then
         echo "::error::Re-running the extraction does not reproduce the GML in the commit: ${f}"
         exit 1
       fi
@@ -339,10 +340,11 @@ if [ "$SCOPE_ENABLED" = "true" ] && [ "$GML_COUNT" != "0" ]; then
     done < changed_gml.txt
     echo "scope-extract reproducibility: OK"
   )
-  [ $? -eq 0 ] && record SCOPE_REPRODUCIBILITY_OUTCOME success || record SCOPE_REPRODUCIBILITY_OUTCOME failure
+  rc=$?
+  gate scope-reproducibility "$rc"
   set -e
 else
-  record SCOPE_REPRODUCIBILITY_OUTCOME skipped
+  gate_na scope-reproducibility
 fi
 
 # --- Texture immutability (R1) + image content (magic bytes) check (continue-on-error) ---
@@ -353,7 +355,7 @@ set +e
   # R1 (immutable): forbid overwriting an existing texture image under the same name (= modification M).
   # Texture changes are done by "adding a new image and updating imageURI" (overwriting a shared image propagates to other buildings).
   MODIMG=$(git diff --name-only --diff-filter=M "$BASE_SHA" "$HEAD_SHA" \
-    | grep -E '_appearance/.*\.(jpg|jpeg|png|tif|tiff)$' || true)
+    | grep -E "$DATA_IMAGES_RE" || true)
   if [ -z "$MODIMG" ]; then
     echo "R1 OK: no existing texture overwritten"
   elif [ "$TEXTURE_OVERRIDE" = "true" ]; then
@@ -365,13 +367,14 @@ set +e
   # Magic bytes: added/renamed image files must actually be the image type their
   # extension claims (extension-only checks would let non-image content in).
   git diff --name-only --diff-filter=AR "$BASE_SHA" "$HEAD_SHA" \
-    | grep -E '_appearance/.*\.(jpg|jpeg|png|tif|tiff)$' > /tmp/new_images.txt || true
-  if [ -s /tmp/new_images.txt ]; then
-    tr '\n' '\0' < /tmp/new_images.txt \
+    | grep -E "$DATA_IMAGES_RE" > "$SCRATCH/new_images.txt" || true
+  if [ -s "$SCRATCH/new_images.txt" ]; then
+    tr '\n' '\0' < "$SCRATCH/new_images.txt" \
       | xargs -0 "$PY" "$TOOLS_DIR/scripts/texture_check.py" --verify-images
   fi
 )
-[ $? -eq 0 ] && record TEXTURE_OUTCOME success || record TEXTURE_OUTCOME failure
+rc=$?
+gate texture "$rc"
 set -e
 
 # --- Validate changed .gml (well-formed + XSD) (continue-on-error) ---
@@ -379,10 +382,11 @@ if [ "$GML_COUNT" != "0" ]; then
   set +e
   # Invalid files are recorded in the outcome. The job continues and results are collected into the confirmation comment at the end.
   "$PY" "$TOOLS_DIR/scripts/validate_citygml.py" --file-list changed_gml.txt
-  [ $? -eq 0 ] && record FORMAT_OUTCOME success || record FORMAT_OUTCOME failure
+  rc=$?
+  gate schema "$rc"
   set -e
 else
-  record FORMAT_OUTCOME skipped
+  gate_na schema
 fi
 
 # --- Quality gate (W6 minimal-diff + scope + texture R3/(a)) (continue-on-error) ---
@@ -395,7 +399,6 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
     #   B. machine-detectable but not fixable (scope violation) -> CI points it out in a comment and works it out with the proposer.
     #   C. semantic judgment (validity of values/geometry/merge reasons) -> human review (not decided here).
     churn=""; manual=""; dangling=""
-    : > /tmp/mod_ids; : > /tmp/add_ids; : > /tmp/del_ids; : > /tmp/ren_ids
     while IFS= read -r f; do
       [ -z "$f" ] && continue
       # R3 (no dangling): does every imageURI in head point to an existing image?
@@ -403,34 +406,48 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
       "$PY" "$TOOLS_DIR/scripts/texture_check.py" --dangling "$f" 1>/dev/null
       [ "$?" != "0" ] && dangling="${dangling} ${f}"
       set -e
-      if ! git cat-file -e "${BASE_SHA}:${f}" 2>/dev/null; then
-        echo "NEWFILE:${f}" >> /tmp/add_ids; continue  # new .gml file = addition (lifecycle)
-      fi
-      git show "${BASE_SHA}:${f}" > /tmp/w6_base.gml
+      git cat-file -e "${BASE_SHA}:${f}" 2>/dev/null || continue   # a new file has no minimal diff to check
+      git show "${BASE_SHA}:${f}" > "$SCRATCH/w6_base.gml"
       set +e
-      out=$("$PY" "$TOOLS_DIR/scripts/reconstruct_minimal.py" /tmp/w6_base.gml "$f" --check)
+      # the minimal-diff check only: its per-file building counts are not used (the scope comes below)
+      "$PY" "$TOOLS_DIR/scripts/reconstruct_minimal.py" "$SCRATCH/w6_base.gml" "$f" --check > /dev/null
       rc=$?
       set -e
-      printf '%s\n' "$out" | awk '/^BLDG modified/{print $3}' >> /tmp/mod_ids
-      printf '%s\n' "$out" | awk '/^BLDG added/{print $3}' >> /tmp/add_ids
-      printf '%s\n' "$out" | awk '/^BLDG deleted/{print $3}' >> /tmp/del_ids
-      printf '%s\n' "$out" | awk '/^BLDG renamed/{print $2}' >> /tmp/ren_ids  # $2=new_id (surviving)
-      # (a): buildings whose appearance changed (re-texturing etc.) also count as "modified buildings".
-      "$PY" "$TOOLS_DIR/scripts/texture_check.py" --changed-buildings /tmp/w6_base.gml "$f" >> /tmp/mod_ids || true
       if [ "$rc" = "1" ]; then churn="${churn} ${f}";
       elif [ "$rc" = "2" ]; then manual="${manual} ${f}";
-      elif [ "$rc" != "0" ]; then exit "$rc"; fi
+      elif [ "$rc" != "0" ]; then
+        echo "::error::The minimal-diff check could not process ${f} (exit ${rc}); see the log above."
+        exit "$rc"
+      fi
     done < changed_gml.txt
 
-    # Scope: modified buildings = (W1 modified ∪ appearance changes) − added − deleted − renamed (union of IDs).
-    # A rename (identical content, only the id changed) is effectively no change, so it is excluded from M/A/D.
-    sort -u /tmp/add_ids > /tmp/A_ids
-    sort -u /tmp/del_ids > /tmp/D_ids
-    sort -u /tmp/ren_ids > /tmp/R_ids
-    sort -u /tmp/mod_ids | comm -23 - /tmp/A_ids | comm -23 - /tmp/D_ids | comm -23 - /tmp/R_ids > /tmp/M_ids
-    M=$(grep -c . /tmp/M_ids || true); A=$(grep -c . /tmp/A_ids || true)
-    D=$(grep -c . /tmp/D_ids || true); R=$(grep -c . /tmp/R_ids || true)
-    CLASS=$("$PY" -c "from scripts.reconstruct_minimal import classify; print(classify($M,$A,$D,$R))")
+    # Building scope: counted once, by the commit scope gate (commit_building_scope.pr_scope):
+    # stable IDs under the city's rule, compared by meaning over the whole PR, texture changes and
+    # deleted files included, a content-identical id change as a rename (S1; it replaced a second
+    # count here by gml:id, D14/D17/D20/D21). Without that result the step fails, not counts nothing.
+    scope_py='import json, sys
+d = json.load(open(sys.argv[1]))
+s = d.get("scope")
+if not s:
+    print("building scope unavailable: " + str(d.get("scopeError", "no result")), file=sys.stderr)
+    sys.exit(1 if d.get("scopeMalformed") else 2)
+if sys.argv[2] == "counts":
+    print(len(s["modified"]), len(s["added"]), len(s["deleted"]), len(s["renamed"]), s["class"])
+else:
+    print("\n".join(s["gmlIds"][sys.argv[2]]))'
+    SCOPE_JSON="${RUNNER_TEMP:-/tmp}/citygml_commit_scope.json"
+    counts="$("$PY" -c "$scope_py" "$SCOPE_JSON" counts)" || {
+      if [ "$?" = "1" ]; then
+        echo "::error::A changed file is not well-formed XML, so its buildings cannot be read (see the CityGML format check)."
+        exit 1
+      fi
+      echo "::error::The building scope of this PR could not be determined (see the commit scope step)."
+      exit 2
+    }
+    read -r M A D R CLASS <<<"$counts"
+    for kind in modified added deleted renamed; do
+      "$PY" -c "$scope_py" "$SCOPE_JSON" "$kind" | grep . > "$SCRATCH/${kind}_ids" || true
+    done
     echo "PR scope: modified=$M added=$A deleted=$D renamed=$R -> ${CLASS}"
 
     # rename (id-only change): content is unchanged, so a notice only (PR-D type, intent confirmation).
@@ -440,15 +457,12 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
 
     # W7: generate the recommended message (building-ID trailer) for single-building or lifecycle commits.
     # For a PR bundling multiple single-building commits, do not suggest one multi-building commit.
-    # NEWFILE markers for new files are not building IDs, so exclude them.
-    grep -v '^NEWFILE:' /tmp/A_ids > /tmp/A_clean 2>/dev/null || true
-    # Keys resolve to the stable ID (uro:buildingID) first (pass the changed .gml files via --sources). Renames are included.
+    # suggest_commit takes gml:ids and resolves them to the stable ID through the changed files.
     if [ "$CLASS" != "multi-modified" ]; then
       "$PY" "$TOOLS_DIR/scripts/suggest_commit.py" --classification "$CLASS" \
-        --modified /tmp/M_ids --added /tmp/A_clean --deleted /tmp/D_ids --renamed /tmp/R_ids \
-        --sources changed_gml.txt > out/commit.md || true
+        --modified "$SCRATCH/modified_ids" --added "$SCRATCH/added_ids" --deleted "$SCRATCH/deleted_ids" --renamed "$SCRATCH/renamed_ids" \
+        --sources changed_gml.txt --base-sha "$BASE_SHA" > out/commit.md || true
     fi
-    [ -s out/commit.md ] || rm -f out/commit.md
 
     # R3: dangling references are machine-rejected (e.g. a deletion broke an unchanged building).
     if [ -n "$dangling" ]; then
@@ -463,7 +477,9 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
     if [ -n "$churn" ]; then
       echo "::notice::Formatting-only diff (churn) detected. Current CI only notifies; it neither auto-applies nor blocks. Apply the minimal-diff version manually with reconstruct_minimal.py. Files:${churn}"
     fi
-    if [ "$CLASS" = "multi-modified" ] && [ "${BULK_ENABLED:-false}" != "true" ]; then
+    if [ "$CLASS" = "multi-modified" ] && [ "${RESET_ONLY:-false}" = "true" ]; then
+      echo "::notice::A practice reset returns ${M} buildings to the baseline; the commit scope check verified it against Reset-To."
+    elif [ "$CLASS" = "multi-modified" ] && [ "${BULK_ENABLED:-false}" != "true" ]; then
       echo "::error::An ordinary PR changes ${M} buildings. Submit one PR per building, or a supported reproducible bulk submission with a provenance manifest."
       exit 1
     fi
@@ -473,11 +489,16 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
       echo "::notice::CI checks the declared old/new IDs and event record. The city must judge the real-world relationship and supporting evidence."
     fi
   )
-  [ $? -eq 0 ] && record QUALITY_OUTCOME success || record QUALITY_OUTCOME failure
+  QUALITY_RC=$?
   set -e
 else
-  record QUALITY_OUTCOME skipped
+  QUALITY_RC=0
 fi
+# file-scope folds repository scope and the quality step (A11): an error of either is an error,
+# a finding of either is a finding
+if [ "$REPO_SCOPE_RC" -ge 2 ] || [ "$QUALITY_RC" -ge 2 ]; then gate file-scope 2
+elif [ "$REPO_SCOPE_RC" -eq 1 ] || [ "$QUALITY_RC" -eq 1 ]; then gate file-scope 1
+else gate file-scope 0; fi
 
 # --- Generate Cesium preview comment body (continue-on-error) ---
 PREVIEW_URL=""
@@ -485,17 +506,15 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENA
   set +e
   (
     set -euo pipefail
-    BASE_URL="${PREVIEW_BASE_URL:-}"
-    if [ -z "$BASE_URL" ]; then
-      BASE_URL="https://${GITHUB_REPOSITORY%%/*}.github.io/${GITHUB_REPOSITORY##*/}"
-    fi
     # An exception exit fails CI (no || true). No target (e.g. no geometry diff) is normal, with an empty URL.
     "$PY" "$TOOLS_DIR/scripts/extract_building_preview.py" \
       --repo "$WORKSPACE" \
       --base-sha "$BASE_SHA" \
       --head-sha "$HEAD_SHA" \
       --file-list changed_gml.txt \
-      --base-url "$BASE_URL" > preview_url.txt
+      --base-url "${PREVIEW_BASE_URL:-}" > preview_url.txt
+    # The link is posted only where a viewer is served (PREVIEW_BASE_URL); the model gate runs either way.
+    [ -n "${PREVIEW_BASE_URL:-}" ] || : > preview_url.txt
     URL="$(cat preview_url.txt)"
     if [ -n "$URL" ]; then
       # The posting side just upserts this .md verbatim (the marker goes on the first line).
@@ -513,17 +532,13 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENA
       echo "Preview: nothing to generate (attribute-only change, no geometry diff, etc. Analysis is fine)"
     fi
   )
-  if [ $? -eq 0 ]; then
-    record PREVIEW_OUTCOME success
-    PREVIEW_URL="$(cat preview_url.txt 2>/dev/null || true)"
-  else
-    record PREVIEW_OUTCOME failure
-  fi
+  rc=$?
+  gate model "$rc"
+  [ "$rc" -ne 0 ] || PREVIEW_URL="$(cat preview_url.txt 2>/dev/null || true)"
   set -e
 else
-  record PREVIEW_OUTCOME skipped
+  gate_na model
 fi
-record PREVIEW_URL "$PREVIEW_URL"
 
 # --- Generate change summary (W2) (continue-on-error, untracked) ---
 if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BULK_ENABLED" != "true" ]; then
@@ -537,7 +552,6 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BULK_ENABLED
       --file-list changed_gml.txt \
       --preview-url "$PREVIEW_URL" \
       > out/summary.md
-    [ -s out/summary.md ] || rm -f out/summary.md  # if empty, exclude it from posting
   )
   set -e
 fi
@@ -547,18 +561,21 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ] && [ "$BASELINE_ENA
   set +e
   (
     set -euo pipefail
+    set +e
     "$PY" "$TOOLS_DIR/scripts/reviewability_lint.py" \
       --repo "$WORKSPACE" \
       --base-sha "$BASE_SHA" \
       --head-sha "$HEAD_SHA" \
       --file-list changed_gml.txt \
       > out/lint.md
-    [ -s out/lint.md ] || rm -f out/lint.md
+    rc=$?
+    set -e
+    gate minimal-diff "$rc"
+    [ "$rc" -le 1 ] || exit "$rc"     # warnings (1) are reported in the comment; an error fails
   )
-  [ $? -eq 0 ] && record REVIEWABILITY_OUTCOME success || record REVIEWABILITY_OUTCOME failure
   set -e
 else
-  record REVIEWABILITY_OUTCOME skipped
+  gate_na minimal-diff
 fi
 
 # --- Generate PR metadata (W4) (continue-on-error, untracked) ---
@@ -574,14 +591,13 @@ if [ "$GML_COUNT" != "0" ]; then
       --file-list changed_gml.txt \
       --preview-url "$PREVIEW_URL" \
       > out/metadata.md
-    [ -s out/metadata.md ] || rm -f out/metadata.md
   )
   set -e
 fi
 
 # Data-quality lint is split into two layers (#13). Both apply only to the changed "buildings" (pre-existing defects must not fail unrelated PRs).
 #   citygml_lint (generic, data-agnostic): structural geometry breakage = never appears in correct data = CI points it out in a comment.
-#   plateau_lint (convention layer): implausible values (negative height, above the cap) = may already exist in base = warning = comment only.
+#   plausibility_lint (convention layer): implausible values (negative height, above the cap) = may already exist in base = warning = comment only.
 #                          PLATEAU's unknown-value sentinels (±9999) are legitimate "unknown" and excluded from checks (sentinels.py).
 # --- CityGML quality lint (structural inspection) (continue-on-error) ---
 if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
@@ -592,19 +608,18 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
       --repo "$WORKSPACE" \
       --base-sha "$BASE_SHA" \
       --head-sha "$HEAD_SHA" \
-      --file-list changed_gml.txt > out/citygml_lint.md
+      --file-list changed_gml.txt --counts-json "${RUNNER_TEMP:-/tmp}/citygml_lint_counts.json" > out/citygml_lint.md
     rc=$?
+    gate structure "$rc" --counts-json "${RUNNER_TEMP:-/tmp}/citygml_lint_counts.json"
     if grep -q "No warnings." out/citygml_lint.md 2>/dev/null; then rm -f out/citygml_lint.md; fi
-    [ -s out/citygml_lint.md ] || rm -f out/citygml_lint.md
     if [ "$rc" != "0" ]; then
       echo "::error::CityGML geometric structure defects detected (inconsistencies that never appear in correct data). See the PR comment '🧪 CityGML data quality check' for details."
       exit 1
     fi
   )
-  [ $? -eq 0 ] && record STRUCTURE_OUTCOME success || record STRUCTURE_OUTCOME failure
   set -e
 else
-  record STRUCTURE_OUTCOME skipped
+  gate_na structure
 fi
 
 # --- PLATEAU quality lint (plausibility, advisory) ---
@@ -613,18 +628,17 @@ if [ "$GML_COUNT" != "0" ] && [ "$SCOPE_ENABLED" != "true" ]; then
   (
     set -uo pipefail
     # The convention layer is warning-only (non-blocking). Comment when there are findings, stay silent otherwise.
-    "$PY" "$TOOLS_DIR/scripts/plateau_lint.py" \
+    "$PY" "$TOOLS_DIR/scripts/plausibility_lint.py" \
       --repo "$WORKSPACE" \
       --base-sha "$BASE_SHA" \
       --head-sha "$HEAD_SHA" \
-      --file-list changed_gml.txt > out/plateau_lint.md || true
-    if grep -q "No warnings." out/plateau_lint.md 2>/dev/null; then rm -f out/plateau_lint.md; fi
-    [ -s out/plateau_lint.md ] || rm -f out/plateau_lint.md
+      --file-list changed_gml.txt --counts-json "${RUNNER_TEMP:-/tmp}/plausibility_lint_counts.json" > out/plausibility_lint.md
+    gate plausibility "$?" --counts-json "${RUNNER_TEMP:-/tmp}/plausibility_lint_counts.json"
+    if grep -q "No warnings." out/plausibility_lint.md 2>/dev/null; then rm -f out/plausibility_lint.md; fi
   )
-  [ $? -eq 0 ] && record PLATEAU_OUTCOME success || record PLATEAU_OUTCOME failure
   set -e
 else
-  record PLATEAU_OUTCOME skipped
+  gate_na plausibility
 fi
 
 echo "Analysis main driver complete. Outcomes:"

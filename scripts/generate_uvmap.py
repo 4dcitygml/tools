@@ -19,10 +19,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
-import xml.etree.ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts import citygml_faces  # noqa: E402
+from scripts.safe_xml import safe_parse  # noqa: E402
 
 DEFAULT_GML = (
     REPO_ROOT
@@ -36,7 +40,7 @@ NS_APP = "http://www.opengis.net/citygml/appearance/2.0"
 NS_XLINK = "http://www.w3.org/1999/xlink"
 
 
-def collect_target_polygons(root: ET.Element, bldg_ids: list[str] | None) -> set[str]:
+def collect_target_polygons(root, bldg_ids: list[str] | None) -> set[str]:
     """Return the set of polygon IDs belonging to the target buildings."""
     targets: set[str] = set()
     for building in root.iter(f"{{{NS_BLDG}}}Building"):
@@ -55,28 +59,20 @@ def collect_target_polygons(root: ET.Element, bldg_ids: list[str] | None) -> set
     return targets
 
 
-def extract_uv_entries(root: ET.Element, targets: set[str]) -> dict[str, dict]:
-    """Scan ParameterizedTexture elements and build polygon ID → {img, uv} mapping."""
+def extract_uv_entries(root, targets: set[str]) -> dict[str, dict]:
+    """polygon ID -> {img, uv}: the coordinates of the polygon's exterior ring, read as the
+    editors read them (scripts/citygml_faces.py: by ring id, else the target's first entry)."""
+    by_ring, by_poly = citygml_faces.texture_rings(root, {"gml": NS_GML, "app": NS_APP})
     entries: dict[str, dict] = {}
-    for tex in root.iter(f"{{{NS_APP}}}ParameterizedTexture"):
-        image_uri = tex.find(f"{{{NS_APP}}}imageURI")
-        if image_uri is None or not image_uri.text:
+    for poly in root.iter(f"{{{NS_GML}}}Polygon"):
+        pid = poly.get(f"{{{NS_GML}}}id")
+        if pid not in targets:
             continue
-        img_name = image_uri.text.rsplit("/", 1)[-1]
-        for target in tex.findall(f"{{{NS_APP}}}target"):
-            uri = target.get("uri", "")
-            poly_id = uri.lstrip("#")
-            if poly_id not in targets:
-                continue
-            coords_el = target.find(f".//{{{NS_APP}}}textureCoordinates")
-            if coords_el is None or not coords_el.text:
-                continue
-            values = [float(v) for v in coords_el.text.split()]
-            pairs = [
-                [round(values[i], 4), round(values[i + 1], 4)]
-                for i in range(0, len(values) - 1, 2)
-            ]
-            entries[poly_id] = {"img": img_name, "uv": pairs}
+        ext = poly.find(f"{{{NS_GML}}}exterior/{{{NS_GML}}}LinearRing")
+        ring = (ext.get(f"{{{NS_GML}}}id") or "") if ext is not None else ""
+        tex = citygml_faces.face_texture({"id": pid, "ring": ring}, by_ring, by_poly)
+        if tex:
+            entries[pid] = {"img": tex["img"].rsplit("/", 1)[-1], "uv": tex["uv"]}
     return entries
 
 
@@ -90,7 +86,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"parsing: {args.gml.name}")
-    root = ET.parse(args.gml).getroot()
+    root = safe_parse(str(args.gml), huge_tree=True).getroot()
 
     targets = collect_target_polygons(root, args.bldg_ids)
     print(f"target polygons: {len(targets)}")

@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.citygml_constants import tools_repo  # noqa: E402
 from scripts import repo_git  # noqa: E402
+from scripts.safe_xml import safe_fromstring  # noqa: E402
 from scripts.provenance_manifest import validate, sha256_hex, manifest_ref, canonical_bytes
 
 
@@ -54,7 +55,7 @@ def plan(raw: bytes, municipality: str):
     actual XML name tokens. Comments, CDATA, attributes and namespace lookalikes
     cannot become replacement targets. No XML reserialization is performed.
     """
-    root = etree.fromstring(raw, etree.XMLParser(resolve_entities=False, no_network=True))
+    root = safe_fromstring(raw)
     info = root.getroottree().docinfo
     if info.doctype or info.encoding.upper().replace('-', '') not in ('UTF8', 'ASCII'):
         raise ValueError('Only UTF-8/ASCII XML without a DTD is supported')

@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_xml import GML, bbox as member_bbox  # noqa: E402
-from scripts.safe_xml import safe_parser  # noqa: E402
+from scripts.safe_xml import safe_parse  # noqa: E402
 
 
 
@@ -39,8 +39,7 @@ def main() -> None:
     args = ap.parse_args()
     x0, y0, x1, y1 = args.bbox
 
-    parser = safe_parser(huge_tree=True, remove_blank_text=False)
-    root = etree.parse(str(args.input), parser).getroot()
+    root = safe_parse(str(args.input), huge_tree=True, remove_blank_text=False).getroot()
     if any(etree.QName(c).localname == "appearanceMember" for c in root
            if isinstance(c.tag, str)):
         raise SystemExit("Files with global appearance not supported")

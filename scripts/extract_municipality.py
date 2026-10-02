@@ -18,18 +18,15 @@ import hashlib
 import json
 import re
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.reconstruct_minimal import building_spans
+from scripts.building_identity import building_spans, municipality_values
+from scripts.safe_xml import safe_fromstring
 
-_CITY_RE = re.compile(
-    rb"<(?:\w+:)?city(?:\s[^>]*)?>([^<]+)</(?:\w+:)?city>"
-)
 _BUILDING_RE = re.compile(rb"<(?:\w+:)?Building\b")
 _GML_ID = "{http://www.opengis.net/gml}id"
 _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
@@ -37,7 +34,7 @@ _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 
 def _missing_local_references(raw: bytes) -> set[str]:
     """Return the set of unresolved local ``#id`` references in the XML."""
-    root = ET.fromstring(raw)
+    root = safe_fromstring(raw, huge_tree=True)
     ids: set[str] = set()
     references: set[str] = set()
     for element in root.iter():
@@ -56,11 +53,7 @@ def _missing_local_references(raw: bytes) -> set[str]:
 
 
 def _municipality(member: bytes, gml_id: str) -> str:
-    values = {
-        match.group(1).decode("utf-8", errors="strict").strip()
-        for match in _CITY_RE.finditer(member)
-    }
-    values.discard("")
+    values = municipality_values(member)
     if len(values) != 1:
         shown = ", ".join(sorted(values)) or "none"
         raise ValueError(

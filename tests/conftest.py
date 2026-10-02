@@ -18,6 +18,7 @@ import pytest
 GUARDED = [
     Path.home() / ".citygml_attr_editor.json",
     Path.home() / ".citygml_attr_editor.json.lock",
+    Path.home() / ".citygml_attr_editor.json.v1.bak",   # the settings migration's backup (S18)
     Path.home() / ".citygml_auth.json",
     Path.home() / ".citygml_git_credentials",
     Path.home() / ".gitconfig",

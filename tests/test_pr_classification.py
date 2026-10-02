@@ -5,6 +5,8 @@
 strictly (no silent default) and with guidance (the how-to-fix table)."""
 from __future__ import annotations
 
+from tests.support import SUPPORTED  # noqa: E402  (the one list, tools/i18n/i18n_loader.py)
+
 import json
 import subprocess
 import sys
@@ -21,6 +23,17 @@ SCRIPT = REPO_ROOT / "scripts" / "pr_classification.py"
 
 
 class TestTable(unittest.TestCase):
+    def test_one_call_prints_class_and_kind(self):
+        # S3: the driver asks once; unclassified is a result, not a failure, in this mode
+        from scripts.pr_classification import main
+        import contextlib, io
+        for args, want in ((["--branch", "tex/13101-bldg-1-x"], "texture texture"),
+                           (["--title", "whatever", "--data-changed", "true"], "unclassified attribute")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = main([*args, "--print", "both"])
+            self.assertEqual((out.getvalue().strip(), code), (want, 0))
+
     def test_branch_prefix_wins_over_title(self):
         self.assertEqual(pc.classify_by_name("edit/13101-bldg-1-20260906", "Update textures (3 faces)"), "attribute")
         self.assertEqual(pc.classify_by_name("tex/13101-bldg-1-20260906", "Update attributes (Usage)"), "texture")
@@ -96,10 +109,27 @@ class TestGuide(unittest.TestCase):
                 "ci.classify_col_title", "ci.classify_attribute", "ci.classify_texture",
                 "ci.classify_geometry", "ci.classify_fix_branch", "ci.classify_fix_title",
                 "ci.classify_other", "ci.classify_contract"}
-        for lang in ("en", "ja", "de"):
+        for lang in SUPPORTED:
             cat = json.loads((REPO_ROOT / "tools" / "i18n" / "catalogs" / "ci" / f"{lang}.json").read_text(encoding="utf-8"))
             self.assertTrue(keys <= set(cat), f"{lang}: missing {keys - set(cat)}")
 
+
+class TestOneLanguageList(unittest.TestCase):
+    def test_every_supported_language_has_its_title_prefixes(self):
+        # the editors title PRs in the city's language (pr.title_* catalog values); a PR whose
+        # branch prefix was lost is still classified by its title (A5), in every language
+        from scripts import pr_classification as pc
+        for lang in SUPPORTED:
+            for app, keys, cls in (("attr_editor", ("pr.title_attr",), "attribute"),
+                                   ("tex_editor", ("pr.title_tex_add", "pr.title_tex_update"), "texture")):
+                cat = json.loads((REPO_ROOT / "tools" / "i18n" / "catalogs" / app / f"{lang}.json").read_text(encoding="utf-8"))
+                for key in keys:
+                    title = cat[key].format(label="Storeys", n=2, bid="13101-bldg-1")
+                    self.assertEqual(pc.classify_by_name("someone-branch", title), cls, f"{lang} {key}: {title!r}")
+
+    def test_the_bundle_ships_every_supported_language(self):
+        from scripts import build_bundle
+        self.assertEqual(build_bundle.supported_languages(REPO_ROOT), tuple(SUPPORTED))
 
 class TestCli(unittest.TestCase):
     def _run(self, *args):
@@ -126,7 +156,7 @@ class TestCiUsesTheTable(unittest.TestCase):
 
     def test_drivers_call_the_script(self):
         analysis = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
-        summary = (REPO_ROOT / "ci" / "inspection_summary.sh").read_text(encoding="utf-8")
+        summary = (REPO_ROOT / "scripts" / "inspection_summary.py").read_text(encoding="utf-8")
         self.assertIn("scripts/pr_classification.py", analysis)
         self.assertIn("pr_classification", summary)
         self.assertIn("CLASSIFICATION_OUTCOME", analysis)

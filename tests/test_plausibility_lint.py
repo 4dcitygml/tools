@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""Positive/negative tests for plateau_lint (PLATEAU convention-layer lint: sentinels/plausibility/codelist consistency)."""
+"""Positive/negative tests for plausibility_lint (convention-layer lint: sentinels, plausible ranges, code lists)."""
 from __future__ import annotations
 
 import sys
@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import plateau_lint  # noqa: E402
+from scripts import plausibility_lint  # noqa: E402
 from scripts.citygml_lint import run_lint  # noqa: E402
 
 SQUARE = "0 0 0 0 1 0 1 1 0 1 0 0 0 0 0"
@@ -45,14 +45,14 @@ def wrap(*bodies):
 
 
 def lint_bytes(raw):
-    return run_lint(raw, "t.gml", plateau_lint.check_building)
+    return run_lint(raw, "t.gml", plausibility_lint.check_building)
 
 
 def warncodes(result):
     return {w["code"] for b in result["buildings"] for w in b["warnings"]}
 
 
-class TestPlateauPlausibility(unittest.TestCase):
+class TestPlausibility(unittest.TestCase):
     def test_clean(self):
         res = lint_bytes(wrap(bldg("b", height=10, storeys=3)))
         self.assertEqual((res["n_errors"], res["n_warnings"]), (0, 0))
@@ -60,7 +60,7 @@ class TestPlateauPlausibility(unittest.TestCase):
     def test_nonpositive_height_warning(self):
         res = lint_bytes(wrap(bldg("b", height=-5)))
         self.assertIn("nonpositive_height", warncodes(res))
-        self.assertEqual(res["n_errors"], 0)  # PLATEAU layer is non-blocking
+        self.assertEqual(res["n_errors"], 0)  # the convention layer is non-blocking
 
     def test_height_sentinel_ignored(self):
         self.assertNotIn("nonpositive_height", warncodes(lint_bytes(wrap(bldg("b", height=-9999)))))
@@ -74,8 +74,14 @@ class TestPlateauPlausibility(unittest.TestCase):
     def test_height_out_of_range(self):
         self.assertIn("height_out_of_range", warncodes(lint_bytes(wrap(bldg("b", height=500)))))
 
+    def test_height_in_feet_is_compared_in_metres(self):
+        # US data: 500 ft is 152 m, plausible; 1200 ft is 366 m, above the limit
+        feet = lambda h: wrap(bldg("b", height=h).replace('uom="m"', 'uom="ft"'))
+        self.assertNotIn("height_out_of_range", warncodes(lint_bytes(feet(500))))
+        self.assertIn("height_out_of_range", warncodes(lint_bytes(feet(1200))))
+
     def test_no_errors_ever(self):
-        # PLATEAU layer emits warnings only (never blocks)
+        # the convention layer emits warnings only (never blocks)
         res = lint_bytes(wrap(bldg("b", height=-5, storeys=500)))
         self.assertEqual(res["n_errors"], 0)
 
@@ -91,6 +97,22 @@ CODELIST = """<?xml version="1.0" encoding="UTF-8"?>
   </gml:Definition></gml:dictionaryEntry>
 </gml:Dictionary>
 """
+
+
+class TestMarker(unittest.TestCase):
+    def test_the_comment_carries_the_marker_and_its_deprecated_name(self):
+        # Exchange Contract v3.4.0, A10: <!-- plausibility-lint --> plus the former name until v4.0.0
+        import contextlib
+        import io
+        from scripts import pr_markers
+        with tempfile.TemporaryDirectory() as tmp:
+            gml = Path(tmp) / "t.gml"
+            gml.write_bytes(wrap(bldg("b", height=500)))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                plausibility_lint.main([str(gml)])
+        head = out.getvalue().splitlines()[:2]
+        self.assertEqual(head, [pr_markers.PLAUSIBILITY_LINT, pr_markers.PLAUSIBILITY_LINT_LEGACY])
 
 
 class TestCodelistCheck(unittest.TestCase):
@@ -109,7 +131,7 @@ class TestCodelistCheck(unittest.TestCase):
         self._tmp.cleanup()
 
     def lint(self, raw):
-        return run_lint(raw, str(self.gml_path), plateau_lint.check_fn_for(self.gml_path))
+        return run_lint(raw, str(self.gml_path), plausibility_lint.check_fn_for(self.gml_path))
 
     def test_valid_code_no_warning(self):
         res = self.lint(wrap(bldg("b", usage="411")))

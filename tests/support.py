@@ -28,6 +28,7 @@ if str(REPO_ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 import runtime  # noqa: E402
+from i18n.i18n_loader import SUPPORTED  # noqa: E402,F401  (the one list of languages)
 import accounts  # noqa: E402
 
 TOKYO = "4dcitygml/sample-tokyo-station"

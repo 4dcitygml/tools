@@ -124,7 +124,7 @@ class TestConvertedScreens(unittest.TestCase):
 
     # app → converted screens (paths relative to tools/)
     SCREENS = {
-        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html", "attr_editor/setup.html"],
+        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html"],
         "hub": ["hub/index.html", "hub/review.html", "hub/setup.html", "hub/settings.html"],
         "tex_editor": ["tex_editor/index.html"],
     }
@@ -165,6 +165,10 @@ class TestConvertedScreens(unittest.TestCase):
         for rel in self.SCREENS[app] + self.PY_SOURCES.get(app, []):
             src = (REPO_ROOT / "tools" / rel).read_text(encoding="utf-8")
             used |= self._used_keys(src)
+        # texts the shared runtime says in this app's catalog: tr("<app>", "<key>", ...)
+        import re
+        runtime_src = (REPO_ROOT / "tools" / "runtime.py").read_text(encoding="utf-8")
+        used |= set(re.findall(rf"\btr\(\s*\"{app}\",\s*\"([^\"]+)\"", runtime_src))
         return used
 
     def test_all_used_keys_exist_in_en_catalog(self):

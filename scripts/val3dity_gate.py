@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Topological-consistency gate (official engine val3dity, diff-based).
 
-The substance of PLATEAU's official topology check (geometry-validator) is
-**val3dity's error codes (100-405)**. This gate reproduces it without FME and
-validates **only the buildings changed by the PR** with the official engine.
+Topology is checked with **val3dity's error codes (100-405)**, the common
+reference for 3D city model validators, and **only for the buildings changed
+by the PR**.
 
-**Why a diff gate (important)**: the official PLATEAU LOD2 data itself already
-contains ~0.09% topological defects (measured: the officially distributed LOD2
-has a certain number of invalids originating from the source data). Therefore
+**Why a diff gate (important)**: official city data itself already contains
+topological defects (measured on one official LOD2 dataset: ~0.09%,
+originating from the source data). Therefore
 requiring "100% pass overall" would fail unrelated PRs on pre-existing defects.
 This gate compares base/head and warns **only about invalids newly introduced
 by the PR (before valid or newly added -> after invalid)** (same philosophy as
@@ -108,17 +108,38 @@ def _subset_root(xml_bytes: bytes, ids: set) -> Optional[etree._Element]:
     return root if kept else None
 
 
-def _city_crs(repo: Path) -> str:
-    """The CRS the city's data is written in (4dcitygml.json `crs`; PLATEAU's EPSG:6697 by default)."""
+def _city_crs(repo: Path) -> Optional[str]:
+    """The CRS the city's data is written in (4dcitygml.json `crs`), or None when it declares none."""
     try:
         value = json.loads((Path(repo) / "4dcitygml.json").read_text(encoding="utf-8")).get("crs")
     except (OSError, ValueError, AttributeError):
         value = None
-    return str(value) if value else "EPSG:6697"
+    return str(value) if value else None
+
+
+def _file_crs(root: etree._Element) -> Optional[str]:
+    """The file's own CRS (its Envelope's srsName) when pyproj knows it, else None."""
+    from pyproj import CRS
+    for el in root.iter():
+        if _local(el)[1] == "Envelope" and el.get("srsName"):
+            try:
+                CRS(el.get("srsName"))
+            except Exception:
+                return None
+            return el.get("srsName")
+    return None
+
+
+def _z_factor(crs: str) -> float:
+    """Metres per unit of the heights: a projected CRS in feet has its heights in feet too
+    (EPSG:2263); a geographic CRS carries heights in metres."""
+    from pyproj import CRS
+    src = CRS(crs)
+    return float(src.axis_info[0].unit_conversion_factor) if src.is_projected else 1.0
 
 
 def _lat_first(crs: str) -> bool:
-    """Whether coordinates in the data are written latitude first (EPSG:6697 is lat lon h; projected CRSs are x y z)."""
+    """Whether coordinates in the data are written latitude first (a geographic CRS such as EPSG:4326 is lat lon; projected CRSs are x y z)."""
     from pyproj import CRS
     return str(CRS(crs).axis_info[0].direction).lower().startswith("north")
 
@@ -160,10 +181,12 @@ def _utm_epsg(lon: float, lat: float) -> str:
 
 
 def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
-    """Project posList etc. from the city's CRS to dst_epsg (meters, x y z), and name dst_epsg in every srsName."""
+    """Project posList etc. from the city's CRS to dst_epsg (meters, x y z; heights in feet become
+    metres too), and name dst_epsg in every srsName."""
     from pyproj import Transformer
     tr = Transformer.from_crs(src_crs, dst_epsg, always_xy=True)
     lat_first = _lat_first(src_crs)
+    zf = _z_factor(src_crs)
     for el in root.iter():
         if not isinstance(el.tag, str) or _local(el)[1] not in _COORD_TAGS or not el.text:
             continue
@@ -172,7 +195,7 @@ def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
             continue
         a = [float(t[i]) for i in range(0, len(t), 3)]
         b = [float(t[i + 1]) for i in range(0, len(t), 3)]
-        hs = [float(t[i + 2]) for i in range(0, len(t), 3)]
+        hs = [float(t[i + 2]) * zf for i in range(0, len(t), 3)]
         xs, ys = (b, a) if lat_first else (a, b)
         xs, ys, zs = tr.transform(xs, ys, hs)
         el.text = " ".join(f"{v:.4f}" for xyz in zip(xs, ys, zs) for v in xyz)
@@ -182,7 +205,7 @@ def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
 
 
 # --- Running val3dity -------------------------------------------------------
-def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: str = "EPSG:6697") -> Optional[dict]:
+def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: Optional[str] = None) -> Optional[dict]:
     """Extract the buildings in `ids` -> project to meters when needed -> CityJSON -> val3dity,
     returning {building_id: {"valid":bool,"codes":[...]}}.
 
@@ -191,6 +214,9 @@ def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: str = "EPSG:6
     root = _subset_root(xml_bytes, ids)
     if root is None:
         return None
+    src_crs = src_crs or _file_crs(root)
+    if src_crs is None:
+        return None   # neither the city nor the file names its CRS: undecidable, not guessed
     target = _target_crs(src_crs, root)
     if target is not None:
         _reproject(root, src_crs, target)
@@ -220,7 +246,7 @@ def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: str = "EPSG:6
 # --- CI: base->head regression detection ------------------------------------
 def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
     """Validate the changed buildings of each changed .gml and collect invalids (regressions) introduced by the PR."""
-    from scripts.extract_building_preview import _get_file_at_sha
+    from scripts.repo_git import blob
 
     regressions: list = []
     checked = 0
@@ -229,10 +255,10 @@ def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for rel in gml_files:
-            head_bytes = _get_file_at_sha(repo, head_sha, rel)
+            head_bytes = blob(repo, head_sha, rel)
             if head_bytes is None:
                 continue
-            base_bytes = _get_file_at_sha(repo, base_sha, rel)
+            base_bytes = blob(repo, base_sha, rel)
             old_map = load_buildings(base_bytes) if base_bytes else {}
             new_map = load_buildings(head_bytes)
             changed = _changed_ids(old_map, new_map)
@@ -253,7 +279,7 @@ def find_regressions(head_v: dict, base_v: dict, rel: str) -> list:
     """Of the invalid buildings in head, return **only the regressions introduced by the PR** (pure function, testable).
 
     Regression = (absent in base = newly added and invalid) or (was valid in base but became invalid).
-    Buildings already invalid in base (= pre-existing PLATEAU defects) are excluded by the diff approach.
+    Buildings already invalid in base (= pre-existing source defects) are excluded by the diff approach.
     """
     regs: list = []
     for bid, hv in head_v.items():
@@ -279,12 +305,12 @@ def render(result: dict) -> str:
         codes = ", ".join(f"{c} {_CODE_LABEL.get(c, '')}".strip() for c in r["codes"]) or "unknown"
         lines.append(f"- `{r['id']}` (`{r['file']}`, {r['was']}): {codes}")
     lines += ["", "<sub>Uses the same error-code system as official val3dity (100-405)."
-              f" Planarity tolerance is {VAL3DITY_PLANARITY_D2P_M}m per §6.3 L12."
-              " Pre-existing PLATEAU-origin defects are excluded by the diff-based approach.</sub>"]
+              f" Planarity tolerance is {VAL3DITY_PLANARITY_D2P_M} m."
+              " Pre-existing defects of the source data are excluded by the diff-based approach.</sub>"]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _local_files(paths: list, work: Path, src_crs: str = "EPSG:6697") -> dict:
+def _local_files(paths: list, work: Path, src_crs: Optional[str] = None) -> dict:
     """Local: validate all buildings of each file (baseline health)."""
     total = invalid = 0
     per_file = []
@@ -308,13 +334,15 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--head-sha", default=None)
     p.add_argument("--file-list", type=Path, default=None)
     p.add_argument("--enforce", action="store_true", help="Exit 1 if regressions found (default: advisory)")
-    p.add_argument("--crs", default=None, help="CRS of the data (default: `crs` in <repo>/4dcitygml.json, else EPSG:6697)")
+    p.add_argument("--crs", default=None, help="CRS of the data (default: `crs` in <repo>/4dcitygml.json, else the srsName of each file)")
     args = p.parse_args(argv)
 
     missing = _tools_available()
     if missing:
         sys.stderr.write(f"[val3dity_gate] Skipped ({missing}). Advisory in environments without tools.\n")
-        return 0
+        # in CI (--file-list) the toolchain step should have provided them: the gate could not
+        # judge, which is a system error, not a pass (D16)
+        return 2 if args.file_list is not None else 0
 
     if args.file_list is not None:
         if not (args.base_sha and args.head_sha):
@@ -341,4 +369,5 @@ def main(argv: Optional[list] = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from scripts.gate_result import guarded
+    raise SystemExit(guarded(main))

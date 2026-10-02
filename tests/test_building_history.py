@@ -55,5 +55,52 @@ class BuildingHistoryTest(unittest.TestCase):
             self.assertTrue((out / "index.html").is_file() and (out / "index.json").is_file())
 
 
+def _citygml10(storeys: dict) -> str:
+    """A CityGML 1.0 tile (default-namespace members, no uro:): buildings named by gml:id with a BIN."""
+    members = "".join(
+        f'<cityObjectMember><bldg:Building gml:id="{gid}"><gen:stringAttribute name="BIN"><gen:value>{bin_}</gen:value>'
+        f"</gen:stringAttribute><bldg:storeysAboveGround>{n}</bldg:storeysAboveGround></bldg:Building></cityObjectMember>\n"
+        for gid, (bin_, n) in storeys.items())
+    return ('<CityModel xmlns="http://www.opengis.net/citygml/1.0" xmlns:gml="http://www.opengis.net/gml" '
+            'xmlns:bldg="http://www.opengis.net/citygml/building/1.0" xmlns:gen="http://www.opengis.net/citygml/generics/1.0">\n'
+            f"{members}</CityModel>\n")
+
+
+class AnyCityTest(unittest.TestCase):
+    """The history follows the city's own building ID rule, in any CityGML dialect (it used to
+    know only PLATEAU's uro:buildingID, and found no building in a CityGML 1.0 city)."""
+
+    def _city(self, t: Path, rule: dict) -> GitRepo:
+        repo = GitRepo(t)
+        (t / "4dcitygml.json").write_text(json.dumps({"building_id": rule}), encoding="utf-8")
+        repo.run("add", "4dcitygml.json")
+        return repo
+
+    def test_a_gml_id_city(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            repo = self._city(t, {"type": "gml:id"})
+            repo.commit_text(_citygml10({"DEBY_1": ("11", 1), "DEBY_2": ("12", 6)}), "Baseline\n\nChange-Type: source-baseline\n")
+            repo.commit_text(_citygml10({"DEBY_1": ("11", 2), "DEBY_2": ("12", 6)}), "Storeys\n\nBuilding: DEBY_1\n")
+            rows = history(t, "DEBY_1")
+            self.assertEqual([r["event"] for r in rows], ["first appearance", "changed"])
+            self.assertEqual(rows[1]["changes"], {"/storeysAboveGround": {"old": "1", "new": "2"}})
+            self.assertEqual(write_index(t, t / "site")["buildings"], 2)
+            page = json.loads((t / "site" / "buildings" / "DEBY_1.json").read_text(encoding="utf-8"))
+            self.assertEqual([e["event"] for e in page["events"]], ["first appearance", "changed"])
+
+    def test_a_generic_attribute_city_keeps_attribute_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            repo = self._city(t, {"type": "gen:BIN", "invalid_values": ["1000000"]})
+            repo.commit_text(_citygml10({"g1": ("1036448", 3), "g2": ("1000000", 4)}), "Baseline\n\nChange-Type: source-baseline\n")
+            repo.commit_text(_citygml10({"g1": ("1036448", 5), "g2": ("1000000", 4)}), "Storeys\n\nBuilding: 1036448\n")
+            rows = history(t, "1036448")
+            self.assertEqual(rows[1]["changes"], {"/storeysAboveGround": {"old": "3", "new": "5"}})
+            self.assertIn("/stringAttribute[@name=BIN]/value", rows[0]["changes"])
+            write_index(t, t / "site")
+            self.assertEqual(sorted(p.stem for p in (t / "site" / "buildings").iterdir()), ["1036448", "g2"])   # invalid BIN: gml:id
+
+
 if __name__ == "__main__":
     unittest.main()

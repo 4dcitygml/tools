@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """PLATEAU CityGML attribute editor — local server.
 
-Runs a lightweight HTTP server on top of a local clone of sample-tokyo-station, and
+Runs a lightweight HTTP server on top of a local clone of a city repository, and
 lets the browser UI (index.html / viewer.html) browse/edit building attributes
 and create PRs.
 
@@ -17,7 +17,7 @@ and create PRs.
   screen (never the computer's GitHub CLI).
 
 Usage:
-    python app.py --repo ~/sample-tokyo-station [--port 8765] [--no-browser]
+    python app.py --repo ~/<city clone> [--port 8765] [--no-browser]
     # --repo may be omitted when placed inside the clone (tools/attr_editor/ etc.; auto-detected)
     # If no clone is found, the first-run setup screen (clone GUI) is shown
 
@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import subprocess
 import sys
@@ -49,6 +48,11 @@ if _SHARED is None:
 sys.path.insert(0, str(_SHARED))
 import runtime  # noqa: E402
 import building_identity  # noqa: E402
+import citygml_dialect  # noqa: E402
+import citygml_faces  # noqa: E402
+import pr_classification  # noqa: E402
+import pr_markers  # noqa: E402
+import pr_reason  # noqa: E402
 import accounts  # noqa: E402
 import git_sync  # noqa: E402
 
@@ -63,7 +67,7 @@ def city_map_config(repo_root) -> dict:
     """Read map settings (tiles/center/zoom) from the clone's 4dcitygml.json.
 
     Values are fail-closed (only validated ones are adopted). If absent, an empty
-    dict is returned and the frontend uses its defaults (GSI, fitBounds to tile bounds).
+    dict is returned and the frontend uses its defaults (OpenStreetMap, fitBounds to tile bounds).
     """
     if repo_root is None:
         return {}
@@ -107,18 +111,14 @@ read_repo_lang = runtime.repo_lang   # the city's working language from its 4dci
 def created_by_trailer(root: "Path | str", app: str) -> str:
     """Client-identification commit trailer (exchange contract Part B, SHOULD).
 
-    `Created-By: <app>/<version>` — the version is the clone's pinned tools
-    release tag (install/tools-release.json), omitted while unset. Third-party
-    clients emit their own name here; we emit ours for the same reason
-    (reachability and ecosystem credit), so the convention is dogfooded."""
-    tag = ""
-    try:
-        tag = str(json.loads(
-            (Path(root) / "install" / "tools-release.json")
-            .read_text(encoding="utf-8")).get("tag") or "")
-    except (OSError, ValueError):
-        pass
-    return f"Created-By: {app}/{tag}" if tag else f"Created-By: {app}"
+    `Created-By: <app>/<version>` - the version of the running hub (hub-v1.5.0 -> 1.5.0;
+    maintainer decision 8, 2026-10-01), omitted when this runs from a tools checkout. It was
+    read from the clone's install/tools-release.json, which a city repository does not carry
+    (A11), so no version was ever written. Third-party clients emit their own name here; we
+    emit ours for the same reason (reachability and ecosystem credit)."""
+    tag = runtime.running_hub_tag() or ""
+    version = tag.removeprefix("hub-v")
+    return f"Created-By: {app}/{version}" if version else f"Created-By: {app}"
 
 
 def sync_upstream_main(root) -> "str | None":
@@ -137,105 +137,9 @@ def sync_upstream_main(root) -> "str | None":
     return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
 
 
-NS = {
-    "core": "http://www.opengis.net/citygml/2.0",
-    "bldg": "http://www.opengis.net/citygml/building/2.0",
-    "gml": "http://www.opengis.net/gml",
-    "app": "http://www.opengis.net/citygml/appearance/2.0",
-    "gen": "http://www.opengis.net/citygml/generics/2.0",
-}
-
-
-_GRS80_A = 6378137.0
-_GRS80_F = 1 / 298.257222101
-_US_FT = 1200.0 / 3937.0  # US survey foot [m]
-
-
-def _tm_inverse(E: float, N: float, lon0_deg: float, *, k0: float = 0.9996,
-                E0: float = 500000.0, N0: float = 0.0) -> "tuple[float, float]":
-    """Inverse transverse Mercator (UTM) → (lat, lon) [deg]. GRS80 (practically equal to ETRS89/WGS84)."""
-    a, f = _GRS80_A, _GRS80_F
-    e2 = f * (2 - f)
-    e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2))
-    M = (N - N0) / k0
-    mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
-    phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * math.sin(2 * mu)
-            + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * math.sin(4 * mu)
-            + (151 * e1 ** 3 / 96) * math.sin(6 * mu)
-            + (1097 * e1 ** 4 / 512) * math.sin(8 * mu))
-    ep2 = e2 / (1 - e2)
-    C1 = ep2 * math.cos(phi1) ** 2
-    T1 = math.tan(phi1) ** 2
-    N1 = a / math.sqrt(1 - e2 * math.sin(phi1) ** 2)
-    R1 = a * (1 - e2) / (1 - e2 * math.sin(phi1) ** 2) ** 1.5
-    D = (E - E0) / (N1 * k0)
-    lat = phi1 - (N1 * math.tan(phi1) / R1) * (
-        D ** 2 / 2 - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * ep2) * D ** 4 / 24
-        + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * ep2 - 3 * C1 ** 2) * D ** 6 / 720)
-    lon = math.radians(lon0_deg) + (
-        D - (1 + 2 * T1 + C1) * D ** 3 / 6
-        + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2 + 24 * T1 ** 2) * D ** 5 / 120
-    ) / math.cos(phi1)
-    return math.degrees(lat), math.degrees(lon)
-
-
-def _lcc_inverse_2263(E_ft: float, N_ft: float) -> "tuple[float, float]":
-    """Inverse EPSG:2263 (NAD83 / New York Long Island, US feet) → (lat, lon)."""
-    a, f = _GRS80_A, _GRS80_F
-    e = math.sqrt(f * (2 - f))
-    lat1, lat2 = math.radians(41 + 2 / 60), math.radians(40 + 40 / 60)
-    lat0, lon0 = math.radians(40 + 10 / 60), math.radians(-74.0)
-    E0 = 984250.0 * _US_FT
-    x, y = E_ft * _US_FT - E0, N_ft * _US_FT
-
-    def m(phi):
-        return math.cos(phi) / math.sqrt(1 - e ** 2 * math.sin(phi) ** 2)
-
-    def t(phi):
-        return (math.tan(math.pi / 4 - phi / 2)
-                / ((1 - e * math.sin(phi)) / (1 + e * math.sin(phi))) ** (e / 2))
-
-    n = (math.log(m(lat1)) - math.log(m(lat2))) / (math.log(t(lat1)) - math.log(t(lat2)))
-    F = m(lat1) / (n * t(lat1) ** n)
-    rho0 = a * F * t(lat0) ** n
-    rho = math.copysign(math.hypot(x, rho0 - y), n)
-    tp = (rho / (a * F)) ** (1 / n)
-    theta = math.atan2(x, rho0 - y)
-    phi = math.pi / 2 - 2 * math.atan(tp)
-    for _ in range(6):
-        phi = math.pi / 2 - 2 * math.atan(
-            tp * ((1 - e * math.sin(phi)) / (1 + e * math.sin(phi))) ** (e / 2))
-    return math.degrees(phi), math.degrees(theta / n + lon0)
-
-
-def crs_transformer(srs_name: str):
-    """srsName → (x, y) -> (lat, lon) transformer. Lat/lon systems (PLATEAU etc.) get None (no conversion needed).
-
-    Formula implementation without external dependencies. Supports: UTM
-    (ETRS89/WGS84, urn:adv notation and EPSG:258xx/326xx) and EPSG:2263
-    (NY Long Island). Unknown projections fall back to None (previous behavior = no conversion).
-    """
-    s = str(srs_name or "")
-    m = re.search(r"UTM[ _]?zone[ _]?(\d{1,2})|UTM(\d{1,2})", s)
-    if m:
-        zone = int(m.group(1) or m.group(2))
-        if 1 <= zone <= 60:
-            return lambda x, y: _tm_inverse(x, y, zone * 6 - 183)
-    m = re.search(r"EPSG:+(\d+)", s)
-    if m:
-        code = int(m.group(1))
-        if 25801 <= code <= 25860:  # ETRS89 / UTM
-            zone = code - 25800
-            return lambda x, y: _tm_inverse(x, y, zone * 6 - 183)
-        if 32601 <= code <= 32660:  # WGS84 / UTM north
-            zone = code - 32600
-            return lambda x, y: _tm_inverse(x, y, zone * 6 - 183)
-        if code == 2263:
-            def tf(x, y):
-                return _lcc_inverse_2263(x, y)
-            tf.z_scale = _US_FT  # vertical is also US feet → the caller multiplies z by this
-            return tf
-    return None
+NS = citygml_dialect.NS
+crs_transformer = citygml_dialect.crs_transformer
+ns_for_root = citygml_dialect.ns_for_root
 
 
 def stable_building_id_from_span(
@@ -247,18 +151,6 @@ def stable_building_id_from_span(
     """The stable ID of a building span under the city's rule (building_identity.stable_id)."""
     return building_identity.stable_id(span, gid, building_identity.IdentityRule(bid_type, frozenset(invalid_values)))
 
-
-def ns_for_root(root: "ET.Element") -> dict:
-    """Return the namespace dict matching the file's CityGML version.
-
-    PLATEAU is 2.0 (NS as-is). CityGML 1.0-family data (munich etc.) uses a
-    root element namespace of `…/citygml/1.0`, so only the version part is
-    rewritten (gml is shared by both versions).
-    """
-    m = re.match(r"\{(.+?)\}", root.tag or "")
-    if m and m.group(1).endswith("/citygml/1.0"):
-        return {k: v.replace("/2.0", "/1.0") for k, v in NS.items()}
-    return NS
 
 # For QName reconstruction (namespace URI → conventional prefix). Used for source-note keys (R2-2)
 PREFIX_BY_URI = {
@@ -311,9 +203,10 @@ def _change_key(change: dict) -> str:
 def validate_source_selections(
     changes: list[dict], source_selections: list[dict], code_table: dict[str, str]
 ) -> dict[str, dict[str, str]]:
-    """Verify that every attribute value change has an explicitly selected, valid source."""
+    """Verify that every attribute value change has an explicitly selected, valid source.
+    A city whose data has no source code list (only PLATEAU data carries one) records no sources."""
     leaf_changes = [c for c in changes if c.get("kind") != "src"]
-    if not leaf_changes:
+    if not leaf_changes or not code_table:
         return {}
 
     selected: dict[str, dict[str, str]] = {}
@@ -457,11 +350,16 @@ def build_pr_body(
             lang, "pr.source_added",
             "Because the selected source was not in this building's source"
             " list, source code(s) {codes} were also added.", codes=codes) + "\n"
-    supplement = _md_text(reason) or tr_lang(lang, "pr.no_notes", "No additional notes.")
+    # The proposer's own words are the reason section (Exchange Contract A1; maintainer decision 1,
+    # 2026-10-01): the generated summary above carried the anchor, so A1 could never fail. Empty, it
+    # keeps CI's placeholder literal (as the texture editor does), which fails the reason check.
+    supplement = _md_text(reason) or "(please fill in)"
     return (
-        f"## {tr_lang(lang, 'pr.heading_summary', 'Summary of changes')} <!--sec:reason-->\n\n"
+        f"## {tr_lang(lang, 'pr.heading_summary', 'Summary of changes')}\n\n"
         + pr_summary(leaf_changes, selected_sources, lang)
         + source_note
+        + f"\n\n## {tr_lang(lang, 'pr.heading_reason', 'Reason and supporting evidence')} {pr_markers.SECTION_REASON}\n\n"
+        + supplement
         + f"\n\n## {tr_lang(lang, 'pr.heading_target', 'Target building')}\n\n"
         + f"- {tr_lang(lang, 'pr.label_building_id', 'Building ID')}: {_md_text(building_id)}\n"
         + f"- {tr_lang(lang, 'pr.label_internal_id', 'Internal data ID')}: `{_md_text(gid)}`\n\n"
@@ -469,8 +367,6 @@ def build_pr_body(
         + tr_lang(lang, "pr.details_columns", "| Item | Before | After | Confirmed source |")
         + "\n|---|---|---|---|\n"
         + rows
-        + f"\n\n## {tr_lang(lang, 'pr.heading_notes', 'Additional notes and evidence')}\n\n"
-        + supplement
         + "\n\n<sub>"
         + tr_lang(lang, "pr.cc0_footer",
                   "The data changes in this PR are provided under the"
@@ -646,6 +542,15 @@ def mesh_bounds(code: str) -> list[float] | None:
 # --------------------------------------------------------------------------
 # Repository
 # --------------------------------------------------------------------------
+class Edit:
+    """An edit written into the working tree, ready to send (send_proposal)."""
+
+    def __init__(self, describe, added: "list[str] | None" = None, extra: "dict | None" = None):
+        self.describe = describe        # building ID -> (commit message, PR title, PR body)
+        self.added = list(added or [])  # new files the commit adds (repository paths)
+        self.extra = dict(extra or {})  # facts the screen shows after sending
+
+
 class Repo:
     def __init__(self, root: Path, data: str | None = None):
         self.root = root.resolve()
@@ -673,7 +578,10 @@ class Repo:
         if len(candidates) > 1:
             names = ", ".join(d.parent.parent.name for d in candidates)
             print(f"Data package candidates: {names}\n  → using {self.bldg_dir.parent.parent.name} (override with --data)")
-        self.data_root = self.bldg_dir.parent.parent  # *_citygml_*_op
+        # The data package: <package>/udx/bldg in PLATEAU's layout, else the data directory itself
+        # (never above the clone: /raw/ serves files below it)
+        plateau_layout = self.bldg_dir.name == "bldg" and self.bldg_dir.parent.name == "udx"
+        self.data_root = self.bldg_dir.parent.parent if plateau_layout else self.bldg_dir
         # City metadata (4dcitygml.json): building ID type and display-language default
         meta = runtime.city_meta(self.root)
         rule = building_identity.rule_from_config(meta)
@@ -687,7 +595,6 @@ class Repo:
         self._tile_locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._codelists: dict | None = None
-        self._git_lock = threading.Lock()
 
     # ---- File listing ----
     def tile_files(self) -> dict[str, Path]:
@@ -701,6 +608,13 @@ class Repo:
             for p in sorted(self.bldg_dir.glob("*.gml")):
                 out[p.stem] = p
         return out
+
+    def _tile_bounds(self, code: str, path: Path) -> "list[float] | None":
+        """The tile's frame: its mesh cell for PLATEAU-named tiles (<mesh>_bldg_..._op.gml), else
+        the file's own Envelope (a numeric file name elsewhere is not a Japanese mesh code)."""
+        if re.fullmatch(r"\d+_bldg_.*_op\.gml", path.name):
+            return mesh_bounds(code) or self._envelope_bounds(path)
+        return self._envelope_bounds(path)
 
     def _envelope_bounds(self, path: Path) -> "list[float] | None":
         """Compute [south, west, north, east] from the gml:Envelope at the top of the file.
@@ -741,7 +655,7 @@ class Repo:
                 "code": code,
                 "file": p.name,
                 "size": p.stat().st_size,
-                "bounds": mesh_bounds(code) or self._envelope_bounds(p),
+                "bounds": self._tile_bounds(code, p),
                 "loaded": code in self._tile_cache,
             }
             for code, p in self.tile_files().items()
@@ -810,30 +724,7 @@ class Repo:
         root = ET.fromstring(raw)
         ns = ns_for_root(root)
         # Files in projected systems (UTM, state plane, etc.) are converted to WGS84 lat/lon before returning
-        env = root.find(f"{{{ns['gml']}}}boundedBy/{{{ns['gml']}}}Envelope")
-        tf = crs_transformer(env.get("srsName") if env is not None else "")
-
-        # appearance: poly_id -> {img, uv}
-        texmap: dict[str, dict] = {}
-        for ptex in root.iter(f"{{{ns['app']}}}ParameterizedTexture"):
-            img_el = ptex.find(f"{{{ns['app']}}}imageURI")
-            if img_el is None or not img_el.text:
-                continue
-            img = img_el.text.strip()
-            for target in ptex.findall(f"{{{ns['app']}}}target"):
-                pid = (target.get("uri") or "").lstrip("#")
-                tc = target.find(f".//{{{ns['app']}}}textureCoordinates")
-                if not pid or tc is None or not tc.text:
-                    continue
-                vals = tc.text.split()
-                try:
-                    uv = [
-                        [round(float(vals[i]), 4), round(float(vals[i + 1]), 4)]
-                        for i in range(0, len(vals) - 1, 2)
-                    ]
-                except ValueError:
-                    continue
-                texmap[pid] = {"img": img, "uv": uv}
+        tf = citygml_dialect.file_transformer(root, ns)
 
         buildings: dict[str, dict] = {}
         order: list[str] = []
@@ -848,12 +739,20 @@ class Repo:
             b = self._parse_building(bel, raw[s:e], ns, tf)
             buildings[gid] = b
             order.append(gid)
+        # appearance: face id -> {img, uv[, holes]}, by the face's own rings (scripts/citygml_faces.py)
+        by_ring, by_poly = citygml_faces.texture_rings(root, ns)
+        texmap: dict[str, dict] = {}
+        for b in buildings.values():
+            for f in b["lod2"]:
+                tex = citygml_faces.face_texture(f, by_ring, by_poly)
+                if tex is not None:
+                    texmap[f["id"]] = tex
 
         return {
             "code": code,
             "file": path.name,
             "relpath": str(path.relative_to(self.root)),
-            "bounds": mesh_bounds(code) or self._envelope_bounds(path),
+            "bounds": self._tile_bounds(code, path),
             "order": order,
             "buildings": buildings,
             "texmap": texmap,
@@ -923,38 +822,8 @@ class Repo:
                 if len(parts) >= 3:
                     lod1top = round(float(parts[2]) * zs, 3)
 
-        lod2: list[dict] = []
-        # .//: with BuildingPart structure (newyork etc.), boundedBy is a descendant, not a direct child
-        poly_n = 0
-        for bounded in bel.findall(f".//{{{ns['bldg']}}}boundedBy"):
-            for poly in bounded.findall(f".//{{{ns['gml']}}}Polygon"):
-                pid = poly.get(f"{{{ns['gml']}}}id") or ""
-                if not pid:
-                    # Data without gml:id (newyork etc.): assign deterministic
-                    # planned IDs from the order of appearance within boundedBy.
-                    # On texture apply they are written to the real file with
-                    # the same ordering rule (grant_polygon_ids)
-                    pid = f"{gid}_p{poly_n}"
-                poly_n += 1
-                for pl in poly.findall(f".//{{{ns['gml']}}}posList"):
-                    if not pl.text:
-                        continue
-                    nums = [float(x) for x in pl.text.split()]
-                    if tf is not None:
-                        pts = []
-                        for i in range(0, len(nums) - 2, 3):
-                            lat, lon = tf(nums[i], nums[i + 1])
-                            pts.append([round(lon, 7), round(lat, 7),
-                                        round(nums[i + 2] * zs, 3)])
-                    else:
-                        pts = []
-                        for i in range(0, len(nums) - 2, 3):
-                            pts.append([round(nums[i + 1], 7), round(nums[i], 7),
-                                        round(nums[i + 2], 3)])
-                    if len(pts) >= 3 and pts[0] == pts[-1]:
-                        pts = pts[:-1]
-                    if len(pts) >= 3:
-                        lod2.append({"id": pid, "pts": pts})
+        # LOD2 faces (BuildingParts included; holes kept as holes): scripts/citygml_faces.py
+        lod2 = citygml_faces.lod2_faces(bel, ns, tf, zs, gid)
 
         # ---- Attribute tree (enumerate non-geometry leaves) ----
         # Edit address = (tag localname, occurrence index of that tag within the span).
@@ -1108,12 +977,18 @@ class Repo:
             "lod1top": lod1top,
             "lod2": lod2,
             "items": items,
+            # None when the city's data has no source code list: no source is asked or written
             "src": {
                 "upper": src_upper,
                 "specific": src_specific,
                 "codelist": src_codelist,
-            },
+            } if codelists.get(src_codelist) else None,
         }
+
+    def _source_table(self, building: dict) -> dict:
+        """The source code table of a building ({} when the city's data has none)."""
+        src = building.get("src")
+        return (self.codelists().get(str(src.get("codelist") or SRC_CODELIST)) or {}) if src else {}
 
     # ---- Response shaping ----
     def tile_json(self, code: str) -> dict:
@@ -1148,7 +1023,7 @@ class Repo:
             "height": b["height"],
             "base": b["base"],
             "lod1top": b["lod1top"],
-            "lod2": b["lod2"],
+            "lod2": [citygml_faces.public_face(f) for f in b["lod2"]],
             "tex": tex,
         }
 
@@ -1256,13 +1131,6 @@ class Repo:
             "r28": list(dict.fromkeys(r28)),
         }
 
-    @staticmethod
-    def _reason_ready(reason: str) -> bool:
-        placeholders = ("記入してください", "未記入", "TODO", "TBD")
-        return len(reason.strip()) >= 5 and not any(
-            marker.lower() in reason.lower() for marker in placeholders
-        )
-
     def _other_udx_changes(self, rel: str) -> list[str]:
         return [
             line
@@ -1289,27 +1157,15 @@ class Repo:
                 "detail": detail,
             })
 
-        if reason:
-            add(
-                "reason", tr("editor.check_reason_label", "Notes (optional)"),
-                self._reason_ready(reason),
-                tr("editor.check_reason_pass",
-                   "Your notes will be added to the explanation for the maintainer")
-                if self._reason_ready(reason)
-                else tr("editor.check_reason_fail",
-                        "If you add notes, write at least 5 characters and be specific"),
-            )
-        else:
-            checks.append({
-                "key": "reason",
-                "label": tr("editor.check_reason_label", "Notes (optional)"),
-                "status": "na",
-                "detail": tr(
-                    "editor.check_reason_na",
-                    "An explanation is generated automatically from the before/after"
-                    " values and the selected sources",
-                ),
-            })
+        # the reason is required: it is the PR's reason section, which CI checks (A1)
+        add(
+            "reason", tr("editor.check_reason_label", "Reason and evidence"),
+            pr_reason.filled(reason),
+            tr("editor.check_reason_pass", "Your reason is what reviewers read as the reason for the change")
+            if pr_reason.filled(reason)
+            else tr("editor.check_reason_fail",
+                    "Write why you changed the value and what you checked (at least 5 characters)"),
+        )
         add(
             "changes", tr("editor.check_changes_label", "Changes"), bool(changes),
             tr("editor.check_changes_pass", "There are {n} changed item(s)", n=len(changes))
@@ -1328,18 +1184,18 @@ class Repo:
             building = tile["buildings"].get(gid)
             if building is None:
                 raise KeyError(gid)
-            source_codelist = str(
-                building["src"].get("codelist") or SRC_CODELIST
-            )
-            source_table = self.codelists().get(source_codelist) or {}
+            source_table = self._source_table(building)
             validate_source_selections(changes, source_selections, source_table)
             checks.append({
                 "key": "source",
                 "label": tr("editor.th_source", "Source"),
-                "status": "pass",
+                "status": "pass" if source_table else "na",
                 "detail": tr(
                     "editor.check_source_pass",
                     "A document you checked is selected for every changed attribute",
+                ) if source_table else tr(
+                    "editor.check_source_none",
+                    "This city's data records no source per attribute; your reason is the record",
                 ),
             })
             _path, new_raw, r28 = self._edited_bytes(
@@ -1418,7 +1274,7 @@ class Repo:
         }
 
     def pretest(self, body: dict) -> dict:
-        with self._git_lock:
+        with git_sync.clone_lock(self.root):   # one lock with the other editor and the hub's sync (D18)
             return self._pretest(body)
 
     def _apply_src_change(self, raw: bytes, span: bytes, qname: str, old: str, new: str) -> bytes:
@@ -1615,27 +1471,12 @@ class Repo:
             "autoPr": bool(accounts.token_for(self.login)),
         }
 
-    def revert_file(self, code: str) -> dict:
-        path = self.tile_files().get(code)
-        if path is None:
-            raise FileNotFoundError(code)
-        rel = str(path.relative_to(self.root))
-        self._git("checkout", "--", rel)
-        self._tile_cache.pop(code, None)
-        return {"ok": True, "relpath": rel}
-
     def _origin_url(self) -> str:
         r = self._git("remote", "get-url", "origin", check=False)
         return r.stdout.strip() if r.returncode == 0 else ""
 
-    @staticmethod
-    def _nwo_of(url: str) -> "str | None":
-        m = (re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
-             or re.match(r"https://github\.com/(.+?)(?:\.git)?$", url))
-        return m.group(1) if m else None
-
     def _origin_nwo(self) -> "str | None":
-        return self._nwo_of(self._origin_url())
+        return runtime.github_nwo(self._origin_url())
 
     def _compare_url(self, branch: str) -> "str | None":
         """GitHub screen for proposing changes upstream. Never a fork-internal-only compare."""
@@ -1694,8 +1535,7 @@ class Repo:
         source_table: dict = {}
         try:
             building = self.tile(code)["buildings"].get(gid) or {}
-            codelist = str((building.get("src") or {}).get("codelist") or SRC_CODELIST)
-            source_table = self.codelists().get(codelist) or {}
+            source_table = self._source_table(building)
         except Exception:
             pass  # preview only: missing context degrades to code-only source names
         by_key = {str(s.get("key") or ""): str(s.get("code") or "").strip()
@@ -1733,6 +1573,115 @@ class Repo:
             pass
         return {"ok": True, "summary": summary, "repoLang": rlang, "city": city}
 
+    def send_proposal(self, kind: str, code: str, gid: str, rel: str, apply) -> dict:
+        """The one way both editors send a proposal (S10; before, each had its own copy and they
+        differed: the attribute editor committed without a pathspec, so it could sweep in another
+        editor's staged files, D18, and its rollback kept nothing of the texture editor's cleanup).
+
+        Under the send lock: a base fetched just now, no other udx/ change in the tree, `apply()`
+        validates and writes the edit and returns an Edit; the stable building ID from the written
+        file; a branch named by the A5 prefix of `kind`; a path-limited commit with the Building
+        trailer; push to the account's fork; the PR through the API (or GitHub's compare page).
+        Any failure before the PR returns the clone to where it was."""
+        runtime.require_min_hub(self.root)
+        with git_sync.clone_lock(self.root):   # one lock with the other editor and the hub's sync (D18)
+            # The edit branch is cut from the freshly fetched upstream main, so the
+            # PR base cannot be stale (the practice repo rewrites main every day).
+            pr_base = self._fresh_pr_base(rel)
+            # Working-tree check: no tracked files under udx/ changed other than the target
+            # (the commit takes only its own paths, so non-udx/ and untracked changes are tolerated)
+            others = self._other_udx_changes(rel)
+            if others:
+                raise RuntimeError(tr(
+                    "editor.err_udx_dirty",
+                    "There are changes to files other than the target under udx/."
+                    " Please clean them up first:\n{list}",
+                    list="\n".join(others[:10]),
+                ))
+            edit = apply()
+
+            # The stable building ID, from the written file (same rule as suggest_commit.py)
+            raw = (self.root / rel).read_bytes()
+            spans = building_spans(raw)
+            building_id = gid
+            if gid in spans:
+                s, e = spans[gid]
+                building_id = stable_building_id_from_span(
+                    raw[s:e], gid, getattr(self, "_bid_type", "uro:buildingID"),
+                    getattr(self, "_bid_invalid_values", ()))
+            safe_bid = re.sub(r"[^A-Za-z0-9._-]", "-", building_id)
+            branch = f"{pr_classification.BRANCH_PREFIXES[kind][0]}{safe_bid}-{datetime.now():%Y%m%d-%H%M%S}"
+            message, pr_title, pr_body = edit.describe(building_id)
+            paths = [rel] + list(edit.added)
+
+            # The commit is authored by the clone's own identity (the account's noreply address).
+            # Without it git would take the computer's global name and e-mail into a public commit.
+            if self.login and not all(accounts.clone_identity(self.root).values()):
+                self._tile_cache.pop(code, None)
+                self._git("checkout", "--", rel, check=False)
+                raise RuntimeError(tr(
+                    "editor.err_no_identity",
+                    "This copy of the city has no author set for the account, so nothing was sent."
+                    " Open the hub and choose the account again (Settings → GitHub account)."))
+
+            prev = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+            def rollback() -> None:
+                self._git("checkout", prev, check=False)
+                self._git("checkout", "--", rel, check=False)
+                target_dir = (self.root / rel).parent
+                for a in edit.added:   # new files are untracked here: delete them by hand
+                    p = self.root / a
+                    p.unlink(missing_ok=True)
+                    if p.parent != target_dir and p.parent.is_dir() and not any(p.parent.iterdir()):
+                        p.parent.rmdir()   # a folder the edit created (new texturing's appearance folder)
+                self._tile_cache.pop(code, None)
+
+            try:
+                self._checkout_pr_branch(branch, pr_base)
+                self._git("add", *paths)
+                # Path-limited commit: unrelated staged changes in the index are not swept in
+                self._git("commit", "-m", message, "--", *paths)
+                commit = self._git("rev-parse", "--short", "HEAD").stdout.strip()
+            except RuntimeError:
+                rollback()
+                raise
+
+            result: dict = {"ok": True, "branch": branch, "commit": commit, "buildingID": building_id, **edit.extra}
+            push = self._git("push", "-u", "origin", branch, check=False)
+            if push.returncode != 0:
+                rollback()
+                self._git("branch", "-D", branch, check=False)
+                if not self.login:
+                    raise RuntimeError(tr(
+                        "editor.err_push_no_account",
+                        "No GitHub account is connected for this city, so nothing can be sent."
+                        " Your edits remain on this screen. Open the hub, choose the account"
+                        " (Settings → GitHub account), then press Send again."))
+                raise RuntimeError(tr(
+                    "editor.err_push_failed",
+                    "Could not send to GitHub. Your edits remain on this screen."
+                    " Check your internet connection and try again.\n{stderr}",
+                    stderr=push.stderr.strip(),
+                ))
+            result["pushed"] = True
+
+            pr_url, api_note = self._create_pr_api(branch, pr_title, pr_body)
+            # hub-v1.2.1: the proposal is opened with the city's account or by the person on
+            # GitHub's own screen — never through the computer's GitHub CLI (another identity).
+            if pr_url:
+                result["prUrl"] = pr_url
+            else:
+                # Standalone use without the hub keeps a fallback of confirming via the GitHub screen.
+                result["compareUrl"] = self._compare_url(branch)
+                if api_note:
+                    result["note"] = api_note
+
+            # Return to main (the original branch)
+            self._git("checkout", prev, check=False)
+            self._tile_cache.pop(code, None)
+            return result
+
     def create_pr(self, body: dict) -> dict:
         code = body["tile"]
         gid = body["gid"]
@@ -1747,10 +1696,8 @@ class Repo:
             raise FileNotFoundError(code)
         rel = str(path.relative_to(self.root))
 
-        with self._git_lock:
-            # The edit branch is cut from the freshly fetched upstream main, so the
-            # PR base cannot be stale (the practice repo rewrites main every day).
-            pr_base = self._fresh_pr_base(rel)
+        def apply() -> Edit:
+            # inside the send lock, on the freshly fetched base: validate, then write the edit
             pretest = self._pretest(body)
             if not pretest.get("passed"):
                 failed = [
@@ -1765,27 +1712,14 @@ class Repo:
                     list=tr("editor.fail_sep", " / ").join(failed),
                 ))
 
-            # Working-tree check: no tracked files under udx/ changed other than the target
-            # (the commit adds only the target file, so non-udx/ and untracked changes are tolerated)
-            others = self._other_udx_changes(rel)
-            if others:
-                raise RuntimeError(tr(
-                    "editor.err_udx_dirty",
-                    "There are changes to files other than the target under udx/."
-                    " Please clean them up first:\n{list}",
-                    list="\n".join(others[:10]),
-                ))
-
             # Value changes require an explicitly selected source. Validate here too,
             # using real data leaves and the code table, not relying on the browser alone.
             tile = self.tile(code)
             building = tile["buildings"].get(gid)
             if building is None:
                 raise KeyError(gid)
-            source_codelist = str(building["src"].get("codelist") or SRC_CODELIST)
-            source_table = self.codelists().get(source_codelist) or {}
             selected_sources = validate_source_selections(
-                changes, source_selections, source_table
+                changes, source_selections, self._source_table(building)
             )
             leaf_lookup: dict[str, dict] = {}
             qname_counts: dict[str, int] = {}
@@ -1820,7 +1754,9 @@ class Repo:
                     index=leaf["index"],
                     label=leaf["label"],
                 )
-                source = selected_sources[key]
+                source = selected_sources.get(key)
+                if source is None:
+                    continue   # the city records no sources
                 qname = str(leaf.get("qname") or "")
                 normalized_selections.append(
                     {"key": key, "code": source["code"], "qname": qname}
@@ -1848,185 +1784,103 @@ class Repo:
                         }
                         changes.append(generated)
                         existing_src_changes[qname] = generated
-            source_selections = normalized_selections
 
             # Apply the changes (preserving original bytes)
-            applied = self.apply_edits(code, gid, changes, source_selections)
+            applied = self.apply_edits(code, gid, changes, normalized_selections)
 
-            # Resolve buildingID from the head file (same as suggest_commit.py)
-            raw = path.read_bytes()
-            spans = building_spans(raw)
-            building_id = gid
-            if gid in spans:
-                s, e = spans[gid]
-                building_id = stable_building_id_from_span(
-                    raw[s:e],
-                    gid,
-                    getattr(self, "_bid_type", "uro:buildingID"),
-                    getattr(self, "_bid_invalid_values", ()),
-                )
+            def describe(building_id: str) -> "tuple[str, str, str]":
+                # Commit message: Update attributes (<attr name>): <old> → <new>, plus a Building: trailer.
+                # History stays English (greppable, language-independent contract), so labels
+                # resolve as "en" here even when the repo/UI language differs.
+                def commit_label(c: dict) -> str:
+                    return label_in("en", str(c.get("tag") or ""),
+                                    str(c.get("label") or c.get("tag") or ""))
 
-            now = datetime.now()
-            safe_bid = re.sub(r"[^A-Za-z0-9._-]", "-", building_id)
-            branch = f"edit/{safe_bid}-{now:%Y%m%d-%H%M%S}"
-
-            # Commit message: Update attributes (<attr name>): <old> → <new>, plus a Building: trailer.
-            # History stays English (greppable, language-independent contract), so labels
-            # resolve as "en" here even when the repo/UI language differs.
-            def commit_label(c: dict) -> str:
-                return label_in("en", str(c.get("tag") or ""),
-                                str(c.get("label") or c.get("tag") or ""))
-
-            described_changes = leaf_changes or changes
-            first = described_changes[0]
-            if len(described_changes) == 1:
-                subject = (f"Update attributes ({commit_label(first)}):"
-                           f" {first['old']} → {first['new']}")
-            else:
-                subject = (f"Update attributes ({commit_label(first)}"
-                           f" and {len(described_changes) - 1} more)")
-            lines = [subject, ""]
-            if len(changes) > 1:
-                lines += [f"- {commit_label(c)}: {c['old']} → {c['new']}" for c in changes]
-                lines.append("")
-            if reason:
-                lines += [reason, ""]
-            lines.append(f"Building: {building_id}")
-            lines.append(created_by_trailer(self.root, "citygml-attr-editor"))
-            message = "\n".join(lines)
-
-            prev = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-            try:
-                self._checkout_pr_branch(branch, pr_base)
-                self._git("add", rel)
-                self._git("commit", "-m", message)
-                commit = self._git("rev-parse", "--short", "HEAD").stdout.strip()
-            except RuntimeError:
-                self._git("checkout", prev, check=False)
-                self._git("checkout", "--", rel, check=False)
-                self._tile_cache.pop(code, None)
-                raise
-
-            result: dict = {"ok": True, "branch": branch, "commit": commit, "buildingID": building_id}
-
-            push = self._git("push", "-u", "origin", branch, check=False)
-            if push.returncode != 0:
-                self._git("checkout", prev, check=False)
-                self._git("branch", "-D", branch, check=False)
-                self._tile_cache.pop(code, None)
-                if not self.login:
-                    raise RuntimeError(tr(
-                        "editor.err_push_no_account",
-                        "No GitHub account is connected for this city, so nothing can be sent."
-                        " Your edits remain on this screen. Open the hub, choose the account"
-                        " (Settings → GitHub account), then press Send again."))
-                raise RuntimeError(tr(
-                    "editor.err_push_failed",
-                    "Could not send to GitHub. Your edits remain on this screen."
-                    " Check your internet connection and try again.\n{stderr}",
-                    stderr=push.stderr.strip(),
-                ))
-            result["pushed"] = True
-
-            # PR title and body are repo-facing: both resolve in the repository's
-            # working language (4dcitygml.json "lang"), independent of the UI
-            # language. Classification stays safe in any language via the edit/
-            # branch prefix; the ja/de title prefixes also match hub/CI title
-            # fallbacks for manual PRs. Commit subject stays English (above).
-            rlang = getattr(self, "_repo_lang", "en")
-            if leaf_changes:
-                title_label = label_in(rlang, str(first.get("tag") or ""),
-                                       str(first.get("label") or ""))
-                if len(leaf_changes) > 1:
-                    pr_title = tr_lang(rlang, "pr.title_attr_many",
-                                       "Update building info: {label} and {n} more",
-                                       label=title_label, n=len(leaf_changes) - 1)
+                described_changes = leaf_changes or changes
+                first = described_changes[0]
+                if len(described_changes) == 1:
+                    subject = (f"Update attributes ({commit_label(first)}):"
+                               f" {first['old']} → {first['new']}")
                 else:
-                    pr_title = tr_lang(rlang, "pr.title_attr",
-                                       "Update building info: {label}",
-                                       label=title_label)
-                pr_body = build_pr_body(
-                    building_id,
-                    gid,
-                    leaf_changes,
-                    selected_sources,
-                    reason,
-                    applied.get("r28") or [],
-                    lang=rlang,
-                )
-            else:
-                # Keep the legacy operation of only maintaining source notes without changing values.
-                legacy_label = str(first.get("label") or "")
-                if len(changes) == 1:
-                    pr_title = tr_lang(rlang, "pr.title_source_only",
-                                       "Update attributes ({label}): {old} → {new}",
-                                       label=legacy_label,
-                                       old=first["old"], new=first["new"])
+                    subject = (f"Update attributes ({commit_label(first)}"
+                               f" and {len(described_changes) - 1} more)")
+                lines = [subject, ""]
+                if len(changes) > 1:
+                    lines += [f"- {commit_label(c)}: {c['old']} → {c['new']}" for c in changes]
+                    lines.append("")
+                if reason:
+                    lines += [reason, ""]
+                lines.append(f"Building: {building_id}")
+                lines.append(created_by_trailer(self.root, "citygml-attr-editor"))
+                message = "\n".join(lines)
+
+                # PR title and body are repo-facing: both resolve in the repository's
+                # working language (4dcitygml.json "lang"), independent of the UI
+                # language. Classification stays safe in any language via the edit/
+                # branch prefix; the ja/de title prefixes also match hub/CI title
+                # fallbacks for manual PRs. Commit subject stays English (above).
+                rlang = getattr(self, "_repo_lang", "en")
+                if leaf_changes:
+                    title_label = label_in(rlang, str(first.get("tag") or ""),
+                                           str(first.get("label") or ""))
+                    if len(leaf_changes) > 1:
+                        pr_title = tr_lang(rlang, "pr.title_attr_many",
+                                           "Update building info: {label} and {n} more",
+                                           label=title_label, n=len(leaf_changes) - 1)
+                    else:
+                        pr_title = tr_lang(rlang, "pr.title_attr",
+                                           "Update building info: {label}",
+                                           label=title_label)
+                    pr_body = build_pr_body(
+                        building_id,
+                        gid,
+                        leaf_changes,
+                        selected_sources,
+                        reason,
+                        applied.get("r28") or [],
+                        lang=rlang,
+                    )
                 else:
-                    pr_title = tr_lang(rlang, "pr.title_source_only_many",
-                                       "Update attributes ({label} and {n} more)",
-                                       label=legacy_label, n=len(changes) - 1)
-                blank = tr_lang(rlang, "pr.blank", "(blank)")
-                rows = "\n".join(
-                    f"| {_md_cell(c['label'], blank)} | {_md_cell(c['old'], blank)} |"
-                    f" {_md_cell(c['new'], blank)} |"
-                    for c in changes
-                )
-                pr_body = (
-                    f"## {tr_lang(rlang, 'pr.heading_source_update', 'Source information update')}"
-                    f" ({_md_text(building_id)} / `{_md_text(gid)}`)\n\n"
-                    + tr_lang(rlang, "pr.details_columns3", "| Item | Before | After |")
-                    + f"\n|---|---|---|\n{rows}\n\n"
-                    f"## {tr_lang(rlang, 'pr.heading_notes', 'Additional notes and evidence')}"
-                    f" <!--sec:reason-->\n\n"
-                    f"{_md_text(reason) or tr_lang(rlang, 'pr.no_notes', 'No additional notes.')}\n"
-                )
-            pr_url, api_note = self._create_pr_api(branch, pr_title, pr_body)
-            # hub-v1.2.1: the proposal is opened with the city's account or by the person on
-            # GitHub's own screen — never through the computer's GitHub CLI (another identity).
-            if pr_url:
-                result["prUrl"] = pr_url
-            else:
-                # Standalone use without the hub keeps a fallback of confirming via the GitHub screen.
-                result["compareUrl"] = self._compare_url(branch)
-                if api_note:
-                    result["note"] = api_note
+                    # Keep the legacy operation of only maintaining source notes without changing values.
+                    legacy_label = str(first.get("label") or "")
+                    if len(changes) == 1:
+                        pr_title = tr_lang(rlang, "pr.title_source_only",
+                                           "Update attributes ({label}): {old} → {new}",
+                                           label=legacy_label,
+                                           old=first["old"], new=first["new"])
+                    else:
+                        pr_title = tr_lang(rlang, "pr.title_source_only_many",
+                                           "Update attributes ({label} and {n} more)",
+                                           label=legacy_label, n=len(changes) - 1)
+                    blank = tr_lang(rlang, "pr.blank", "(blank)")
+                    rows = "\n".join(
+                        f"| {_md_cell(c['label'], blank)} | {_md_cell(c['old'], blank)} |"
+                        f" {_md_cell(c['new'], blank)} |"
+                        for c in changes
+                    )
+                    pr_body = (
+                        f"## {tr_lang(rlang, 'pr.heading_source_update', 'Source information update')}"
+                        f" ({_md_text(building_id)} / `{_md_text(gid)}`)\n\n"
+                        + tr_lang(rlang, "pr.details_columns3", "| Item | Before | After |")
+                        + f"\n|---|---|---|\n{rows}\n\n"
+                        f"## {tr_lang(rlang, 'pr.heading_reason', 'Reason and supporting evidence')}"
+                        f" {pr_markers.SECTION_REASON}\n\n"
+                        f"{_md_text(reason) or '(please fill in)'}\n"
+                    )
+                return message, pr_title, pr_body
 
-            # Return to main (the original branch)
-            self._git("checkout", prev, check=False)
-            self._tile_cache.pop(code, None)
-            return result
+            return Edit(describe)
 
+        return self.send_proposal("attribute", code, gid, rel, apply)
 
 # --------------------------------------------------------------------------
-# HTTP server (first-run setup while there is no clone: setup.html + git_sync.CloneJob)
+# HTTP server (the hub starts the editor with --repo <clone>)
 # --------------------------------------------------------------------------
-
-
-_CLONE_TEXTS = {
-    "running": ("setup.err_clone_running", "A clone is already running"),
-    "no_git": ("setup.err_git_missing", "git was not found. Install git by following the setup guide"),
-    "bad_url": ("setup.err_bad_url", "The repository URL format is invalid"),
-    "not_empty": ("setup.err_dest_not_empty", "The destination is not empty: {dest}"),
-    "start": ("setup.clone_start", "Clone started: {url}"),
-    "size_note": ("setup.clone_size_note", "(The data is several GB, so this takes minutes to tens of minutes)"),
-    "done": ("setup.clone_done", "Clone finished"),
-    "failed": ("setup.err_clone_failed", "git clone failed (exit {code})"),
-}
-
-
-def clone_text(event: str, **params) -> str:
-    """The editor's wording for the clone job's events (git_sync.CloneJob)."""
-    key, default = _CLONE_TEXTS[event]
-    return tr(key, default, **params)
 
 
 class Handler(runtime.LocalHandler):
     APP_ID = "attr_editor"  # selects the language catalog (tex_editor overrides in its subclass)
-    repo: Repo | None = None  # set at startup (None = first-run setup mode)
-    setup_mgr = git_sync.CloneJob(
-        clone_text, lambda: runtime.git_args(net=True, store=accounts.store_for(accounts.login_for_clone(None))),
-        runtime.git_exe)
+    repo: "Repo | None" = None  # set at startup
 
     @property
     def root(self) -> "Path | None":
@@ -2035,20 +1889,6 @@ class Handler(runtime.LocalHandler):
     def page_transform(self, data: bytes) -> bytes:
         return city_map_html(data, self.root)
 
-    @classmethod
-    def _try_activate(cls) -> None:
-        """Activate the repository after cloning and remember the clone location in config."""
-        st = cls.setup_mgr
-        if cls.repo is not None or not st.done or st.dest is None:
-            return
-        try:
-            cls.repo = Repo(Path(st.dest))
-            runtime.remember_clone(runtime.clone_city(st.dest), st.dest)
-        except RuntimeError as e:
-            st.done = False
-            st.error = tr("setup.err_verify_failed",
-                          "Verification of the cloned destination failed: {error}", error=e)
-
     def _file(self, path: Path, values: "dict | None" = None) -> None:
         self.serve_file(path, values)
 
@@ -2056,17 +1896,6 @@ class Handler(runtime.LocalHandler):
     def do_GET(self) -> None:
         try:
             path = urlparse(self.path).path
-            if self.repo is None:
-                self._try_activate()
-            if path == "/api/setup/status":
-                # Always respond so a polling setup screen can detect done even after activation
-                self._json({**self.setup_mgr.state(), "active": self.repo is not None})
-                return
-            if self.repo is None:
-                # First-run setup mode: every GET returns the setup screen
-                self._file(APP_DIR / "setup.html", {"UPSTREAM": runtime.DEFAULT_CITY_URL,
-                                                    "DEFAULT_DEST": str(runtime.home() / "Documents" / "sample-tokyo-station")})
-                return
             if path in ("/", "/index.html"):
                 self._file(APP_DIR / "index.html")
             elif path == "/viewer.html":
@@ -2110,9 +1939,6 @@ class Handler(runtime.LocalHandler):
                 if p is None:
                     p = self._safe_child(self.repo.bldg_dir, rel)
                 self._file(p) if p else self._error("forbidden", 403)
-            elif path.startswith("/codelists/"):
-                p = self._safe_child(self.repo.codelists_dir, path[len("/codelists/"):])
-                self._file(p) if p else self._error("forbidden", 403)
             elif path.startswith("/raw/"):
                 # /raw/specification/... /raw/metadata/... (primary evidence documents)
                 p = self._safe_child(self.repo.data_root, path[len("/raw/"):])
@@ -2127,36 +1953,14 @@ class Handler(runtime.LocalHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001 — returned as an API response
-            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
 
     def do_POST(self) -> None:
         try:
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"{}")
             path = urlparse(self.path).path
-            if path == "/api/setup":
-                if self.repo is not None:
-                    self._error(tr("setup.err_setup_done", "Setup is already complete"), 409)
-                    return
-                self.setup_mgr.start(body["url"], body["dest"])
-                self._json({"ok": True})
-                return
-            if self.repo is None:
-                self._error(tr("setup.err_setup_incomplete", "Setup is not complete"), 409)
-                return
-            if path == "/api/edit":
-                if any(c.get("kind") != "src" for c in (body.get("changes") or [])):
-                    raise ValueError(tr(
-                        "editor.err_edit_needs_pr",
-                        "To change attribute values, choose a source for each attribute"
-                        ' and submit via "Send changes"',
-                    ))
-                self._json(
-                    self.repo.apply_edits(body["tile"], body["gid"], body["changes"])
-                )
-            elif path == "/api/revert":
-                self._json(self.repo.revert_file(body["tile"]))
-            elif path == "/api/pretest":
+            if path == "/api/pretest":
                 self._json(self.repo.pretest(body))
             elif path == "/api/pr-preview":
                 self._json(self.repo.preview_pr(body))
@@ -2174,14 +1978,14 @@ class Handler(runtime.LocalHandler):
         except BrokenPipeError:
             pass
         except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {str(e).replace(str(Path.home()), '~')}", 500)
+            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
 
 
 def main() -> None:
     runtime.console_safe()
     accounts.scrub_git_env()   # the shell's git overrides never reach the clone
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, help="local clone of sample-tokyo-station (can be omitted when run from inside clone)")
+    parser.add_argument("--repo", type=Path, help="local clone of the city repository (can be omitted when run from inside the clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
     parser.add_argument("--textures", type=Path,
                         help="texture replacement directory (for 3D tone variant comparison; missing images show originals)")
@@ -2189,28 +1993,28 @@ def main() -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    repo_root = args.repo or runtime.detect_repo()
+    Handler.repo = open_repo(Repo, args)
+    runtime.serve(Handler, args.port, ["CityGML attribute editor: {url}", f"  Data: {Handler.repo.bldg_dir}"],
+                  open_browser=not args.no_browser)
+
+
+def open_repo(repo_class, args):
+    """The clone an editor serves: --repo (the hub always passes it), else the clone this runs
+    inside, else the last one used. The hub clones and keeps main in line with the city; an editor
+    neither clones (its own first-run setup was never reached from the hub, S12) nor syncs at start
+    (it raced the hub's sync on the same clone); a send fetches the city's main itself."""
+    runtime.migrate_config()   # the hub has done it already; a standalone start does it here (S18)
+    repo_root = args.repo or runtime.detect_repo() or runtime.last_clone()
     if repo_root is None:
-        cfg = runtime.read_config()
-        saved = cfg.get("repo")
-        if saved and runtime.has_building_data(Path(saved)):
-            repo_root = Path(saved)
-
-    if repo_root is not None:
-        sync_upstream_main(repo_root)
-        try:
-            Handler.repo = Repo(repo_root, args.data)
-        except RuntimeError as e:
-            sys.exit(f"Error: {e}")
-        if args.textures:
-            Handler.repo.tex_override = args.textures.resolve()
-            print(f"  Texture replacement: {Handler.repo.tex_override}")
-    # Without repo_root, start in first-run setup mode (the clone runs from the browser)
-
-    banner = ["CityGML attribute editor: {url}",
-              f"  Data: {Handler.repo.bldg_dir}" if Handler.repo is not None
-              else "  Clone not found → perform first-run setup in browser"]
-    runtime.serve(Handler, args.port, banner, open_browser=not args.no_browser)
+        sys.exit("Error: no clone found. Start the editors from the hub, or pass --repo <clone>.")
+    try:
+        repo = repo_class(repo_root, args.data)
+    except RuntimeError as e:
+        sys.exit(f"Error: {e}")
+    if args.textures:
+        repo.tex_override = args.textures.resolve()
+        print(f"  Texture replacement: {repo.tex_override}")
+    return repo
 
 
 if __name__ == "__main__":

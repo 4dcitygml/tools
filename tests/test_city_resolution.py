@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for automatic resolution of the target city (upstream_url / upstream_nwo).
 
-Priority: CITYGML_UPSTREAM env var > clone's 4dcitygml.json > git remote upstream > default.
+Priority: clone's 4dcitygml.json > git remote upstream > CITYGML_UPSTREAM env var > default
+(the variable chooses the city while there is no clone; S18, F7).
 Implements plan document §5.1b "install from a municipality repo, skipping city selection".
 """
 from __future__ import annotations
@@ -31,7 +32,7 @@ def _load(app_rel: str, name: str):
 attr = _load("tools/attr_editor/app.py", "attr_city_res")
 hub = _load("tools/hub/app.py", "hub_city_res")
 
-DEFAULT = "4dcitygml/sample-tokyo-station"
+DEFAULT = "4dcitygml/sample-munich-station"   # the default practice city (runtime.DEFAULT_CITY_URL)
 
 
 class Base(unittest.TestCase):
@@ -109,10 +110,11 @@ class TestPriority(Base):
         d = self._repo_with("a/b", "https://github.com/c/d.git")
         self.assertEqual(runtime.upstream_nwo(d), "a/b")
 
-    def test_env_wins_over_everything(self):
+    def test_the_clone_wins_over_the_environment(self):
         os.environ["CITYGML_UPSTREAM"] = "env-owner/env-repo"
         d = self._repo_with("a/b", None)
-        self.assertEqual(runtime.upstream_nwo(d), "env-owner/env-repo")
+        self.assertEqual(runtime.upstream_nwo(d), "a/b")
+        self.assertEqual(runtime.upstream_nwo(), "env-owner/env-repo")   # no clone yet: the start script's city
 
     def test_broken_city_json_falls_back(self):
         d = Path(tempfile.mkdtemp())
@@ -135,17 +137,15 @@ class TestDemoCityJsons(unittest.TestCase):
         self._home.__exit__(None, None, None)
 
     def test_demo_city_jsons_resolve(self):
+        # each practice city resolves to the repository it is: the one ci/city-refs.json names for it
+        # (the public ones in production, the development copies in a lab)
         base = REPO_ROOT.parent
-        expect = {
-            "sample-tokyo-station": "4dcitygml/sample-tokyo-station",
-            "sample-munich-station": "4dcitygml/sample-munich-station",
-            "sample-newyork-station": "4dcitygml/sample-newyork-station",
-        }
-        for folder, nwo in expect.items():
+        refs = json.loads((REPO_ROOT / "ci" / "city-refs.json").read_text(encoding="utf-8"))["repositories"]
+        for folder in ("sample-tokyo-station", "sample-munich-station", "sample-newyork-station"):
             d = base / folder
-            if not (d / "4dcitygml.json").is_file():
-                self.skipTest(f"environment does not have {folder}/4dcitygml.json")
-            self.assertEqual(runtime.upstream_nwo(d), nwo)
+            if not (d / "4dcitygml.json").is_file() or folder not in refs:
+                self.skipTest(f"environment does not have {folder}/4dcitygml.json, or ci/city-refs.json does not name it yet")
+            self.assertEqual(runtime.upstream_nwo(d).lower(), refs[folder]["repository"].lower())
 
 
 class TestStableBuildingId(unittest.TestCase):

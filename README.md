@@ -75,6 +75,10 @@ pilot implementation included in version 1.1.0. It requires evidence review,
 a compatible city CI version and a city GitHub pilot before routine use.
 Consult [implementation status](docs/implementation-status.md) before enabling a procedure.
 
+The command-line tools for operators (data preparation, bulk submissions, conversion, the CI
+gates) are listed in [operator tools](docs/operator-tools.md); `python3 -m scripts --list`
+prints the same list from a tools checkout.
+
 ## Common releases
 
 [Releases](https://github.com/4dcitygml/tools/releases) serve two destinations:

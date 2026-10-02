@@ -16,6 +16,9 @@ building; a building whose value is absent or invalid falls back to its ``gml:id
 The attribute editor carries the same rule in ``tools/attr_editor/app.py``
 (it is shipped without ``scripts/``); a test keeps the two in step.
 
+The trailers of a commit message that name buildings (Exchange Contract A2) are read here
+too, for the commit scope gate, the topology scope, the history index and the hub.
+
 Byte-level helpers: city object members are located by the file's own spelling
 of ``cityObjectMember`` (``<core:cityObjectMember>`` in PLATEAU, the default
 namespace ``<cityObjectMember>`` in CityGML 1.0 data), so edits stay
@@ -32,7 +35,31 @@ _COM_ANY_RE = re.compile(rb"<((?:\w+:)?cityObjectMember)[ >]")
 _CITYMODEL_CLOSE_RE = re.compile(rb"</(?:\w+:)?CityModel>")
 # gml:id of a Building (1.0/2.0, any prefix) inside a member
 _BUILDING_GML_ID_RE = re.compile(rb'<(?:\w+:)?Building\b[^>]*?\sgml:id="([^"]+)"')
-_BUILDINGID_RE = re.compile(rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>")
+BUILDINGID_RE = re.compile(rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>")
+# PLATEAU's municipality code of a building (uro:city, any prefix)
+CITY_RE = re.compile(rb"<(?:\w+:)?city(?:\s[^>]*)?>([^<]+)</(?:\w+:)?city>")
+
+# Every trailer the commit scope gate reads (A2); Created-By and others are convention only.
+TRAILER_RE = re.compile(
+    r"^(Building|Building-Added|Building-Deleted|Change-Type|Scope-Municipality"
+    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Lifecycle-Manifest|Corrects|Reset-To):"
+    r"[ \t]*(.+?)[ \t]*$",
+    re.MULTILINE,
+)
+BUILDING_TRAILERS = ("Building", "Building-Added", "Building-Deleted")   # one building per value
+
+
+def trailers(message: str) -> dict[str, list[str]]:
+    """The A2 trailers of a commit message (or of several), key -> values in order."""
+    result: dict[str, list[str]] = {}
+    for key, value in TRAILER_RE.findall(message or ""):
+        result.setdefault(key, []).append(value.strip())
+    return result
+
+
+def trailer_buildings(found: dict[str, list[str]]) -> list[str]:
+    """The building values of Building / Building-Added / Building-Deleted, in that order."""
+    return [value for key in BUILDING_TRAILERS for value in found.get(key, [])]
 
 
 def member_markers(raw: bytes) -> tuple[bytes, bytes]:
@@ -104,6 +131,42 @@ def stable_id(span: bytes, gml_id: str, rule: IdentityRule = IdentityRule()) -> 
         m = re.search(rb'<(?:\w+:)?stringAttribute\s+name="' + name + rb'"\s*>\s*<(?:\w+:)?value>([^<]+)</', span)
         value = m.group(1).decode("utf-8").strip() if m else ""
         return value if value and value not in rule.invalid_values else gml_id
-    hit = _BUILDINGID_RE.search(span)
-    value = hit.group(1).decode("utf-8").strip() if hit else ""
+    value = building_id(span) or ""
     return value if value and value not in rule.invalid_values else gml_id
+
+
+def replace_stable_id(span: bytes, old: str, new: str, rule: IdentityRule = IdentityRule()) -> bytes:
+    """The member with its stable ID changed from old to new where the rule keeps it (the
+    Building's gml:id, the generic attribute's value, or the code-list attribute), every other
+    byte as it was. Unchanged when old is not found there."""
+    o, n = re.escape(old.encode("utf-8")), new.encode("utf-8")
+    if rule.type == "gml:id":
+        pattern = rb'(<(?:\w+:)?Building\b[^>]*?\sgml:id=")' + o + rb'(")'
+    elif rule.type.startswith("gen:"):
+        name = re.escape(rule.type[4:].encode("utf-8"))
+        pattern = (rb'(<(?:\w+:)?stringAttribute\s+name="' + name + rb'"\s*>\s*<(?:\w+:)?value>\s*)' + o
+                   + rb'(\s*</(?:\w+:)?value>)')
+    else:
+        pattern = rb"(<(?:\w+:)?buildingID(?:\s[^>]*)?>\s*)" + o + rb"(\s*</(?:\w+:)?buildingID>)"
+    return re.sub(pattern, lambda m: m.group(1) + n + m.group(2), span, count=1)
+
+
+def building_id(span: bytes) -> "str | None":
+    """The <uro:buildingID> value of one member (any prefix), or None."""
+    hit = BUILDINGID_RE.search(span)
+    value = hit.group(1).decode("utf-8", errors="replace").strip() if hit else ""
+    return value or None
+
+
+def municipality_values(span: bytes) -> "set[str]":
+    """Every non-empty municipality code (uro:city) of one member."""
+    values = {m.group(1).decode("utf-8", errors="replace").strip() for m in CITY_RE.finditer(span)}
+    values.discard("")
+    return values
+
+
+def municipality(span: bytes) -> "str | None":
+    """The member's municipality code when it has exactly one (a member naming two cities has
+    no determinable municipality), else None."""
+    values = municipality_values(span)
+    return next(iter(values)) if len(values) == 1 else None

@@ -52,9 +52,10 @@ class TestDocumentedChannels(unittest.TestCase):
     def test_runtime_symbols_exist(self):
         for name in ("city_key", "clone_city", "requested_city", "remember_clone", "saved_clone_for", "free_port",
                      "running_hub_tag", "hubs_dir", "version_tuple", "launcher_path", "fetch_latest_hub",
-                     "read_config", "update_config", "git_exe", "git_args", "github_api", "upstream_url"):
+                     "read_config", "update_config", "git_exe", "git_args", "github_api", "upstream_url",
+                     "min_hub", "below_min_hub", "require_min_hub"):
             self.assertTrue(callable(getattr(runtime, name, None)), name)
-        for name in ("running_hub_for", "latest_hub_release", "min_hub_of", "create_city_shortcut"):
+        for name in ("running_hub_for", "latest_hub_release", "releases_api", "create_city_shortcut"):
             self.assertTrue(callable(getattr(hub, name, None)), name)
 
     def test_shared_modules_and_launchers_exist(self):

@@ -15,11 +15,11 @@ not a city's procedure. Updated with each tools release.
 
 Included in tools-v1.1.0 (2026-09-06): CI generates a shared versioned
 report. All reviewers use standard GitHub Approve. The city can change its
-required approval count and reviewer membership over time. The hub reads active
-rulesets and classic protection, counts distinct current eligible approvals,
-and filters inspected PRs by remaining count. Preferences are per account and
-repository in the browser. Read failures appear as unavailable; zero remaining
-is not a mergeability judgment.
+required approval count and reviewer membership over time; GitHub enforces the
+count. The hub does not read rulesets or count approvals: it shows whether the
+viewing account approved or requested changes, the check runs (`analyze`,
+`ci-report`), and the inspection rows, which it takes from the machine report
+(from hub-v1.5.0) or the inspection comment.
 
 The prototype operator-only confirmation gate/button and automatic Draft/Ready
 transitions have been removed. Required machine checks are `analyze` and

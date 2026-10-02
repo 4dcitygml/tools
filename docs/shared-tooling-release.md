@@ -94,7 +94,8 @@ city CI or change an ongoing case's tools version.
   when a newer version exists. *Get it now* downloads and digest-verifies it
   into its own folder; it is used from the next start. Nothing is downloaded
   without that click and nothing restarts by itself. A city may declare
-  `min_hub` in `4dcitygml.json` (advisory) to say why an update matters.
+  `min_hub` in `4dcitygml.json`: from hub-v1.5.0 on, an older hub can view but
+  cannot send or request a retry until it is updated.
 - **Cities distribute no code** (Exchange Contract A11): no `install/`
   folder, no starter kit release, no client pin. Everything that runs on a
   contributor's computer comes from `hub-v*` release assets.

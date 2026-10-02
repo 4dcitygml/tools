@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2026 4dcitygml -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# 4D-CityGML PR Exchange Contract v3.1.0
+# 4D-CityGML PR Exchange Contract v3.4.0
 
 This document is the **machine contract** between the city data repositories
 and *any* client that submits pull requests — the official editors, your own
@@ -24,7 +24,7 @@ lists the resources provided to client developers.
 - The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as
   described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 - The contract is versioned with [Semantic Versioning](https://semver.org/)
-  (this is v3.1.0; v2.0.0 was the formalization of the previously internal
+  (this is v3.4.0; v2.0.0 was the formalization of the previously internal
   "exchange format v2"). Breaking changes bump the major version, are announced
   in the release notes of `4dcitygml/tools`, and get a deprecation window in
   which both old and new forms pass CI with a warning.
@@ -51,10 +51,13 @@ Checked the field survey sheet and corrected the storey count from 2 to 3.
   `^##[^\n]*<!--\s*sec:reason\s*-->[^\n]*$` — the section runs to the next
   `## ` heading. Without the anchor, CI falls back to these exact headings:
   `Reason and supporting evidence`, `Summary of changes`, `編集理由・根拠資料`,
-  `変更理由`, `変更の理由`, `変更の概要`. New clients SHOULD always emit the anchor.
+  `変更理由`, `変更の理由`, `変更の概要`, `Begründung und Belege`,
+  `Zusammenfassung der Änderungen`. New clients SHOULD always emit the anchor.
 - After stripping HTML comments, the section MUST be ≥ 5 characters and MUST
   NOT contain a placeholder literal: `please fill in`, `not filled in`,
-  `記入してください`, `未記入`, `TODO`, `TBD`. There is deliberately no
+  `記入してください`, `未記入`, `bitte ausfüllen`, `nicht ausgefüllt`, `TODO`, `TBD`.
+  The section holds the proposer's own reason; a client MUST NOT fill it with
+  a generated sentence (a generated summary goes under another heading). There is deliberately no
   "intentionally empty" sentinel: a reason is always required.
 - Gate: `reason`. Editing the PR body re-runs CI (no new commit is needed).
 
@@ -80,7 +83,10 @@ language can read and write them with stock git tooling.
   `layout` (mesh subdivision with an unchanged ID set), `source-baseline`
   (initial source recording), `scope-extract` (removing non-target
   municipalities), `practice-reset` (a practice repository returning to its
-  baseline).
+  baseline), `schema-update` (an edition's code lists, schema profile and
+  provenance; no GML), `identity-baseline` and `identity-correction` (see
+  below). Any other value is rejected by the commit scope gate and does not
+  make the PR administrative.
   - `lifecycle` commits MUST also carry exactly one
     `Lifecycle-Manifest: provenance/lifecycle/<event>.json@sha256:<hex>`
     trailer; the manifest lists the old→new IDs, the reason, and the evidence
@@ -95,6 +101,9 @@ language can read and write them with stock git tooling.
     layout and `provenance/`) exactly as that commit holds them (the gate
     compares blob ids), and MUST NOT change anything outside them. History is
     never rewritten: a reset is an ordinary pull request that a person merges.
+    A pull request made only of accepted `practice-reset` commits returns every
+    building changed since the baseline at once; the one-building-per-PR rule
+    does not apply to it (this gate is its check).
 - `identity-baseline` and `identity-correction` (replacing a building's
   `uro:buildingID`, one building per commit, with `Building-ID-From:` /
   `Building-ID-To:` / `Identity-Evidence:` trailers) are used by bulk
@@ -104,8 +113,10 @@ language can read and write them with stock git tooling.
   manifest from its declared materials.
 - Commits that touch no CityGML data (docs, code) MUST NOT carry building
   trailers.
-- Commit messages MUST be English (the history is a language-independent,
-  greppable record; see A5 for how this differs from PR text).
+- The commit subject line and the trailers MUST be English (the history is a
+  language-independent, greppable record; see A5 for how this differs from PR
+  text). Free text in the commit body, such as the proposer's reason, MAY be in
+  the proposer's language.
 - The complete list of trailers the commit scope gate reads: `Building:`,
   `Building-Added:`, `Building-Deleted:`, `Change-Type:`, `Scope-Municipality:`,
   `Lifecycle-Manifest:`, `Provenance-Manifest:`, `Building-ID-From:`,
@@ -127,15 +138,11 @@ Building: 13101-bldg-3728
 Created-By: my-city-editor/1.4 (https://example.com/contact)
 ```
 
-### A3. Editing style: byte-preserving edits
+### A3. Editing style (moved to Part B in v3.3.0)
 
-Clients MUST NOT re-serialize whole CityGML files. Edit only the byte span of
-the target building (or the specific leaf values), preserving the original
-bytes everywhere else — whitespace, attribute order, encoding, newlines.
-A naive "parse → modify → write the whole DOM" implementation will fail the
-**minimal diff** check even when the semantic change is correct, because it
-rewrites every line. This is the single most common reason a technically
-correct third-party submission fails CI. Gate: `minimal-diff`.
+Byte-preserving edits are a convention (Part B, "Byte-preserving edits"): the
+`minimal-diff` row that reports a re-serialized file is advisory (A6) and does
+not block.
 
 ### A4. Textures
 
@@ -143,11 +150,8 @@ correct third-party submission fails CI. Gate: `minimal-diff`.
   are made by **adding new image files and updating the `imageURI`** values
   (a shared image may be referenced by other buildings). The only exception is
   the maintainer-applied `texture-override` label (A9).
-- PRs that add or replace photos MUST include the rights confirmation
-  (consent to the
-  [Data Contribution Policy](https://github.com/4dcitygml/city-template/blob/main/docs/data-contribution-policy.md)
-  §1–§2: own photo, lawful location, privacy masking, CC0 1.0).
-- Gate: `texture`.
+- Gate: `texture`. The rights confirmation for photos is a convention the
+  maintainer reviews (Part B, "Photo rights"); CI does not check it.
 
 ### A5. Classification: every data PR declares what kind of change it is
 
@@ -186,21 +190,49 @@ stable `<!--cp:key-->` anchor: `reason`, `classification`, `commit-scope`,
 `scope-reproducibility`, `reproduction`, `freshness`, `file-scope`, `schema`,
 `minimal-diff`, `texture`, `structure`, `plausibility`, `topology`, `model`
 (`reproduction` = re-execution of a manifest-backed bulk conversion, A7; not
-applicable to ordinary PRs). Result cells always carry a machine-stable emoji
-(✅ ❌ − …); display names follow the repository language. In the practice
-repositories any ❌ blocks the merge (strict gate); clients MAY parse this
-comment to show results in their own UI (the hub review screen is the
-reference implementation of that parsing). Review clients MUST take a gate's
-result from this comment or from the GitHub check runs; they MUST NOT
-re-implement a gate with their own rules and show a different verdict.
+applicable to ordinary PRs). Display names follow the repository language.
+
+Every row has one status, shown by a machine-stable sign:
+
+| Status | Sign | Meaning | Blocks |
+|---|---|---|---|
+| `pass` | ✅ | the check ran and found nothing | no |
+| `warn` | ⚠️ | an advisory finding, or warnings of a clean run; the proposer may act on it | no |
+| `fail` | ❌ | a finding in the submitted data; the proposer must fix it | yes |
+| `error` | ⚙️ | the check could not reach a result (a tool, git or the network failed); not the proposer's data — CI or a maintainer repeats it | yes |
+| `na` | − | the check does not apply to this PR | no |
+| `pending` | … | the check applies but recorded no result | yes |
+
+The `file-scope` row carries two checks: the files a city accepts (A11) and the
+quality step over the changed data — an existing image overwritten (A4), an
+`imageURI` that points at no image, a changed file that is not well-formed XML,
+and an ordinary PR that changes more than one building (A2). Its detailed
+findings are in the `commit-scope` and quality comments (A10).
+
+Four rows are advisory: a finding there is `warn`, never `fail` — `minimal-diff`,
+`plausibility`, `topology` and `model` (a 3D preview that could not be made).
+Every other row is blocking. In the practice repositories a blocking status
+fails the merge (strict gate).
+
+The same rows travel in machine form: the analysis artifact's `inspection.json`
+has one `checks[]` entry per row with `key`, `status`, `severity`
+(`blocking` / `advisory`) and `ran` (the check reached a result: `pass`,
+`warn` or `fail`); where the city publishes machine reports, the report
+payload (A10, `<!-- citygml-review-report -->`) carries them to clients.
+Clients SHOULD read row states from that payload and MAY fall back to the
+`<!--cp:key-->` sign; they MUST treat an unknown sign as not passed. The hub
+review screen is the reference implementation. Review clients MUST take a
+gate's result from CI; they MUST NOT re-implement a gate with their own rules
+and show a different verdict.
 
 ### A7. Bulk submissions: provenance manifest (verify by reproduction)
 
-A PR whose data commits were generated by a program (`source-update`,
-`carry-forward`, `identity-baseline`, `identity-correction`, `schema-update`, `schema-migration`, `layout`, and
-the already-gated `source-baseline` / `scope-extract`) MUST ship the
-provenance of that generation so CI can **reproduce** it instead of anyone
-reading thousands of commits:
+A PR whose data commits were generated by a program of one of the manifest
+kinds — `source-update`, `carry-forward`, `identity-baseline`,
+`identity-correction`, `semantic-correction` — MUST ship the provenance of that
+generation so CI can **reproduce** it instead of anyone reading thousands of
+commits. (`layout`, `schema-update`, `source-baseline` and `scope-extract` are
+checked structurally by their own gates, A2, without a manifest.)
 
 - a manifest file `provenance/<kind>/<mesh>-<from>-<to>.json` conforming to
   [`schemas/provenance/bulk-manifest.schema.json`](../schemas/provenance/bulk-manifest.schema.json)
@@ -208,12 +240,13 @@ reading thousands of commits:
   exact invocation, products with digests, per-building evidence, sample
   audit);
 - `Provenance-Manifest: <path>@sha256:<hex>` on every data commit, in
-  addition to A2's trailers;
-- a plan issue opened before the PR and linked from the PR body
-  (`Plan-Issue:`), and a dedicated submitting account.
+  addition to A2's trailers.
 
-CI re-fetches the materials, re-runs the invocation at the pinned tools
-commit, and byte-compares the result with the PR; humans review the plan,
+The plan issue and the dedicated submitting account are conventions (Part B,
+"Bulk submissions"). CI re-fetches the materials, re-runs the invocation and
+byte-compares the result with the PR. For `semantic-correction` it runs at the
+tools commit the manifest names; for the other kinds it runs with the tools the
+city's CI pin provides. Humans review the plan,
 the manifest, and a random sample — never individual buildings. The full
 policy, the submitter's checklist, and the gate status are in
 [Bulk submissions: provenance, verification, and merge policy](bulk-submission-provenance.md).
@@ -268,9 +301,10 @@ parsed.
 |---|---|
 | `<!-- citygml-automatic-inspection -->` | Inspection summary, one `<!--cp:key-->` row per gate (A6). |
 | `<!-- citygml-change-summary -->` | Table of changed values derived from the diff (tool-independent). |
-| `<!-- citygml-commit-scope -->`, `<!-- citygml-reviewability-lint -->`, `<!-- citygml-quality-lint -->` | Detailed findings of the `commit-scope`, `minimal-diff` and `file-scope` / `structure` gates. |
-| `<!-- plateau-quality-lint -->`, `<!-- val3dity-topology-gate -->` | Detailed findings of the `plausibility` and `topology` gates. |
-| `<!-- cesium-building-preview -->` | The 3D preview link of the changed buildings (`model` gate). |
+| `<!-- citygml-commit-scope -->`, `<!-- citygml-reviewability-lint -->`, `<!-- citygml-quality-lint -->` | Detailed findings of the `commit-scope`, `minimal-diff` and `structure` gates (the quality comment also explains a `file-scope` failure of the quality step, A6). |
+| `<!-- plausibility-lint -->`, `<!-- val3dity-topology-gate -->` | Detailed findings of the `plausibility` and `topology` gates. |
+| `<!-- cesium-building-preview -->` | The 3D preview link of the changed buildings (`model` gate); posted only when the city sets `PREVIEW_BASE_URL` to where a viewer is served. |
+| `<!-- citygml-review-report -->` | The machine report of the latest analysis (an encoded payload with every row's `key`, `status`, `severity`, `ran`); judged by the `ci-report` check. |
 | `<!-- citygml-metadata -->` | The machine-readable record of the analysis (an encoded payload; clients read the stamp, not the text). |
 | `<!-- citygml-suggested-commit -->` | A commit message CI suggests when the trailers are missing or wrong (`commit-scope` gate). |
 | `<!-- citygml-bulk-reproduction -->` | The result of re-executing a bulk submission's manifest (`reproduction` gate, A7). |
@@ -279,9 +313,16 @@ parsed.
 | `<!-- citygml-ci-retry-request -->` | A re-inspection request (A8; written by clients, read by CI). |
 
 Analysis comments carry `<!-- citygml-ci-context:<digest>:<run>:<attempt> -->`,
-naming the run and PR context they belong to; clients trust them by that stamp
-and by the bot identity. State comments (base freshness) belong to no run and
-are trusted by the bot identity alone.
+naming the run and PR context they belong to. This stamp is **deprecated** in
+v3.3.0 and will no longer be written from v4.0.0: clients SHOULD instead read
+the report payload of `<!-- citygml-review-report -->`, which carries the PR
+context and a `reportId`, and trust comments by the bot identity. State
+comments (base freshness) belong to no run and are trusted by the bot identity
+alone.
+
+The plausibility comment also carries `<!-- plateau-quality-lint -->`, the
+former name of its marker, **deprecated** in v3.4.0 and no longer written from
+v4.0.0: clients SHOULD read `<!-- plausibility-lint -->`.
 
 Check runs on the head commit: `analyze` (the inspection run) and, where the
 city publishes machine reports, `ci-report`. GitHub's required-checks setting
@@ -325,7 +366,18 @@ This is what lets a city's approvers review data and never read code.
 - **Language**: PR title and body SHOULD be written in the repository's
   working language (`lang` in `4dcitygml.json`; the readers are that city's
   reviewers). CI itself is language-independent, so other languages do not
-  fail checks. Commit messages stay English (A2).
+  fail checks. Commit subject lines and trailers stay English (A2).
+- **Byte-preserving edits** (was A3): clients SHOULD NOT re-serialize whole
+  CityGML files. Edit only the byte span of the target building (or the
+  specific leaf values), preserving the original bytes everywhere else —
+  whitespace, attribute order, encoding, newlines. A naive "parse → modify →
+  write the whole DOM" implementation rewrites every line: the `minimal-diff`
+  row warns, and reviewers cannot see the real change.
+- **Photo rights** (was A4): PRs that add or replace photos SHOULD include the
+  rights confirmation (consent to the
+  [Data Contribution Policy](https://github.com/4dcitygml/city-template/blob/main/docs/data-contribution-policy.md)
+  §1–§2: own photo, lawful location, privacy masking, CC0 1.0). The maintainer
+  reviews it; CI does not check it.
 - **Client identification**: every commit created by a tool SHOULD carry a
   trailer `Created-By: <app>/<version> (<contact URL or email>)` — version and
   contact are optional but a reachable contact is strongly recommended.
@@ -344,24 +396,29 @@ This is what lets a city's approvers review data and never read code.
 - **Start in the sandbox**: a new client SHOULD make its first submissions
   against a practice repository (see Part C) rather than a production city.
 - **Bulk submissions**: before generating a large batch of PRs, open an issue
-  describing the plan (scope, source, rate). Keep one logical change per PR
-  (one mesh per PR for conversions — the PR is the rollback unit). The
+  describing the plan (scope, source, rate) and link it from the PR body
+  (`Plan-Issue:`); submit from a dedicated account. Keep one logical change per
+  PR (one mesh per PR for conversions — the PR is the rollback unit). The
   machine-checked part of a bulk submission is A7.
 
 ## Part C — resources for client developers
 
-- **Sandbox**: the practice repositories (e.g. `sample-tokyo-station`,
-  `sample-munich-station`, `sample-newyork-station`) run the **full real
-  pipeline** — all gates, strict gate, auto-merge — and are reset
-  periodically. Submitting practice PRs there is the intended way to develop
-  and test a client; you cannot damage anything.
+- **Sandbox**: the practice repositories (e.g. `sample-munich-station`,
+  `sample-newyork-station`, `sample-tokyo-station`) run the **full real
+  pipeline** — all gates and the strict gate. An attribute edit of their demo
+  tiles merges automatically once `analyze` passes; a PR that adds or changes a
+  texture image always waits for the maintainer's review (an image, once
+  merged, stays in the public history). A maintainer resets the data to its
+  baseline when needed, by pull request, keeping the history. Submitting
+  practice PRs there is the intended way to develop and test a client; you
+  cannot damage anything.
 - **Local validators (identical to CI)** — run from a city-repo clone with
   this repository checked out:
 
   ```bash
   python3 scripts/commit_building_scope.py --repo . --base-sha <BASE> --head-sha <HEAD>
   python3 scripts/citygml_lint.py <changed.gml>      # geometric structure
-  python3 scripts/plateau_lint.py <changed.gml>      # attribute plausibility
+  python3 scripts/plausibility_lint.py <changed.gml>      # attribute plausibility
   python3 scripts/reviewability_lint.py …            # minimal diff
   python3 scripts/validate_citygml.py <changed.gml>  # schema
   ```
@@ -369,7 +426,7 @@ This is what lets a city's approvers review data and never read code.
   The attribute editor's pre-send check ("pretest") runs the same suite; CI
   runs the same scripts with the same versions.
 - **Machine-readable CI feedback**: parse the inspection comment by
-  `<!--cp:key-->` + emoji (A6) and the markers in A10; never parse display
+  report payload or the `<!--cp:key-->` sign (A6) and the markers in A10; never parse display
   names, which are localized.
 - **Reference clients**: the hub (review screen, re-inspection requests) and
   the attribute/texture editors (submission) in this repository implement this
@@ -392,6 +449,33 @@ A documentation-only PR (`other`): branch name free, no building trailers, the
 reason section still filled in (A1 applies to every PR).
 
 ## Contract changelog
+
+- **v3.4.0** (2026-10) — the rules hold for every city's data, whatever its CityGML
+  version and building ID rule. A10: the plausibility gate's marker is
+  `<!-- plausibility-lint -->`; its former name `<!-- plateau-quality-lint -->`
+  is deprecated and written beside it until v4.0.0 (clients SHOULD read the new
+  name). The tool is `scripts/plausibility_lint.py`.
+
+- **v3.3.0** (2026-10) — no rule gets stricter; what nothing enforced moves to
+  Part B. A1 names the German headings and placeholders the check knows, and
+  says the reason section holds the proposer's own words. A2: only the subject
+  line and trailers must be English. A3 (byte-preserving edits) and A4's photo
+  rights move to Part B. A6 says which checks share the `file-scope` row. A7
+  lists only the manifest kinds (adding `semantic-correction`, dropping
+  `schema-migration`, which A2 does not accept), says which tools re-run a
+  manifest, and moves the plan issue and the dedicated account to Part B. A10:
+  the `citygml-ci-context` stamp is deprecated (written until v4.0.0); clients
+  read the report payload instead. The contract's lists are kept equal to the
+  code by tests.
+
+- **v3.2.0** (2026-10) — A6 gains two row statuses: `warn` (⚠️, advisory,
+  does not block) and `error` (⚙️, the check could not reach a result; blocks,
+  but is not the proposer's data). `minimal-diff`, `plausibility`, `topology`
+  and `model` are advisory: their findings no longer block (before, a warning
+  of `plausibility` could show ❌). A crashed check was shown as ❌ and read as a
+  finding; it is now ⚙️. `inspection.json` rows carry `severity` and `ran`, and
+  A10 lists the machine report. For submitters nothing gets stricter; clients
+  that parse the signs must treat an unknown sign as not passed.
 
 - **v3.1.0** (2026-09) — adds A11 (what a city repository accepts: data,
   documents, configuration, the verified CI tools pin; code is rejected with

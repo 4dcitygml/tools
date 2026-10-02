@@ -27,7 +27,10 @@ import re
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+import runtime
 
 # Abort a transfer that stays below 1 KB/s for 30 s (stalled), never a merely slow one.
 LOW_SPEED_ARGS = ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30"]
@@ -81,6 +84,41 @@ def fetch_main(root, url: str, base_args: list, log=None) -> "str | None":
         return None
 
 
+_clone_locks: "dict[str, threading.RLock]" = {}
+_clone_locks_guard = threading.Lock()
+_held = threading.local()
+
+
+@contextmanager
+def clone_lock(root):
+    """The one lock for git's work in a clone (D18): the hub's sync and both editors are
+    separate processes on one working tree, and each used to lock only itself, so a send could
+    check out its branch while the sync merged main. Every git mutation of a clone runs inside
+    it: a file lock between processes (<clone>/.git/citygml.lock) and a lock between threads;
+    a thread that already holds it may take it again."""
+    root = Path(root).resolve()
+    key = str(root)
+    with _clone_locks_guard:
+        thread_lock = _clone_locks.setdefault(key, threading.RLock())
+    with thread_lock:
+        depth = getattr(_held, "depth", {})
+        _held.depth = depth
+        if depth.get(key):
+            depth[key] += 1
+            try:
+                yield
+            finally:
+                depth[key] -= 1
+            return
+        git_dir = root / ".git"
+        with runtime.FileLock((git_dir if git_dir.is_dir() else root) / "citygml"):
+            depth[key] = 1
+            try:
+                yield
+            finally:
+                depth[key] = 0
+
+
 def sync_main(root, url: str, base_args: list, log=None) -> dict:
     """Bring local main in line with upstream main.
 
@@ -105,31 +143,34 @@ def sync_main(root, url: str, base_args: list, log=None) -> dict:
         new = fetch_main(root, url, base_args, log)
         if not new:
             return {"state": "offline", "head": cur_main, "message": "Fetch failed; using the local copy"}
-        branch = run("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        if branch != "main":
-            # main is not checked out: move only the ref; the working tree stays untouched
-            if new != cur_main and run("branch", "-f", "main", new).returncode == 0:
+        # From here the working tree and main change: under the clone's lock, so no editor's send
+        # is checking out its branch meanwhile (D18). Fetching above needs no lock.
+        with clone_lock(root):
+            branch = run("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            if branch != "main":
+                # main is not checked out: move only the ref; the working tree stays untouched
+                if new != cur_main and run("branch", "-f", "main", new).returncode == 0:
+                    if log:
+                        log(f"Upstream update merged into main ({new[:12]})")
+                    return {"state": "ref-moved", "head": new, "message": "main updated (not checked out)"}
+                return {"state": "up-to-date", "head": cur_main, "message": "Up to date"}
+            if new == cur_main:
+                return {"state": "up-to-date", "head": cur_main, "message": "Up to date"}
+            dirty = [ln for ln in run("status", "--porcelain").stdout.splitlines()
+                     if ln.strip() and not ln.startswith("??")]
+            if dirty:
                 if log:
-                    log(f"Upstream update merged into main ({new[:12]})")
-                return {"state": "ref-moved", "head": new, "message": "main updated (not checked out)"}
-            return {"state": "up-to-date", "head": cur_main, "message": "Up to date"}
-        if new == cur_main:
-            return {"state": "up-to-date", "head": cur_main, "message": "Up to date"}
-        dirty = [ln for ln in run("status", "--porcelain").stdout.splitlines()
-                 if ln.strip() and not ln.startswith("??")]
-        if dirty:
-            if log:
-                log("Warning: skipped upstream sync due to local unsaved changes")
-            return {"state": "dirty", "head": cur_main, "message": "Local changes present; not updated"}
-        if run("merge", "--ff-only", "FETCH_HEAD").returncode == 0:
-            if log:
-                log(f"Upstream update merged (main → {new[:12]})")
-            return {"state": "updated", "head": new, "message": "Updated to the latest city data"}
-        if run("reset", "--hard", "FETCH_HEAD").returncode == 0:
-            if log:
-                log(f"Updated main to match upstream (was {cur_main[:12] if cur_main else '?'}; old state remains in reflog)")
-            return {"state": "updated", "head": new, "message": "Updated to the latest city data (history rewritten upstream)"}
-        return {"state": "error", "head": cur_main, "message": "Could not update main"}
+                    log("Warning: skipped upstream sync due to local unsaved changes")
+                return {"state": "dirty", "head": cur_main, "message": "Local changes present; not updated"}
+            if run("merge", "--ff-only", "FETCH_HEAD").returncode == 0:
+                if log:
+                    log(f"Upstream update merged (main → {new[:12]})")
+                return {"state": "updated", "head": new, "message": "Updated to the latest city data"}
+            if run("reset", "--hard", "FETCH_HEAD").returncode == 0:
+                if log:
+                    log(f"Updated main to match upstream (was {cur_main[:12] if cur_main else '?'}; old state remains in reflog)")
+                return {"state": "updated", "head": new, "message": "Updated to the latest city data (history rewritten upstream)"}
+            return {"state": "error", "head": cur_main, "message": "Could not update main"}
     except (OSError, subprocess.SubprocessError) as e:
         return {"state": "error", "head": None, "message": str(e)}
 
@@ -204,8 +245,9 @@ class CloneJob:
 class BackgroundSync:
     """Run sync_main once on a thread; expose its progress for a status endpoint."""
 
-    def __init__(self, root, url_provider, base_args_provider, log=None):
+    def __init__(self, root, url_provider, base_args_provider, log=None, on_done=None):
         self._root = root
+        self._on_done = on_done   # called with the final state (the city data may have changed)
         self._url = url_provider
         self._base = base_args_provider
         self._log = log
@@ -228,6 +270,12 @@ class BackgroundSync:
         with self._lock:
             self._state.update(result)
             self._state["finished"] = time.time()
+        if self._on_done:
+            try:
+                self._on_done(self.state)
+            except Exception as e:  # noqa: BLE001 - a follow-up never takes the sync down
+                if self._log:
+                    self._log(f"after sync: {type(e).__name__}: {e}")
         self.done.set()
 
     @property

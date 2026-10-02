@@ -7,7 +7,7 @@ PLATEAU/CityGML represents "value unknown" with numeric sentinels (mostly
 9999 / -9999). These are the official "unknown" representation, not anomalous
 values. Centralizing them lets multiple consumers share the same "unknown" definition:
 
-- **Data-quality lint (`plateau_lint.py`)**: exclude from checks (do not falsely flag sentinels as anomalies).
+- **Data-quality lint (`plausibility_lint.py`)**: exclude from checks (do not falsely flag sentinels as anomalies).
 - **Statistics (future `data_stats` etc.)**: exclude from aggregates such as mean/max so they do not distort reality.
 - **Quality monitoring**: the trend of the "unknown rate (sentinel ratio)" itself can serve as a quality metric
   (decreasing unknowns = maintenance progress / sudden increase = data-degradation alert).

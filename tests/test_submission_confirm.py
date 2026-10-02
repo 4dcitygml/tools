@@ -46,9 +46,13 @@ class TestSubmissionInfo(unittest.TestCase):
         self.assertTrue(info["autoPr"])
         self.assertEqual(info["identity"], {"name": "tester", "email": "42+tester@users.noreply.github.com"})
 
-    def test_hub_handed_account_wins(self):
+    def test_the_citys_binding_decides_not_the_launch_value(self):
+        # S18, F5: the settings file is the one owner; a login handed over at launch revived an
+        # account the city no longer has (forgotten, or never bound)
         accounts.save_account("fromhub", "tok2", 7)
         os.environ["CITYGML_ACCOUNT"] = "fromhub"
+        self.assertIsNone(attr.Repo(self.root).submission_info()["account"])
+        accounts.bind_city_login(TOKYO, "fromhub")
         self.assertEqual(attr.Repo(self.root).submission_info()["account"], "fromhub")
 
     def test_tex_editor_inherits_the_confirmation(self):

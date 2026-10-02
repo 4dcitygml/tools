@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 
 CATALOG_DIR = Path(__file__).resolve().parent / "catalogs"
-SUPPORTED = ("en", "ja", "de")
+SUPPORTED = ("en", "ja", "de")   # the one list of the languages the tools speak (build_bundle and tests read it)
 SOURCE_LANG = "en"  # Language of the source text (flipped from ja in Wave 2)
 
 # Keys start lowercase; camelCase is allowed after that because label.* keys

@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,13 +22,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+from scripts.building_identity import trailer_buildings, trailers  # noqa: E402
 from scripts.repo_git import git as _git  # noqa: E402
-
-
-_BUILDING_TRAILER_RE = re.compile(
-    r"^(?:Building|Building-Added|Building-Deleted):[ \t]*(.+?)[ \t]*$",
-    re.MULTILINE,
-)
 
 
 @dataclass(frozen=True)
@@ -40,7 +34,8 @@ class Decision:
 
 
 def building_ids(messages: str) -> set[str]:
-    return {value.strip() for value in _BUILDING_TRAILER_RE.findall(messages) if value.strip()}
+    """The buildings the A2 trailers of these commit messages name (the commit scope gate's parser)."""
+    return {value for value in trailer_buildings(trailers(messages)) if value}
 
 
 def decide(repo: Path, base_sha: str, head_sha: str, kind: str) -> Decision:
