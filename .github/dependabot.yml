@@ -1,0 +1,16 @@
+# Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
+#
+# GitHub's own update service for the actions the workflows pin by commit SHA (uses: x@<sha> # vN).
+# Action pins only: the tools have no other dependency to update this way (requirements are
+# pinned by hand and checked by the release), and a city's CI tools version is its declaration's
+# `tools` key (A11), not a dependency.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

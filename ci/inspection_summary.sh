@@ -10,8 +10,8 @@
 #
 # Contract with the wrapper:
 #   - cwd = city repository checkout; out/ holds the comment bodies so far
-#   - $RUNNER_TEMP/citygml_outcomes.env holds KEY=VALUE lines from the drivers, and
-#     $RUNNER_TEMP/gates/<key>.json one result per gate (scripts/gate_result.py)
+#   - the run folder ($CITYGML_RUN, made by the analysis driver) holds gates/<key>.json, one result
+#     per gate (scripts/gate_result.py): the only state the summary reads (U2)
 #   - STRICT_GATE=1 (required in production, set via the CITYGML_STRICT_GATE repository
 #     variable) makes this script exit non-zero when a row fails, errs or is pending, so the
 #     job conclusion becomes a real merge gate. Warnings never block.
@@ -20,12 +20,4 @@ set -euo pipefail
 : "${TOOLS_DIR:?TOOLS_DIR must point at the 4dcitygml/tools checkout}"
 PY="$(command -v python || command -v python3)"   # setup-python provides `python` on runners; python3 is the local fallback
 
-OUTCOMES="${RUNNER_TEMP:-/tmp}/citygml_outcomes.env"
-if [ -f "$OUTCOMES" ]; then
-  set -a
-  # KEY=VALUE lines produced by our own drivers (no quoting subtleties).
-  . "$OUTCOMES"
-  set +a
-fi
-
-exec "$PY" "$TOOLS_DIR/scripts/inspection_summary.py" "$GITHUB_EVENT_PATH"
+exec "$PY" "$TOOLS_DIR/scripts/inspection_summary.py" "${CITYGML_EVENT:-$GITHUB_EVENT_PATH}"   # D23

@@ -7,13 +7,14 @@ report counts what is left for a reviewer."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import carry_forward_manifest as C
-from scripts import carried_codespace_report as REPORT
+from dialects.plateau import carry_forward_manifest as C
+from dialects.plateau import carried_codespace_report as REPORT
 from scripts.commit_building_scope import inspect_range
 from tests.test_carry_forward_manifest import NS30, NS31, gml, q30, q31, st
 from tests.test_commit_building_scope import GitRepo
@@ -27,7 +28,7 @@ class CarryForwardRepoTest(unittest.TestCase):
                 "5": {"to": ["000"], "relation": "refined", "rule": "all 2023 aerial photogrammetry in this city was a public survey"}}}}}}}), encoding="utf-8")
             cw = C.load_crosswalk("iur-3.0", "iur-3.1", None, str(t / "overrides.json"))
             self.assertEqual(cw["lists"]["quality.geometrySrcDesc"]["codes"]["5"]["confidence"], "reviewed")
-            from scripts.codelist_crosswalk import resolve
+            from dialects.plateau.codelist_crosswalk import resolve
             self.assertEqual(resolve(cw, "quality.geometrySrcDesc", "5"), "000")
             self.assertIn("overrides_sha256", cw)
 
@@ -46,10 +47,15 @@ class CarryForwardRepoTest(unittest.TestCase):
             (work / "base.gml").write_bytes(base); (work / "current.gml").write_bytes(current); (work / "new.gml").write_bytes(new)
             lists = work / "lists30"; lists.mkdir()
             (lists / "BuildingDataQualityAttribute_geometrySrcDesc.xml").write_text("<gml:Dictionary/>", encoding="utf-8")
-            rc = C.main(["generate", "--repository", "example/x", "--mesh", "53394611", "--municipality", "13101",
-                         "--base", str(work / "base.gml"), "--current", str(work / "current.gml"), "--new", str(work / "new.gml"),
-                         "--product", "udx/bldg/tile.gml", "--tools-commit", "0" * 40, "--plan-issue", "https://example.com/1",
-                         "--output", str(t / "provenance/carry-forward/53394611-iur-3.0-iur-3.1.json")])
+            cwd = os.getcwd()
+            os.chdir(t)   # run in the city's checkout, as an operator does: its declaration gives the ID rule
+            try:
+                rc = C.main(["generate", "--repository", "example/x", "--mesh", "53394611", "--municipality", "13101",
+                             "--base", str(work / "base.gml"), "--current", str(work / "current.gml"), "--new", str(work / "new.gml"),
+                             "--product", "udx/bldg/tile.gml", "--tools-commit", "0" * 40, "--plan-issue", "https://example.com/1",
+                             "--output", str(t / "provenance/carry-forward/53394611-iur-3.0-iur-3.1.json")])
+            finally:
+                os.chdir(cwd)
             self.assertEqual(rc, 0)
             manifest = json.loads((t / "provenance/carry-forward/53394611-iur-3.0-iur-3.1.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["evidence"]["summary"]["carried_old_codespace"], 2)   # 77 -> lod0 + lod1

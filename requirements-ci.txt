@@ -1,0 +1,15 @@
+# Copyright (c) 2026 4dcitygml
+#
+# The Python packages the CI runs need, pinned: the tools workflows, and the city workflows from
+# their pinned tools checkout (5-10). Pinned so that analysis results (the building diff, geometry
+# hashes) match across local runs, CI and contributors. requirements.txt adds what only local
+# tools need.
+#
+# lxml: the PLATEAU pack's bulk verifiers and the prefix-keeping tile writer (scripts/citygml_xml.py)
+lxml==6.1.1
+# Shapely: the building comparison (IoU, Hausdorff, split / merge candidates; scripts/building_compare.py)
+shapely==2.1.2
+# xmlschema: XSD validation (scripts/validate_citygml.py; lxml's XSD has limitations with i-UR ADE data)
+xmlschema==4.3.2
+# pyproj: the topology gate's projection (scripts/val3dity_gate.py)
+pyproj==3.6.1

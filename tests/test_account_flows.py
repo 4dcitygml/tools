@@ -35,7 +35,7 @@ class TestAccountFlows(unittest.TestCase):
         self._patches = [
             self.gh.install(),
             patch.object(accounts, "machine_token", lambda run=None: "tok-m"),
-            patch.object(hub, "oauth_client_id", lambda: "cid"),
+            patch.object(hub.session, "oauth_client_id", lambda: "cid"),
             patch.object(hub.time, "sleep", lambda s: None),   # create_fork waits for the fork to materialise
         ]
         for p in self._patches:
@@ -74,9 +74,26 @@ class TestAccountFlows(unittest.TestCase):
     def activate(self, root):
         hub.SESSION.start(root, TOKYO, sync=False)
 
+    def test_the_review_3d_view_takes_any_tile_code(self):
+        # D-3a2: the route took mesh codes only (\d{8,9}); Munich's tile 690_5335_1 got a 404.
+        # The code is checked against the clone's own tiles (review_building_model).
+        self.activate(self.make_clone())
+        seen = []
+        with patch.object(hub.Hub, "review_building_model", lambda hub_, tile, gid: seen.append((tile, gid)) or {"ok": 1}):
+            self.assertEqual(self.get("/api/building/690_5335_1/DEBY_LOD2_1")["building"], {"ok": 1})
+        self.assertEqual(seen, [("690_5335_1", "DEBY_LOD2_1")])
+
+    def test_the_setup_page_names_the_requested_city(self):
+        # D-3a5 / D-3c2: "cannot reach {url}" always named the practice city (Munich), whatever
+        # city the setup was started for
+        hub.SESSION.start(None, TOKYO)
+        page = self.get("/", raw=True)
+        self.assertIn(f"https://github.com/{TOKYO}", page)
+        self.assertNotIn("sample-munich-station", page)
+
     # -- setup mode: hand-over, choice, copy --
     def test_setup_mode_hand_over_then_choice_then_copy(self):
-        runtime.legacy_credentials_path().write_text("https://x:y@github.com\n")
+        runtime.legacy_credentials_path().write_text(accounts.store_line("y"))
         hub.SESSION.start(None, TOKYO)
         page = self.get("/", raw=True)
         self.assertIn('"MODE": "setup"', page)
@@ -196,6 +213,87 @@ class TestAccountFlows(unittest.TestCase):
         code, r = self.post("/api/accounts/delete", {"login": "alice"})   # the bound one: unbinds too
         self.assertEqual(self.acc.list_accounts(), [])
         self.assertFalse(self.get("/api/setup/status")["chosen"])
+
+    # -- B01: what GitHub said about a copy answers for one account and one city --
+    def _bound_to_alice_with_a_clone(self):
+        self.gh.forks = {"alice", "bob"}
+        self.acc.save_account("alice", "tok-a", 1)
+        self.acc.save_account("bob", "tok-b", 2)
+        self.acc.bind_city_login(TOKYO, "alice")
+        self.activate(self.make_clone(origin="https://github.com/olduser/sample-tokyo-station.git"))
+        self.assertEqual(self.get("/api/setup/status")["fork"], "alice/sample-tokyo-station")
+        self.assertEqual(hub.SESSION.hub.nwo(), "alice/sample-tokyo-station")
+
+    def test_a_rebind_by_another_process_looks_up_the_new_accounts_copy(self):
+        # B01: the copy was remembered without its account, so after another process rebound the
+        # city the first account's copy was served (and kept as origin) with no new lookup
+        self._bound_to_alice_with_a_clone()
+        self.acc.bind_city_login(TOKYO, "bob")                         # written by another process
+        self.gh.calls.clear()
+        self.assertEqual(self.get("/api/setup/status")["fork"], "bob/sample-tokyo-station")
+        self.assertIn(("GET", "/repos/bob/sample-tokyo-station"), self.gh.calls)
+        self.assertEqual(hub.SESSION.hub.nwo(), "bob/sample-tokyo-station")   # uploads follow the account
+
+    def test_offline_after_a_rebind_keeps_nothing_for_the_new_account(self):
+        self._bound_to_alice_with_a_clone()
+        self.acc.bind_city_login(TOKYO, "bob")
+        self.gh.offline = True
+        self.assertIsNone(self.get("/api/setup/status")["fork"])        # never alice's copy for bob
+        self.assertIsNone(hub.SESSION.fork_or_none())
+        self.assertEqual(hub.SESSION.hub.nwo(), "alice/sample-tokyo-station")   # untouched until GitHub answers
+        self.gh.offline = False
+        hub.SESSION.account.forget_user()                              # the sign-in check's own 20 s memo
+        self.assertEqual(self.get("/api/setup/status")["fork"], "bob/sample-tokyo-station")
+        self.assertEqual(hub.SESSION.hub.nwo(), "bob/sample-tokyo-station")
+
+    def test_an_answer_for_an_account_dropped_meanwhile_does_not_move_origin_back(self):
+        # the lookup for alice is in flight when the city is rebound to bob and bob's copy becomes
+        # origin; alice's late answer must not repoint origin to her copy
+        self._bound_to_alice_with_a_clone()
+        real = hub.session.find_fork
+
+        def slow_for_alice(token, login, upstream, name=None):
+            if login == "alice":
+                self.acc.bind_city_login(TOKYO, "bob")
+                hub.SESSION.account_changed()                          # bob's lookup runs and repoints origin
+                self.assertEqual(hub.SESSION.hub.nwo(), "bob/sample-tokyo-station")
+            return real(token, login, upstream, name)
+        with patch.object(hub.session, "find_fork", slow_for_alice):
+            self.assertEqual(hub.SESSION.fork_nwo(fresh=True), "alice/sample-tokyo-station")
+        self.assertEqual(hub.SESSION.hub.nwo(), "bob/sample-tokyo-station")
+        self.assertEqual(hub.SESSION.fork_nwo(), "bob/sample-tokyo-station")   # alice's answer is not served for bob
+
+    def test_another_city_is_asked_for_its_own_copy(self):
+        self.acc.save_account("alice", "tok-a", 1)
+        hub.SESSION.start(None, TOKYO)
+        self.post("/api/auth/use", {"login": "alice"})
+        self.assertEqual(hub.SESSION.fork_nwo(), "alice/sample-tokyo-station")
+        self.assertTrue(hub.SESSION.upstream_ok())
+        hub.SESSION.city = "4dcitygml/sample-munich-station"
+        self.acc.bind_city_login(hub.SESSION.city, "alice")
+        self.gh.calls.clear()
+        self.assertIsNone(hub.SESSION.fork_nwo())                      # FakeGitHub knows no Munich copy
+        self.assertFalse(hub.SESSION.upstream_ok())
+        self.assertIn(("GET", "/repos/alice/sample-munich-station"), self.gh.calls)
+
+    def test_a_new_token_for_the_same_account_keeps_its_copy(self):
+        # a sign-in again (another process stores a new token): the copy belongs to the account
+        self._bound_to_alice_with_a_clone()
+        self.gh.tokens["tok-a2"] = {"login": "alice", "id": 1}
+        self.acc.save_account("alice", "tok-a2", 1)
+        self.gh.calls.clear()
+        self.assertEqual(self.get("/api/setup/status")["fork"], "alice/sample-tokyo-station")
+        self.assertNotIn(("GET", "/repos/alice/sample-tokyo-station"), self.gh.calls)
+
+    def test_a_copy_created_from_the_setup_screen_is_remembered_for_its_account(self):
+        self._bound_to_alice_with_a_clone()
+        self.gh.forks = {"alice"}
+        self.acc.bind_city_login(TOKYO, "bob")
+        code, r = self.post("/api/setup/fork")
+        self.assertEqual(r["nwo"], "bob/sample-tokyo-station")
+        self.assertEqual(hub.SESSION.hub.nwo(), "bob/sample-tokyo-station")
+        self.acc.bind_city_login(TOKYO, "alice")
+        self.assertEqual(hub.SESSION.fork_nwo(), "alice/sample-tokyo-station")
 
 
 if __name__ == "__main__":

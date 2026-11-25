@@ -29,62 +29,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import md_report  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
 from scripts.citygml_constants import LARGE_CHANGE_THRESHOLD, LINT_MARKER  # noqa: E402
-from scripts.diff_citygml import attribute_diffs, load_buildings  # noqa: E402
-from scripts.repo_git import blob  # noqa: E402
+from scripts.diff_citygml import buildings_at, diff_maps, load_buildings  # noqa: E402
 
 BuildingMap = dict  # gml:id -> (attrs, geom_hash)
 
 
-def _same_building(a: tuple, b: tuple) -> bool:
-    """True when attributes (numerically normalized) and geometry hash are identical (suspected-ID-change check)."""
-    (a_attrs, a_geom), (b_attrs, b_geom) = a, b
-    return a_geom == b_geom and not attribute_diffs(a_attrs, b_attrs)
-
-
 def analyze_file(old_map: BuildingMap, new_map: BuildingMap, path: str) -> dict:
-    """Return one file's change breakdown and lifecycle/id-change warnings.
-
-    Large-change detection (D-1-a) is judged on the PR-wide total, so only counts are returned here.
-    """
-    old_ids, new_ids = set(old_map), set(new_map)
-    added = sorted(new_ids - old_ids)
-    deleted = sorted(old_ids - new_ids)
-    modified = sorted(
-        bid
-        for bid in (old_ids & new_ids)
-        if old_map[bid][1] != new_map[bid][1]
-        or attribute_diffs(old_map[bid][0], new_map[bid][0])
-    )
-
-    warnings: list[dict] = []
-
-    # D-1-c unnecessary ID change: a deleted ID and an added ID with identical attributes and geometry
-    id_pairs: list[tuple[str, str]] = []
-    used_added: set[str] = set()
-    for d in deleted:
-        for a in added:
-            if a in used_added:
-                continue
-            if _same_building(old_map[d], new_map[a]):
-                id_pairs.append((d, a))
-                used_added.add(a)
-                break
-    for old_id, new_id in id_pairs:
-        warnings.append({"type": "id_change", "file": path, "old_id": old_id, "new_id": new_id})
-
-    # D-1-b lifecycle candidates: additions/deletions outside ID-change pairs need a reason
-    paired = {d for d, _ in id_pairs} | {a for _, a in id_pairs}
-    for a in added:
-        if a not in paired:
-            warnings.append({"type": "lifecycle_added", "file": path, "id": a})
-    for d in deleted:
-        if d not in paired:
-            warnings.append({"type": "lifecycle_deleted", "file": path, "id": d})
-
+    """Return one file's change breakdown and lifecycle/id-change warnings, from diff_citygml's one
+    classification and rename rule (U6). Large-change detection (D-1-a) is judged on the PR-wide
+    total, so only counts are returned here (an id change counts as an addition and a deletion)."""
+    entries = diff_maps(old_map, new_map)["buildings"]
+    by = {s: [e for e in entries if e["status"] == s] for s in ("added", "deleted", "modified", "renamed")}
+    # D-1-c unnecessary ID change; D-1-b lifecycle candidates: the other additions/deletions need a reason
+    warnings = [{"type": "id_change", "file": path, "old_id": e["old_id"], "new_id": e["id"]} for e in by["renamed"]]
+    warnings += [{"type": "lifecycle_added", "file": path, "id": e["id"]} for e in by["added"]]
+    warnings += [{"type": "lifecycle_deleted", "file": path, "id": e["id"]} for e in by["deleted"]]
+    n_renamed = len(by["renamed"])
     return {
         "file": path,
-        "counts": {"added": len(added), "deleted": len(deleted), "modified": len(modified)},
+        "counts": {"added": len(by["added"]) + n_renamed, "deleted": len(by["deleted"]) + n_renamed,
+                   "modified": len(by["modified"])},
         "warnings": warnings,
     }
 
@@ -137,11 +104,11 @@ def render_markdown(files: list[dict], threshold: int = LARGE_CHANGE_THRESHOLD) 
                 f"🔶 **Large change**: {total} changed buildings exceed the threshold of {threshold}."
                 f" Splitting the PR is recommended to keep reviews manageable."
             )
-        for w in warnings[:MAX_LISTED_WARNINGS]:
-            lines.append(_WARNING_RENDER[w["type"]](w))
-        if len(warnings) > MAX_LISTED_WARNINGS:
+        shown, rest = md_report.capped(warnings, MAX_LISTED_WARNINGS)
+        lines += [_WARNING_RENDER[w["type"]](w) for w in shown]
+        if rest:
             lines.append(
-                f"… and {len(warnings) - MAX_LISTED_WARNINGS} more warnings not listed "
+                f"… and {rest} more warnings not listed "
                 f"(only the first {MAX_LISTED_WARNINGS} are shown to keep this comment postable)."
             )
         lines.append("")
@@ -156,7 +123,7 @@ def render_markdown(files: list[dict], threshold: int = LARGE_CHANGE_THRESHOLD) 
             lines.append(f"| `{f['file']}` | {c['added']} | {c['deleted']} | {c['modified']} |")
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    return md_report.fit("\n".join(lines).rstrip() + "\n")
 
 
 def collect_ci_files(
@@ -165,9 +132,7 @@ def collect_ci_files(
     """Diff base/head for each changed .gml and analyze only the files with changes."""
     files: list[dict] = []
     for rel_path in gml_files:
-        old_map = load_buildings(blob(repo, base_sha, rel_path))
-        new_map = load_buildings(blob(repo, head_sha, rel_path))
-        result = analyze_file(old_map, new_map, rel_path)
+        result = analyze_file(buildings_at(repo, base_sha, rel_path), buildings_at(repo, head_sha, rel_path), rel_path)
         if sum(result["counts"].values()) > 0:
             files.append(result)
     return files
@@ -187,8 +152,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.file_list is not None:
         if not (args.base_sha and args.head_sha):
             p.error("--base-sha and --head-sha required when using --file-list.")
-        listed = (ln.strip() for ln in args.file_list.read_text(encoding="utf-8").splitlines())
-        gml_files = [p for p in listed if p.endswith(".gml")]
+        gml_files = changed_list(args.file_list)
         repo = args.repo or REPO_ROOT
         files = collect_ci_files(repo, args.base_sha, args.head_sha, gml_files)
     elif args.old_gml is not None and args.new_gml is not None:

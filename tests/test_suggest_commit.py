@@ -10,28 +10,19 @@ Run: python -m unittest tests.test_suggest_commit
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.building_identity import IdentityRule
-from scripts.suggest_commit import MARKER, build_message, building_id_map, city_rule, render_comment
+from scripts.suggest_commit import MARKER, build_message, main, render_comment
 
 
 class TestBuildMessage(unittest.TestCase):
-    def test_single_uses_stable_buildingid_when_resolvable(self):
-        # id_map resolves gml:id -> uro:buildingID, so the trailer uses the stable ID.
-        msg = build_message(["bldg_A"], [], [], [], "single",
-                            id_map={"bldg_A": "13101-bldg-3728"})
+    def test_single_names_the_stable_id(self):
+        msg = build_message(["13101-bldg-3728"], [], [], [], "single")
         self.assertIn("update(13101-bldg-3728):", msg)
         self.assertIn("Building: 13101-bldg-3728", msg)
-        self.assertNotIn("bldg_A", msg)  # gml:id is not emitted (use the stable ID)
-
-    def test_falls_back_to_gmlid_when_no_map(self):
-        msg = build_message(["bldg_A"], [], [], [], "single")
-        self.assertIn("Building: bldg_A", msg)
 
     def test_lifecycle_lists_added_deleted_and_asks_reason(self):
         msg = build_message([], ["new"], ["old1", "old2"], [], "lifecycle")
@@ -43,8 +34,7 @@ class TestBuildMessage(unittest.TestCase):
 
     def test_rename_keeps_stable_key_and_notes_change(self):
         # rename (gml:id-only change) keeps buildingID unchanged, so tracking continues under the same key.
-        msg = build_message([], [], [], ["bldg_new"], "rename",
-                            id_map={"bldg_new": "13101-bldg-3728"})
+        msg = build_message([], [], [], ["13101-bldg-3728"], "rename")
         self.assertIn("Building: 13101-bldg-3728", msg)
         self.assertIn("rename", msg)  # rename note in the body
 
@@ -56,13 +46,12 @@ class TestBuildMessage(unittest.TestCase):
 
 class TestRenderComment(unittest.TestCase):
     def test_marker_first_line_for_upsert(self):
-        c = render_comment(build_message(["b"], [], [], [], "single"), "single", 1, resolved=False)
+        c = render_comment(build_message(["b"], [], [], [], "single"), "single", 1)
         self.assertTrue(c.startswith(MARKER))
 
     def test_notes_key_kind(self):
-        c = render_comment("x", "single", 1, resolved=True)
-        self.assertIn("uro:buildingID (stable ID)", c)  # states explicitly that the stable ID is used
-        self.assertIn("gen:BIN (stable ID)", render_comment("x", "single", 1, resolved=True, rule=IdentityRule("gen:BIN")))
+        self.assertIn("gml:id (stable ID)", render_comment("x", "single", 1))   # undeclared: gml:id
+        self.assertIn("gen:BIN (stable ID)", render_comment("x", "single", 1, "gen:BIN"))
 
 
 def _bin_tile(buildings: dict) -> str:
@@ -76,24 +65,39 @@ def _bin_tile(buildings: dict) -> str:
 class TestAnyCity(unittest.TestCase):
     """The suggestion names the ID the commit scope gate expects: New York was told to write the gml:id."""
 
-    def test_the_citys_rule_at_the_base_and_deleted_buildings(self):
+    def test_the_suggestion_is_the_gates_scope(self):
+        # U4 / D-a2, D-b3: suggest_commit resolved gml:ids to stable IDs itself, through the changed
+        # files and at its own revision, while the gate counted by its own; it now prints the gate's
+        # scope (the base's rule, deleted buildings included), even in a PR that changes building_id
+        import contextlib, io
+        from scripts.commit_building_scope import _scope_or_error
         with tempfile.TemporaryDirectory() as tmp:
-            run = lambda *a: subprocess.run(["git", "-C", tmp, *a], check=True, capture_output=True)
+            run = lambda *a: subprocess.run(["git", "-C", tmp, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                             *a], check=True, capture_output=True, text=True).stdout.strip()
             run("init", "-q")
             Path(tmp, "4dcitygml.json").write_text(json.dumps({"building_id": {"type": "gen:BIN"}}), encoding="utf-8")
             Path(tmp, "tile.gml").write_text(_bin_tile({"gml_A": "1036448", "gml_B": "1036449"}), encoding="utf-8")
             run("add", ".")
-            run("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "base")
-            base = subprocess.run(["git", "-C", tmp, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            run("commit", "-q", "-m", "base")
+            base = run("rev-parse", "HEAD")
+            Path(tmp, "4dcitygml.json").write_text(json.dumps({"building_id": {"type": "gml:id"}}), encoding="utf-8")
             Path(tmp, "tile.gml").write_text(_bin_tile({"gml_A": "1036448"}), encoding="utf-8")   # gml_B deleted
-            cwd = os.getcwd()
-            os.chdir(tmp)
-            self.addCleanup(os.chdir, cwd)
-            rule = city_rule(base)
-            self.assertEqual(rule, IdentityRule("gen:BIN"))
-            self.assertEqual(building_id_map([Path("tile.gml")], rule, base), {"gml_A": "1036448", "gml_B": "1036449"})
-            msg = build_message([], [], ["gml_B"], [], "lifecycle", building_id_map([Path("tile.gml")], rule, base))
-            self.assertIn("Building-Deleted: 1036449", msg)
+            run("commit", "-qam", "delete B")
+            scope = Path(tmp, "scope.json")
+            scope.write_text(json.dumps(_scope_or_error(Path(tmp), base, run("rev-parse", "HEAD"))), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                main(["--scope-json", str(scope)])
+        self.assertIn("Building-Deleted: 1036449", out.getvalue())
+        self.assertIn("gen:BIN (stable ID)", out.getvalue())
+        self.assertNotIn("gml_B", out.getvalue())
+
+    def test_no_scope_no_comment(self):
+        import contextlib, io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(main(["--scope-json", "/nonexistent/scope.json"]), 0)
+        self.assertEqual(out.getvalue(), "")
 
 
 if __name__ == "__main__":

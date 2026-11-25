@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 
-MODULE_PATH = Path(__file__).parents[1] / "scripts/plan_yearly_citygml_transition.py"
+MODULE_PATH = Path(__file__).parents[1] / "dialects/plateau/plan_yearly_citygml_transition.py"
 SPEC = importlib.util.spec_from_file_location("plan_yearly_citygml_transition", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
@@ -87,11 +87,11 @@ class YearlyTransitionPlanTest(unittest.TestCase):
             "usage_class_landuse",
         )
         self.assertEqual(
-            MODULE.attribute_family(
-                "/bldgDataQualityAttribute/DataQualityAttribute/srcScaleLod0"
-            ),
+            MODULE.attribute_family("/bldgDataQualityAttribute/DataQualityAttribute/thematicSrcDesc"),
             "source_quality",
         )
+        # the registry is the only owner of the families (W6): a path it does not know is other
+        self.assertEqual(MODULE.attribute_family("/bldgDataQualityAttribute/DataQualityAttribute/srcScaleLod0"), "other_attributes")
         self.assertEqual(MODULE.attribute_family("/notYetClassified"), "other_attributes")
 
     def test_source_identity_is_source_evidence_only(self):

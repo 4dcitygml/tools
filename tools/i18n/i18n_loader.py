@@ -34,35 +34,38 @@ SOURCE_LANG = "en"  # Language of the source text (flipped from ja in Wave 2)
 _KEY = re.compile(r"^[a-z][A-Za-z0-9_.]{0,63}$")
 
 
+def primary_language(value) -> str:
+    """The language of a tag or locale: its primary subtag, lower case ("de-AT", "de_DE.UTF-8" →
+    "de"), as the declaration reader takes a city's `lang` (V8: the first two letters were taken)."""
+    return re.split(r"[-_.@]", value if isinstance(value, str) else "")[0].strip().lower()
+
+
 def resolve_lang(config_lang: str | None = None) -> str:
     """Decide the display language. Priority: CITYGML_LANG > config > OS locale > en."""
-    for cand in (os.environ.get("CITYGML_LANG"), config_lang):
-        if cand:
-            c = cand.lower()[:2]
-            if c in SUPPORTED:
-                return c
-    for env in ("LC_ALL", "LC_MESSAGES", "LANG"):
-        v = os.environ.get(env) or ""
-        if v[:2].lower() in SUPPORTED:
-            return v[:2].lower()
+    candidates = [os.environ.get("CITYGML_LANG"), config_lang]
+    candidates += [os.environ.get(env) for env in ("LC_ALL", "LC_MESSAGES", "LANG")]
+    for cand in candidates:
+        if primary_language(cand) in SUPPORTED:
+            return primary_language(cand)
     # Environments without env vars (e.g. Windows .bat launch) try the OS region setting
     try:
         import locale as _locale
-        v = _locale.getlocale()[0] or ""
-        if v[:2].lower() in SUPPORTED:
-            return v[:2].lower()
+        v = primary_language(_locale.getlocale()[0])
+        if v in SUPPORTED:
+            return v
     except Exception:
         pass
     return "en"
 
 
 def load_catalog(app: str, lang: str) -> dict:
-    """Return the catalog for the given language. Empty for the source language (keep source text). Layered on top of en."""
+    """Return the catalog for the given language. Empty for the source language (keep source text). Layered on top of en,
+    the app's own catalog over the texts every screen shares (catalogs/common: tools/common.js)."""
     if lang == SOURCE_LANG:
         return {}
     merged: dict = {}
-    for layer in ("en", lang) if lang != "en" else ("en",):
-        p = CATALOG_DIR / app / f"{layer}.json"
+    for name, layer in [(n, l) for n in ("common", app) for l in (("en", lang) if lang != "en" else ("en",))]:
+        p = CATALOG_DIR / name / f"{layer}.json"
         if not p.is_file():
             continue
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -75,16 +78,14 @@ def load_catalog(app: str, lang: str) -> dict:
     return merged
 
 
-def translate(app: str, key: str, default: str, lang: str | None = None,
-              **params) -> str:
+def translate(app: str, key: str, default: str, lang: str, **params) -> str:
     """Translate server-generated (Python) text. Falls back to default if missing from/broken catalog.
 
-    - When lang is omitted, resolve via resolve_lang() (same priority as serving)
+    - lang: the caller's (runtime.tr: the display language, ui_lang(), or the city's for repository
+      text; V8: translate resolved one of its own, without the settings file)
     - {name} placeholders are substituted from params (same convention as JS t())
     - Fail-open: catalog problems never block text display
     """
-    if lang is None:
-        lang = resolve_lang()
     try:
         s = load_catalog(app, lang).get(key, default)
     except (ValueError, OSError, json.JSONDecodeError):

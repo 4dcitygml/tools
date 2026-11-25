@@ -85,7 +85,7 @@ class TestStrip(unittest.TestCase):
         tree = etree.ElementTree(etree.fromstring(model(BUILDING, APPEARANCE)))
         info = strip_lod2.strip_tree(tree)
         self.assertEqual(info["appearance_members"], 1)
-        self.assertIsNone(tree.getroot().find(strip_lod2._APPEARANCE_MEMBER))
+        self.assertNotIn("appearanceMember", localnames(tree.getroot()))
 
     def test_measure_breakdown_adds_up(self):
         info = strip_lod2.measure_tree(etree.ElementTree(etree.fromstring(model(BUILDING, APPEARANCE))))
@@ -95,6 +95,24 @@ class TestStrip(unittest.TestCase):
         self.assertGreater(info["lod2plus_geometry_bytes"], 0)
         self.assertGreater(info["appearance_inline_bytes"], 0)
 
+
+    def test_a_building_part_is_stripped_too(self):
+        # D-4a2: only Building was stripped; a BuildingPart kept its LOD2 geometry
+        part = BUILDING.replace("</bldg:Building>",
+                                "<bldg:consistsOfBuildingPart><bldg:BuildingPart gml:id=\"p1\">"
+                                "<bldg:lod2Solid><gml:Solid/></bldg:lod2Solid><bldg:lod1Solid><gml:Solid/></bldg:lod1Solid>"
+                                "</bldg:BuildingPart></bldg:consistsOfBuildingPart></bldg:Building>")
+        tree = etree.ElementTree(etree.fromstring(model(part)))
+        strip_lod2.strip_tree(tree)
+        bp = tree.getroot().find(".//{http://www.opengis.net/citygml/building/2.0}BuildingPart")
+        self.assertEqual(localnames(bp), ["lod1Solid"])
+
+    def test_citygml_1_0_appearances_go(self):
+        # D-4a3: the appearance namespace was fixed to 2.0, so a 1.0 file kept its textures
+        raw = model(BUILDING, APPEARANCE).decode("utf-8").replace("/2.0", "/1.0")
+        tree = etree.ElementTree(etree.fromstring(raw.encode("utf-8")))
+        self.assertEqual(strip_lod2.strip_tree(tree)["appearance_members"], 1)
+        self.assertNotIn("appearanceMember", localnames(tree.getroot()))
 
 class TestDatasetIO(unittest.TestCase):
     def _make_dataset(self, root: Path):

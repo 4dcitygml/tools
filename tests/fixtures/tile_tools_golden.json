@@ -1,0 +1,324 @@
+{
+ "extract_area/area.gml": {
+  "appearanceMembers": 0,
+  "bom": false,
+  "crlf": false,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "urn:adv:crs:ETRS89_UTM32*DE_DHHN2016_NH"
+   },
+   "lower": "690300.0 5334300.0 500.0",
+   "upper": "691310.0 5334310.0 510.0"
+  },
+  "members": [
+   "DEBY_a",
+   "DEBY_b"
+  ],
+  "name": [],
+  "prefixes": [
+   "",
+   "bldg",
+   "gml"
+  ],
+  "root": "{http://www.opengis.net/citygml/1.0}CityModel",
+  "textures": []
+ },
+ "merge_to_3rd_mesh/53394611_bldg_6697_op.gml": {
+  "appearanceMembers": 1,
+  "bom": true,
+  "crlf": true,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "http://www.opengis.net/def/crs/EPSG/0/6697"
+   },
+   "lower": "35.676683 139.765225 0.0",
+   "upper": "35.68165 139.772275 10.0"
+  },
+  "members": [
+   "b-sw",
+   "b-se",
+   "b-nw",
+   "b-ne"
+  ],
+  "name": [],
+  "prefixes": [
+   "app",
+   "bldg",
+   "core",
+   "gml",
+   "xlink"
+  ],
+  "root": "{http://www.opengis.net/citygml/2.0}CityModel",
+  "textures": [
+   [
+    "53394611_bldg_6697_appearance/a.jpg",
+    [
+     "#wall-ne",
+     "#wall-sw"
+    ]
+   ],
+   [
+    "53394611_bldg_6697_appearance/b.jpg",
+    [
+     "#wall-nw",
+     "#wall-se",
+     "#wall-sw"
+    ]
+   ]
+  ]
+ },
+ "split_4th_mesh/533946111_bldg_6697_op.gml": {
+  "appearanceMembers": 2,
+  "bom": true,
+  "crlf": true,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "http://www.opengis.net/def/crs/EPSG/0/6697"
+   },
+   "lower": "35.676683 139.765225 0.0",
+   "upper": "35.677483 139.766025 10.0"
+  },
+  "members": [
+   "b-sw"
+  ],
+  "name": [],
+  "prefixes": [
+   "app",
+   "bldg",
+   "core",
+   "gml",
+   "xlink"
+  ],
+  "root": "{http://www.opengis.net/citygml/2.0}CityModel",
+  "textures": [
+   [
+    "53394611_bldg_6697_appearance/a.jpg",
+    [
+     "#wall-sw"
+    ]
+   ],
+   [
+    "53394611_bldg_6697_appearance/b.jpg",
+    [
+     "#wall-sw"
+    ]
+   ]
+  ]
+ },
+ "split_4th_mesh/533946112_bldg_6697_op.gml": {
+  "appearanceMembers": 1,
+  "bom": true,
+  "crlf": true,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "http://www.opengis.net/def/crs/EPSG/0/6697"
+   },
+   "lower": "35.676683 139.771475 0.0",
+   "upper": "35.677483 139.772275 10.0"
+  },
+  "members": [
+   "b-se"
+  ],
+  "name": [],
+  "prefixes": [
+   "app",
+   "bldg",
+   "core",
+   "gml",
+   "xlink"
+  ],
+  "root": "{http://www.opengis.net/citygml/2.0}CityModel",
+  "textures": [
+   [
+    "53394611_bldg_6697_appearance/b.jpg",
+    [
+     "#wall-se"
+    ]
+   ]
+  ]
+ },
+ "split_4th_mesh/533946113_bldg_6697_op.gml": {
+  "appearanceMembers": 1,
+  "bom": true,
+  "crlf": true,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "http://www.opengis.net/def/crs/EPSG/0/6697"
+   },
+   "lower": "35.68085 139.765225 0.0",
+   "upper": "35.68165 139.766025 10.0"
+  },
+  "members": [
+   "b-nw"
+  ],
+  "name": [],
+  "prefixes": [
+   "app",
+   "bldg",
+   "core",
+   "gml",
+   "xlink"
+  ],
+  "root": "{http://www.opengis.net/citygml/2.0}CityModel",
+  "textures": [
+   [
+    "53394611_bldg_6697_appearance/b.jpg",
+    [
+     "#wall-nw"
+    ]
+   ]
+  ]
+ },
+ "split_4th_mesh/533946114_bldg_6697_op.gml": {
+  "appearanceMembers": 1,
+  "bom": true,
+  "crlf": true,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "http://www.opengis.net/def/crs/EPSG/0/6697"
+   },
+   "lower": "35.68085 139.771475 0.0",
+   "upper": "35.68165 139.772275 10.0"
+  },
+  "members": [
+   "b-ne"
+  ],
+  "name": [],
+  "prefixes": [
+   "app",
+   "bldg",
+   "core",
+   "gml",
+   "xlink"
+  ],
+  "root": "{http://www.opengis.net/citygml/2.0}CityModel",
+  "textures": [
+   [
+    "53394611_bldg_6697_appearance/a.jpg",
+    [
+     "#wall-ne"
+    ]
+   ]
+  ]
+ },
+ "split_utm_tile/690_5334_1.gml": {
+  "appearanceMembers": 0,
+  "bom": false,
+  "crlf": false,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "urn:adv:crs:ETRS89_UTM32*DE_DHHN2016_NH"
+   },
+   "lower": "690300.0 5334300.0 500.0",
+   "upper": "690310.0 5334310.0 510.0"
+  },
+  "members": [
+   "DEBY_a"
+  ],
+  "name": [
+   "690_5334_1km"
+  ],
+  "prefixes": [
+   "",
+   "bldg",
+   "gml"
+  ],
+  "root": "{http://www.opengis.net/citygml/1.0}CityModel",
+  "textures": []
+ },
+ "split_utm_tile/690_5335_1.gml": {
+  "appearanceMembers": 0,
+  "bom": false,
+  "crlf": false,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "urn:adv:crs:ETRS89_UTM32*DE_DHHN2016_NH"
+   },
+   "lower": "690300.0 5335300.0 500.0",
+   "upper": "690310.0 5335310.0 510.0"
+  },
+  "members": [
+   "DEBY_c"
+  ],
+  "name": [
+   "690_5335_1km"
+  ],
+  "prefixes": [
+   "",
+   "bldg",
+   "gml"
+  ],
+  "root": "{http://www.opengis.net/citygml/1.0}CityModel",
+  "textures": []
+ },
+ "split_utm_tile/691_5334_1.gml": {
+  "appearanceMembers": 0,
+  "bom": false,
+  "crlf": false,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "urn:adv:crs:ETRS89_UTM32*DE_DHHN2016_NH"
+   },
+   "lower": "691300.0 5334300.0 500.0",
+   "upper": "691310.0 5334310.0 510.0"
+  },
+  "members": [
+   "DEBY_b"
+  ],
+  "name": [
+   "691_5334_1km"
+  ],
+  "prefixes": [
+   "",
+   "bldg",
+   "gml"
+  ],
+  "root": "{http://www.opengis.net/citygml/1.0}CityModel",
+  "textures": []
+ },
+ "split_utm_tile/691_5335_1.gml": {
+  "appearanceMembers": 0,
+  "bom": false,
+  "crlf": false,
+  "declaration": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+  "envelope": {
+   "attrib": {
+    "srsDimension": "3",
+    "srsName": "urn:adv:crs:ETRS89_UTM32*DE_DHHN2016_NH"
+   },
+   "lower": "691300.0 5335300.0 500.0",
+   "upper": "691310.0 5335310.0 510.0"
+  },
+  "members": [
+   "DEBY_d"
+  ],
+  "name": [
+   "691_5335_1km"
+  ],
+  "prefixes": [
+   "",
+   "bldg",
+   "gml"
+  ],
+  "root": "{http://www.opengis.net/citygml/1.0}CityModel",
+  "textures": []
+ }
+}

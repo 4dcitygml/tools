@@ -11,41 +11,42 @@ or, as before, `python3 scripts/<tool>.py [arguments]`; `--help` shows its argum
 
 | Tool | What it does |
 |---|---|
-| `setup_city_data` | Fetch urban data from the G-Spatial Information Center PLATEAU distribution ZIP and create the initial repository structure. |
 | `extract_area` | Extract only buildings within a rectangular bounding box from CityGML (generic tool for demo area extraction etc.). |
 | `extract_municipality` | Remove building blocks of municipalities other than the specified one from CityGML building GML. |
-| `split_4th_mesh` | Split CityGML(bldg) from 3rd-level mesh to 4th-level mesh (1/2 regional mesh). |
 | `split_utm_tile` | Split CityGML tiles in meter-based CRS (UTM, etc.) into smaller tiles. |
-| `merge_to_3rd_mesh` | Consolidate CityGML(bldg) from 4th-level meshes (1/2 regional meshes) into 3rd-level meshes. |
 | `strip_lod2` | Generate LOD2-excluded version (lightweight mirror for attribute-centric use) and measure capacity breakdown (#64). |
 | `retone_textures` | Unified tone across all textures (for initial setup before release). |
 | `gc_textures` | Collection (GC) of unreferenced texture images = deletion of unused assets in standard software development (tree-shaking). |
 | `make_demo_change` | Reproducible tool to deterministically apply demo PR (PR-A / PR-B) changes to actual .gml. |
-| `analyze_yearly_citygml_mesh` | Match buildings across mesh years and measure update volume for the same CityGML mesh. |
+| `setup_city_data` | Fetch urban data from the G-Spatial Information Center PLATEAU distribution ZIP and create the initial repository structure. |
+| `split_4th_mesh` | Split CityGML(bldg) from 3rd-level mesh to 4th-level mesh (1/2 regional mesh). |
+| `merge_to_3rd_mesh` | Consolidate CityGML(bldg) from 4th-level meshes (1/2 regional meshes) into 3rd-level meshes. |
+| `analyze_yearly_citygml_mesh` | Match buildings across mesh years and measure update volume for the same CityGML mesh (PLATEAU). |
 | `plan_yearly_citygml_transition` | Pre-sort yearly CityGML comparison results into attribute-line PRs with semantically equivalent changes. |
 
 ## Maintenance and quality
 
 | Tool | What it does |
 |---|---|
-| `source_update_manifest` | source-update: apply one attribute family of a new official edition to the buildings already in the repository — manifest generation, byte-preserving application, per-building commits, and the reproduction check used by CI (docs/bulk-submission-provenance.md). |
-| `carry_forward_manifest` | carry-forward: re-base the repository's accumulated attribute changes onto a new official edition (possibly a different i-UR edition) by a three-way comparison per building and semantic attribute. |
-| `identity_manifest` | identity-baseline: unify historical ``uro:buildingID`` values to the current edition — manifest generation, application, per-building commits, and the reproduction check used by CI. |
+| `identity_manifest` | identity-baseline: unify historical stable building IDs (the city's rule) to the current edition — manifest generation, application, per-building commits, and the reproduction check used by CI. |
 | `lifecycle_manifest` | Validate one lifecycle event. |
-| `lod0_semantic_manifest` | Pilot recipe: rename CityGML 2.0 LOD0 FootPrint to RoofEdge, byte-preservingly. |
-| `codelist_crosswalk` | Code-list crosswalk between two i-UR editions (semantics/codelists/<from>__<to>.json). |
-| `carried_codespace_report` | Count coded values that still point at an older edition's code list (``codeSpace`` under ``codelists/<edition>/``) — the codes a carry-forward kept with their old codeSpace pending a reviewer's decision. |
-| `semantic_registry` | Semantic attribute registry (semantics/registry.json): edition-independent keys for building attributes and their concrete paths per i-UR edition. |
-| `plateau_codelists` | Load PLATEAU codelists and exhaustively generate "unknown-value codes" (categorical part of sentinel list). |
 | `data_stats` | Data quality metrics (#13 extension) — output attribute statistics with sentinels excluded and compute "unknown rate". |
 | `building_history` | Derive the history of one building from a city repository — independent of commit granularity. |
 | `fetch_materials` | Fetch the materials declared in a bulk-submission provenance manifest so CI can reproduce the conversion (docs/bulk-submission-provenance.md §4). |
+| `city_declaration` | The city declaration, 4dcitygml.json: the one reader (v2.0.0, F1). |
+| `source_update_manifest` | source-update: apply one attribute family of a new official edition to the buildings already in the repository — manifest generation, byte-preserving application, per-building commits, and the reproduction check used by CI (docs/bulk-submission-provenance.md). |
+| `carry_forward_manifest` | carry-forward: re-base the repository's accumulated attribute changes onto a new official edition (possibly a different i-UR edition) by a three-way comparison per building and semantic attribute. |
+| `lod0_semantic_manifest` | Pilot recipe: rename CityGML 2.0 LOD0 FootPrint to RoofEdge, byte-preservingly. |
+| `codelist_crosswalk` | Code-list crosswalk between two i-UR editions (dialects/plateau/semantics/codelists/<from>__<to>.json). |
+| `carried_codespace_report` | Count coded values that still point at an older edition's code list (``codeSpace`` under ``codelists/<edition>/``) — the codes a carry-forward kept with their old codeSpace pending a reviewer's decision. |
+| `semantic_registry` | Semantic attribute registry (dialects/plateau/semantics/registry.json): edition-independent keys for building attributes and their concrete paths per i-UR edition. |
+| `plateau_codelists` | Load PLATEAU codelists and exhaustively generate "unknown-value codes" (categorical part of sentinel list). |
 
 ## Conversion and development
 
 | Tool | What it does |
 |---|---|
-| `convert_citygml2_to3_iur4` | Convert the bounded CityGML 2.0 + i-UR 3 profile to CityGML 3.0 + i-UR 4. |
+| `export_citygml3` | Export a city's CityGML 2.0 / 1.0 buildings as CityGML 3.0 (REQ-dialect-packs section 7). |
 | `generate_uvmap` | Development CLI to create UV map JSON from CityGML ParameterizedTexture. |
 | `diff_citygml` | Minimal diff engine comparing CityGML(bldg) by semantic unit (building) (W1 / feature list A). |
 | `preview_local` | Preview driver for local testing (N-3). |
@@ -53,6 +54,9 @@ or, as before, `python3 scripts/<tool>.py [arguments]`; `--help` shows its argum
 | `verify_bundle` | Verify a hub distribution zip: layout, required files, and a smoke test of the extracted program (the hub imports, resolves the bundled editors and packs from program/). |
 | `build_common_tools` | Build/verify a reproducible common-tools source archive (no city data). |
 | `release_guard` | Refuse to push a release tag unless the production approval gate is in place. |
+| `release_tags` | The release tag grammar, once (W8: it was spelled in about ten places). |
+| `generic_to_uro` | Restore URO property wrappers encoded as 3DCityDB generic attributes. |
+| `convert_citygml2_to3_iur4` | Convert the bounded CityGML 2.0 + i-UR 3 profile to CityGML 3.0 + i-UR 4. |
 
 ## CI gates (run by the city workflows)
 
@@ -62,7 +66,7 @@ or, as before, `python3 scripts/<tool>.py [arguments]`; `--help` shows its argum
 | `pr_reason` | The reason section of a pull request body and whether it is filled in (Exchange Contract A1). |
 | `commit_building_scope` | Check whether each commit in a PR adheres to "normal update: 1 commit = 1 building ID". |
 | `repo_scope` | What a city repository accepts — Exchange Contract A11 (`file-scope` gate). |
-| `validate_citygml` | CityGML / PLATEAU validity check (validate / feature list C). |
+| `validate_citygml` | CityGML validity check (validate / feature list C). |
 | `reconstruct_minimal` | Reconstruct head by applying only semantically changed parts to base (W6 / minimal diff). |
 | `reviewability_lint` | Reviewability lint (W3 / feature list D-1). |
 | `texture_check` | Texture (appearance) reviewability check (R3, (a)) and reference aggregation. |
@@ -75,4 +79,6 @@ or, as before, `python3 scripts/<tool>.py [arguments]`; `--help` shows its argum
 | `suggest_commit` | Generate recommended commit message for building commits from changed buildings (W7 / traceability). |
 | `pr_comment_metadata` | PR comment hidden metadata (W4 / feature list D-3). |
 | `gate_result` | One result per inspection gate, in one form (S17). |
+| `md_report` | The Markdown reports the gates post as PR comments: one shape, one limit, one list reader (U7). |
 | `inspection_summary` | The automatic inspection summary: one row per gate, the resubmission comment, inspection.json. |
+| `pr_event` | The PR an analysis judges, read once (Exchange Contract A10, D23). |

@@ -39,7 +39,7 @@ statistically representative audit or proof of applicability to all targets.
 
 ## Generate and review a plan
 
-Use `scripts/lod0_semantic_manifest.py generate --help` for arguments.
+Use `dialects/plateau/lod0_semantic_manifest.py generate --help` for arguments.
 Required inputs include the repository, mesh, municipality, current GML,
 rationale file, product path, actual tools commit SHA and plan Issue reference.
 The command writes a bulk manifest and optionally a separate proposed GML and

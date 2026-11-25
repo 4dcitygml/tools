@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.support import TempHome, load_app, runtime
+from tests.support import TempHome, load_app, ready_to_send, runtime
 
 attr = load_app("attr_app", "tools/attr_editor/app.py")
 
@@ -58,6 +59,9 @@ def make_upstream(base: Path) -> Path:
     (up / "city/udx/bldg/53394611_bldg_6697_op.gml").write_text(GML, encoding="utf-8")
     (up / "city/codelists/DataQualityAttribute_thematicSrcDesc.xml").write_text(
         CODELIST, encoding="utf-8")
+    # PLATEAU data: the city declares its dialect (v2.0.0: an undeclared building ID is the gml:id)
+    (up / "4dcitygml.json").write_text('{"repo": "4dcitygml/sample-tokyo-station", "building_id": {"type": "uro:buildingID"}, '
+                                      '"dialect": "plateau", "data_dirs": ["city"], "crs": "EPSG:6697"}', encoding="utf-8")
     subprocess.run(["git", "init", "-q", "-b", "main", str(up)], check=True)
     git(up, "add", ".")
     git(up, "commit", "-q", "-m", "initial")
@@ -106,6 +110,27 @@ class _SyncFixture(unittest.TestCase):
         self._upstream.stop()
         self.temp.cleanup()
         self._home.__exit__(None, None, None)
+
+
+class TestACloneWithoutACity(_SyncFixture):
+    """V1 / D-3c1: a clone whose 4dcitygml.json names no city was synced to the practice city
+    (ff failed, then main was reset to it) and its editor sent there. Now it is neither."""
+
+    def test_it_is_not_synced_and_sends_nowhere(self):
+        self._upstream.stop()                       # the real resolution, not the fixture's stand-in
+        self._upstream = patch.dict(os.environ, {"CITYGML_UPSTREAM": str(self.up)})
+        self._upstream.start()                      # had it fallen back to the launcher's city, it would sync
+        (self.clone / "4dcitygml.json").write_text('{"dialect": "plateau", "data_dirs": ["city"]}', encoding="utf-8")
+        git(self.clone, "commit", "-qam", "a declaration without its city")
+        mine = git(self.clone, "rev-parse", "main")
+        advance_upstream(self.up)
+        self.assertIsNone(attr.sync_upstream_main(self.clone))
+        self.assertEqual(git(self.clone, "rev-parse", "main"), mine)
+        from tests.test_editor_push_paths import PAYLOAD   # (a local import: that module imports this one)
+        with self.assertRaises(RuntimeError) as refused:
+            attr.Repo(self.clone).create_pr(dict(PAYLOAD))
+        self.assertIn("does not name its city", str(refused.exception))
+        self.assertEqual(git(self.clone, "rev-parse", "--abbrev-ref", "HEAD"), "main")
 
 
 class TestStartupSync(_SyncFixture):
@@ -170,8 +195,11 @@ class TestPrBranchBase(_SyncFixture):
 
     def setUp(self):
         super().setUp()
-        # No account is bound (temporary HOME): create_pr must end at the compare-URL fallback
         self.repo = attr.Repo(self.clone)
+        ready_to_send(self.repo)   # the PR request itself is not under test here: GitHub is not asked
+        api = patch.object(runtime, "github_api", lambda *a, **k: (201, {"html_url": "https://github.com/x/y/pull/1"}))
+        api.start()
+        self.addCleanup(api.stop)
         self.payload = {
             "tile": "53394611", "gid": "gml-bldg-1",
             "reason": "現地調査票で地上階数を確認しました。",

@@ -41,7 +41,7 @@ class CommonToolsArchiveTest(unittest.TestCase):
         with self.assertRaises(ValueError): B.build(self.root, self.archive)
 
     def test_missing_required_file_rejected(self):
-        (self.root / 'scripts/lod0_semantic_manifest.py').unlink()
+        (self.root / 'dialects/plateau/lod0_semantic_manifest.py').unlink()
         with self.assertRaises(ValueError): B.build(self.root, self.archive)
 
     def test_existing_output_is_not_overwritten(self):

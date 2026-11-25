@@ -48,6 +48,13 @@ class TestResolveLang(_EnvGuard):
     def test_default_is_english(self):
         self.assertEqual(i18n.resolve_lang(None), "en")
 
+    def test_the_primary_subtag_not_two_letters(self):
+        # V8: the first two letters were taken, so a three-letter language read as another one
+        self.assertEqual([i18n.primary_language(v) for v in ("de-AT", "de_DE.UTF-8", "fil", "JA", None)],
+                         ["de", "de", "fil", "ja", ""])
+        os.environ["CITYGML_LANG"] = "dexx"   # not German
+        self.assertEqual(i18n.resolve_lang(None), "en")
+
     def test_os_locale(self):
         os.environ["LANG"] = "de_DE.UTF-8"
         self.assertEqual(i18n.resolve_lang(None), "de")
@@ -82,8 +89,9 @@ class TestCatalog(unittest.TestCase):
         en_file = json.loads(
             (Path(i18n.CATALOG_DIR) / "attr_editor" / "en.json")
             .read_text(encoding="utf-8"))
+        common = json.loads((Path(i18n.CATALOG_DIR) / "common" / "en.json").read_text(encoding="utf-8"))
         de = set(i18n.load_catalog("attr_editor", "de"))
-        self.assertEqual(set(en_file), de)  # all keys currently translated = same set after merge
+        self.assertEqual(set(en_file) | set(common), de)  # all keys currently translated = same set after merge
 
     def test_missing_app_returns_empty(self):
         self.assertEqual(i18n.load_catalog("no_such_app", "en"), {})
@@ -124,14 +132,15 @@ class TestConvertedScreens(unittest.TestCase):
 
     # app → converted screens (paths relative to tools/)
     SCREENS = {
-        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html"],
+        "attr_editor": ["attr_editor/viewer.html", "attr_editor/index.html", "attr_editor/editor.js"],
         "hub": ["hub/index.html", "hub/review.html", "hub/setup.html", "hub/settings.html"],
         "tex_editor": ["tex_editor/index.html"],
+        "common": ["common.js"],   # what every screen shares; its catalog lies under each app's
     }
     # app → Python sources containing server-generated messages (tr()/translate())
     PY_SOURCES = {
         "attr_editor": ["attr_editor/app.py"],
-        "hub": ["hub/app.py"],
+        "hub": ["hub/app.py", "hub/review.py", "hub/session.py"],
         "tex_editor": ["tex_editor/app.py"],
     }
 
@@ -162,9 +171,14 @@ class TestConvertedScreens(unittest.TestCase):
 
     def _app_used(self, app: str) -> set:
         used: set = set()
-        for rel in self.SCREENS[app] + self.PY_SOURCES.get(app, []):
+        # the common catalog lies under every app, so any screen or server text may use its keys
+        apps = list(self.SCREENS) if app == "common" else [app]
+        for rel in [r for a in apps for r in self.SCREENS[a] + self.PY_SOURCES.get(a, [])]:
             src = (REPO_ROOT / "tools" / rel).read_text(encoding="utf-8")
             used |= self._used_keys(src)
+        if app == "common":
+            return {k for k in used if k.startswith("common.")}
+        used = {k for k in used if not k.startswith("common.")}
         # texts the shared runtime says in this app's catalog: tr("<app>", "<key>", ...)
         import re
         runtime_src = (REPO_ROOT / "tools" / "runtime.py").read_text(encoding="utf-8")
@@ -201,32 +215,24 @@ class TestConvertedScreens(unittest.TestCase):
 
 
 class TestTranslate(_EnvGuard):
-    """translate() for server-generated messages."""
+    """translate() for server-generated messages, in the language its caller gives (V8)."""
 
     def test_default_when_source_lang(self):
-        os.environ["CITYGML_LANG"] = "en"
-        self.assertEqual(
-            i18n.translate("attr_editor", "viewer.btn_texture", "Texture"),
-            "Texture")
+        self.assertEqual(i18n.translate("attr_editor", "viewer.btn_texture", "Texture", "en"), "Texture")
 
     def test_catalog_overlay(self):
-        os.environ["CITYGML_LANG"] = "ja"
-        self.assertEqual(
-            i18n.translate("attr_editor", "viewer.btn_texture", "Texture"),
-            "テクスチャ")
+        self.assertEqual(i18n.translate("attr_editor", "viewer.btn_texture", "Texture", "ja"), "テクスチャ")
 
     def test_params_and_missing_key(self):
-        os.environ["CITYGML_LANG"] = "ja"
-        self.assertEqual(
-            i18n.translate("attr_editor", "no.such.key", "{n} files", n=3),
-            "3 files")
+        self.assertEqual(i18n.translate("attr_editor", "no.such.key", "{n} files", "ja", n=3), "3 files")
 
-    def test_explicit_lang_beats_env(self):
-        os.environ["CITYGML_LANG"] = "ja"
-        self.assertEqual(
-            i18n.translate("attr_editor", "viewer.btn_texture", "Texture",
-                           lang="de"),
-            "Textur")
+    def test_the_tools_speak_the_settings_language(self):
+        # runtime.tr is the one caller: the display language includes the settings file, which a
+        # translate() resolving its own language did not read
+        runtime.save_config({"lang": "de"})
+        self.assertEqual(runtime.tr("attr_editor", "viewer.btn_texture", "Texture"), "Textur")
+        os.environ["CITYGML_LANG"] = "ja"   # the launcher's choice wins
+        self.assertEqual(runtime.tr("attr_editor", "viewer.btn_texture", "Texture"), "テクスチャ")
 
 
 class TestAppIntegration(_EnvGuard):

@@ -8,8 +8,8 @@ Compares two `.gml` files by building (`bldg:Building`, `gml:id` unit) and class
 and geometry diffs (numeric-normalized sha256 set hash of `gml:posList`/`gml:pos`).
 
 Corresponding feature list items:
-- A-1 Building-unit splitting … lxml streaming extraction of `bldg:Building` by `gml:id` unit
-- A-2 Attribute extraction      … leaf node path→value. Excludes geometry (gml) and appearance (app)
+- A-1 Building-unit splitting … streaming extraction of `bldg:Building` by `gml:id` unit (standard library, U13)
+- A-2 Attribute extraction      … leaf node path→value, a leaf's uom / codeSpace too. Excludes geometry and appearance (app)
 - A-3 Geometry hashing          … numeric-normalized `gml:posList`/`gml:pos` → sha256 set comparison (match/mismatch only)
 - A-4 Numeric normalization     … absorbs decimal format differences in attribute values (trailing 0s, notational diffs) (basic only)
 - A-5 Change classification     … added / deleted / modified / unchanged
@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
+import os
 import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -35,26 +35,19 @@ from typing import Iterator, Optional, Union
 # bytes is accepted because CI fetches the base version as bytes via `git show`.
 Source = Union[Path, str, bytes, None]
 
-from lxml import etree
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.safe_xml import safe_iterparse  # noqa: E402
+from scripts import citygml_xml  # noqa: E402
 
 # --- Namespaces -------------------------------------------------------------
-# Geometry appears in the gml namespace; textures etc. in the appearance namespace.
-# Attribute extraction excludes elements in these two namespaces, i.e. "excludes geometry and appearance".
-GML_NS = "http://www.opengis.net/gml"
-APP_NS = "http://www.opengis.net/citygml/appearance/2.0"
-EXCLUDED_NS = (GML_NS, APP_NS)
-
-# Tag set so iterparse fires only on Building elements (CityGML 1.0/2.0).
-_BUILDING_TAGS = (
-    "{http://www.opengis.net/citygml/building/2.0}Building",
-    "{http://www.opengis.net/citygml/building/1.0}Building",
-)
+# Geometry appears in the gml namespace; textures etc. in the appearance namespace. Attribute
+# extraction excludes appearance and gml's geometry, nothing else (D-c9, dialect-neutral): the
+# feature's gml:name and gml:description are attributes, and so is a leaf's uom or codeSpace.
+GML_NS = citygml_xml.GML
+GML_ATTRIBUTES = {"name", "description"}
+XML_ATTRIBUTES = ("uom", "codeSpace")
 
 # Elements carrying geometry coordinates (within the gml namespace).
 _GEOM_LEAVES = {"posList", "pos"}
@@ -85,35 +78,25 @@ def _values_equal(old: Optional[str], new: Optional[str]) -> bool:
 
 
 # --- Extraction (A-1 / A-2 / A-3) -------------------------------------------
-def _local(elem: etree._Element) -> tuple[str, str]:
-    """Return the element's (namespace, localname)."""
-    q = etree.QName(elem)
-    return q.namespace or "", q.localname
+_local, _gml_id = citygml_xml.qname, citygml_xml.gml_id   # the XML vocabulary's own (U5)
 
 
-def _gml_id(elem: etree._Element) -> Optional[str]:
-    """Get the element's gml:id regardless of gml namespace version differences."""
-    for key, val in elem.attrib.items():
-        if etree.QName(key).localname == "id":
-            return val
-    return None
-
-
-def _extract_attributes(building: etree._Element) -> dict[str, str]:
+def _extract_attributes(building) -> dict[str, str]:
     """Extract leaf-node `path -> value` pairs from a building subtree (A-2).
 
-    - Elements in the gml (geometry) / appearance namespaces are excluded.
+    - Appearance and gml geometry are excluded (gml:name / gml:description are not geometry).
+    - A leaf's uom / codeSpace is kept as `path/@uom` / `path/@codeSpace`.
     - Elements with a `name` attribute (gen:*Attribute etc.) get `[@name=...]` appended to the path to distinguish them.
     - When the same path appears multiple times, a `path[i]` index distinguishes them.
     """
     collected: dict[str, list[str]] = {}
 
-    def walk(elem: etree._Element, path: str) -> None:
+    def walk(elem, path: str) -> None:
         for child in elem:
             if not isinstance(child.tag, str):
                 continue  # skip comments/PIs
             ns, name = _local(child)
-            if ns in EXCLUDED_NS:
+            if ns in citygml_xml.APPEARANCE_NS or (ns == GML_NS and name not in GML_ATTRIBUTES):
                 continue  # exclude geometry/appearance
             seg = name
             name_attr = child.get("name")
@@ -124,6 +107,9 @@ def _extract_attributes(building: etree._Element) -> dict[str, str]:
                 text = (child.text or "").strip()
                 if text:
                     collected.setdefault(child_path, []).append(text)
+                for key in XML_ATTRIBUTES:
+                    if child.get(key):
+                        collected.setdefault(f"{child_path}/@{key}", []).append(child.get(key))
             else:
                 walk(child, child_path)
 
@@ -139,7 +125,7 @@ def _extract_attributes(building: etree._Element) -> dict[str, str]:
     return result
 
 
-def _geometry_hash(building: etree._Element) -> Optional[str]:
+def geometry_hash(building) -> Optional[str]:
     """Fold a building's geometry into a single sha256 hash (A-3).
 
     Numerically normalize the coordinates of all `gml:posList`/`gml:pos`,
@@ -165,37 +151,13 @@ def _geometry_hash(building: etree._Element) -> Optional[str]:
 def iter_buildings(source: Source) -> Iterator[tuple[str, dict[str, str], Optional[str]]]:
     """Scan a source in streaming mode, yielding (gml:id, attribute dict, geometry hash) (A-1).
 
-    source is a file name (Path/str) or content (bytes). After each Building
-    element is processed, its subtree and the processed cityObjectMember are
-    released to keep memory usage bounded.
+    source is a file name (Path/str) or content (bytes); the buildings are read one at a time
+    and released (citygml_xml.buildings).
     """
-    if isinstance(source, (bytes, bytearray)):
-        target: object = io.BytesIO(source)
-    else:
-        target = str(source)
-    context = safe_iterparse(target, events=("end",), tag=_BUILDING_TAGS)
-    for _event, building in context:
+    for building in citygml_xml.buildings(source):
         bid = _gml_id(building)
-        if bid is None:
-            _drop(building)
-            continue
-        attrs = _extract_attributes(building)
-        geom = _geometry_hash(building)
-        yield bid, attrs, geom
-        _drop(building)
-
-
-def _drop(building: etree._Element) -> None:
-    """Release the processed Building and the siblings preceding its cityObjectMember."""
-    building.clear()
-    parent = building.getparent()  # normally core:cityObjectMember
-    if parent is None:
-        return
-    parent.clear()
-    grand = parent.getparent()
-    if grand is not None:
-        while parent.getprevious() is not None:
-            del grand[0]
+        if bid is not None:
+            yield bid, _extract_attributes(building), geometry_hash(building)
 
 
 def _load(source: Source) -> dict[str, tuple[dict[str, str], Optional[str]]]:
@@ -223,6 +185,34 @@ def load_buildings(source: Source) -> dict[str, tuple[dict[str, str], Optional[s
     return _load(source)
 
 
+def buildings_at(repo, rev: str, path: str) -> dict[str, tuple[dict[str, str], Optional[str]]]:
+    """load_buildings of path as committed at rev ({} when it is not there). Within an analysis
+    run (CITYGML_RUN) each blob is parsed once and the gates share the result, kept in the run
+    folder under the blob's id (U6: each changed file used to be parsed about 15 times a PR)."""
+    from scripts.repo_git import GitError, git
+    try:
+        oid = git(repo, "rev-parse", f"{rev}:{path}", strip=True)
+    except GitError:
+        return {}
+    cache = Path(os.environ["CITYGML_RUN"]) / "buildings" / f"{oid}.json" if os.environ.get("CITYGML_RUN") else None
+    try:
+        return {bid: tuple(value) for bid, value in json.loads(cache.read_text(encoding="utf-8")).items()}
+    except (AttributeError, OSError, ValueError):
+        pass
+    found = _load(git(repo, "cat-file", "blob", oid, binary=True))
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(found, ensure_ascii=False), encoding="utf-8")
+    return found
+
+
+def changed_ids(old: dict, new: dict) -> set[str]:
+    """The ids of head's buildings that the change touched (added, modified, renamed), from
+    diff_maps, so a check of the changed buildings asks the one classification (pre-existing
+    defects of untouched buildings do not fail unrelated PRs)."""
+    return {e["id"] for e in diff_maps(old, new)["buildings"] if e["status"] != "deleted"}
+
+
 def attribute_diffs(
     old_attrs: dict[str, str], new_attrs: dict[str, str]
 ) -> list[dict[str, Optional[str]]]:
@@ -243,6 +233,52 @@ def _attribute_diffs(
     return diffs
 
 
+def signature(attrs: dict[str, str], geom: Optional[str], *extra) -> tuple:
+    """A building's content as compared: attributes after numeric normalisation (A-4) and the
+    geometry hash, plus what a caller adds (the gate: its appearance)."""
+    return (frozenset((k, _norm_num(v)) for k, v in attrs.items()), geom, *extra)
+
+
+def rename_pairs(gone: dict, new: dict) -> dict[str, str]:
+    """The one rename rule (U6, D-c1): a building that left (id -> signature) and one that came
+    with an equal signature are one building whose id changed, when the pair is unambiguous
+    (exactly one each; identical twins stay a deletion and an addition). -> {new id: old id}."""
+    by_gone: dict[tuple, list[str]] = {}
+    by_new: dict[tuple, list[str]] = {}
+    for bid, sig in gone.items():
+        by_gone.setdefault(sig, []).append(bid)
+    for bid, sig in new.items():
+        by_new.setdefault(sig, []).append(bid)
+    return {by_new[sig][0]: ids[0] for sig, ids in by_gone.items() if len(ids) == 1 and len(by_new.get(sig, ())) == 1}
+
+
+def diff_maps(old: dict, new: dict, include_unchanged: bool = False) -> dict:
+    """The one classification of two buildings maps (gml:id -> (attributes, geometry hash)):
+    added / deleted / modified / unchanged, and renamed by rename_pairs (A-5)."""
+    renames = rename_pairs({d: signature(*old[d]) for d in set(old) - set(new)},
+                           {a: signature(*new[a]) for a in set(new) - set(old)})
+    renamed_old = set(renames.values())
+    buildings: list[dict] = []
+    counts = {"added": 0, "deleted": 0, "modified": 0, "unchanged": 0, "renamed": 0}
+    for bid in sorted(set(old) | set(new)):
+        if bid not in new:
+            if bid in renamed_old:
+                continue  # the old side of a rename is folded into the new side's single entry
+            entry = {"id": bid, "status": "deleted"}
+        elif bid not in old:
+            entry = ({"id": bid, "old_id": renames[bid], "status": "renamed"} if bid in renames
+                     else {"id": bid, "status": "added"})
+        else:
+            attr_diffs = _attribute_diffs(old[bid][0], new[bid][0])
+            geom_changed = old[bid][1] != new[bid][1]
+            entry = {"id": bid, "status": "modified" if (attr_diffs or geom_changed) else "unchanged",
+                     "attribute_diffs": attr_diffs, "geometry_changed": geom_changed}
+        counts[entry["status"]] += 1
+        if entry["status"] != "unchanged" or include_unchanged:
+            buildings.append(entry)
+    return {"summary": counts, "buildings": buildings}
+
+
 def diff_sources(
     old_source: Source,
     new_source: Source,
@@ -259,94 +295,10 @@ def diff_sources(
     """
     old = _load(old_source)
     new = _load(new_source)
-
     if only_id is not None:
         old = {k: v for k, v in old.items() if k == only_id}
         new = {k: v for k, v in new.items() if k == only_id}
-
-    # Rename detection (content-based, like git diff -M): a deleted<->added pair whose
-    # content (attributes + geometry) matches 1:1 is treated as a "rename (id changed,
-    # content unchanged)". This reduces reliance on gml:id, while a rebuild (content
-    # changes substantially) does not match and correctly remains a separate building (lifecycle).
-    deleted_ids = set(old) - set(new)
-    added_ids = set(new) - set(old)
-    renames = _detect_renames(old, new, deleted_ids, added_ids)  # {new_id: old_id}
-    renamed_old = set(renames.values())
-    renamed_new = set(renames)
-
-    buildings: list[dict] = []
-    counts = {"added": 0, "deleted": 0, "modified": 0, "unchanged": 0, "renamed": 0}
-
-    for bid in sorted(set(old) | set(new)):
-        in_old = bid in old
-        in_new = bid in new
-        if in_old and not in_new:
-            if bid in renamed_old:
-                continue  # the old side of a rename is folded into the new side's single entry
-            status = "deleted"
-            entry = {"id": bid, "status": status}
-        elif in_new and not in_old:
-            if bid in renamed_new:
-                status = "renamed"  # old_id -> bid (same content, only id changed)
-                entry = {"id": bid, "old_id": renames[bid], "status": status}
-            else:
-                status = "added"
-                entry = {"id": bid, "status": status}
-        else:
-            old_attrs, old_geom = old[bid]
-            new_attrs, new_geom = new[bid]
-            attr_diffs = _attribute_diffs(old_attrs, new_attrs)
-            geom_changed = old_geom != new_geom
-            status = "modified" if (attr_diffs or geom_changed) else "unchanged"
-            entry = {
-                "id": bid,
-                "status": status,
-                "attribute_diffs": attr_diffs,
-                "geometry_changed": geom_changed,
-            }
-        counts[status] += 1
-        if status == "unchanged" and not include_unchanged:
-            continue
-        buildings.append(entry)
-
-    return {
-        "old": old_label,
-        "new": new_label,
-        "summary": counts,
-        "buildings": buildings,
-    }
-
-
-def _detect_renames(
-    old: dict[str, tuple[dict[str, str], Optional[str]]],
-    new: dict[str, tuple[dict[str, str], Optional[str]]],
-    deleted_ids: set[str],
-    added_ids: set[str],
-) -> dict[str, str]:
-    """Treat deleted<->added 1:1 pairs with matching content (attributes + geometry hash) as renames.
-
-    Returns {new_id: old_id}. Ambiguous pairs (multiple entries with identical
-    content) are not treated as renames (err on the safe side). gml:id is the
-    building's key (outside the attributes), so identical attributes + geometry
-    means "only the id changed".
-    """
-    def sig(store: dict, bid: str) -> tuple:
-        attrs, geom = store[bid]
-        return (frozenset(attrs.items()), geom)
-
-    del_by_sig: dict[tuple, list[str]] = {}
-    add_by_sig: dict[tuple, list[str]] = {}
-    for d in deleted_ids:
-        del_by_sig.setdefault(sig(old, d), []).append(d)
-    for a in added_ids:
-        add_by_sig.setdefault(sig(new, a), []).append(a)
-
-    renames: dict[str, str] = {}
-    for s, ds in del_by_sig.items():
-        adds = add_by_sig.get(s, [])
-        if len(ds) == 1 and len(adds) == 1:  # only unambiguous 1:1 pairs
-            renames[adds[0]] = ds[0]
-    return renames
+    return {"old": old_label, "new": new_label, **diff_maps(old, new, include_unchanged)}
 
 
 def diff_files(

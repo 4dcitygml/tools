@@ -132,20 +132,19 @@ class TestUnreadableFiles(unittest.TestCase):
         # a changed file with a missing end tag: the summary crashed and left an empty summary.md, and the city poster stopped at it
         from unittest.mock import patch
         from scripts import ci_change_summary as cs
-        good = {"file": "b.gml", "summary": {}}
-        files = {"a.gml": b"<core:CityModel><not xml", "b.gml": b"<ok/>"}
-        def fake_diff(old, new, *_):
-            if new.startswith(b"<core"):
+        good = {"summary": {}, "buildings": []}
+        def buildings(repo, sha, path):
+            if path == "a.gml":
                 from xml.etree import ElementTree
                 raise ElementTree.ParseError("mismatched tag")
-            return good
+            return {}
         unreadable: list = []
-        with patch.object(cs, "blob", side_effect=lambda repo, sha, path: files[path]), \
-                patch.object(cs, "diff_sources", side_effect=fake_diff), patch.object(cs, "_has_changes", return_value=True):
+        with patch.object(cs, "buildings_at", side_effect=buildings), \
+                patch.object(cs, "diff_maps", return_value=good), patch.object(cs, "_has_changes", return_value=True):
             results = cs.collect_ci_results(Path("."), "a", "b", ["a.gml", "b.gml"], unreadable)
             with self.assertRaises(Exception):          # without the list, a malformed file still raises
                 cs.collect_ci_results(Path("."), "a", "b", ["a.gml"])
-        self.assertEqual((results, unreadable), ([good], ["a.gml"]))
+        self.assertEqual((results, unreadable), ([{"old": "b.gml", "new": "b.gml", **good}], ["a.gml"]))
         text = render_ci([], unreadable=["a.gml"])
         self.assertTrue(text.startswith(SUMMARY_MARKER))
         self.assertIn("`a.gml`", text)

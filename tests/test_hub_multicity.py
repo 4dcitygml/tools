@@ -77,7 +77,7 @@ class TestConfigPerCity(_ConfigSandbox):
         munich = make_clone(self.tmp / "munich", MUNICH)
         v13 = {"repo": str(tokyo), "lang": "de", "legacyReviewed": "2026-09-01",
                "cities": {"4DCityGML/Sample-Tokyo-Station": {"login": "alice"},             # other spelling
-                          MUNICH: {"repo": str(munich), "login": "bob", "last_used": "2026-09-02T10:00:00+0900"},
+                          MUNICH: {"repo": str(munich), "login": "bob", "last_used": "2026-09-02T10:00:00+0000"},
                           "someone/forgotten-city": {"repo": str(self.tmp / "gone")}}}
         runtime.save_config(v13)
         self.assertTrue(runtime.migrate_config())
@@ -95,14 +95,27 @@ class TestConfigPerCity(_ConfigSandbox):
         self.assertFalse(runtime.migrate_config())                           # once
         self.assertFalse(runtime.migrate_config.__doc__ is None)
 
+    def test_one_writer_of_a_city_entry(self):
+        # 3c-1: the cities[] entry was written in four places (remember_clone, the binding, the
+        # forget route, the migration); runtime.city_entry writes it, merged, never replaced
+        runtime.city_entry(TOKYO, repo="/x", custom="kept")
+        runtime.city_entry(TOKYO.upper(), login="alice")
+        self.assertEqual(runtime.read_config()["cities"][TOKYO.lower()], {"repo": "/x", "custom": "kept", "login": "alice"})
+        self.assertEqual(runtime.city_entry(TOKYO, login=None), {"repo": "/x", "custom": "kept"})
+        runtime.city_entry(TOKYO, forget=True)
+        self.assertNotIn(TOKYO.lower(), runtime.read_config()["cities"])
+        import re
+        for rel in ("tools/hub/app.py", "tools/hub/review.py", "tools/hub/session.py", "tools/accounts.py", "tools/attr_editor/app.py", "tools/tex_editor/app.py"):
+            src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            self.assertEqual(re.findall(r'cities\[[^\]]+\] = |cities\.pop\(', src), [], rel)
+
     def test_clone_city_reads_the_clone_not_the_environment(self):
         tokyo = make_clone(self.tmp / "tokyo", TOKYO)
         os.environ["CITYGML_UPSTREAM"] = MUNICH
         self.assertEqual(runtime.clone_city(tokyo), TOKYO)
         self.assertEqual(runtime.requested_city(), MUNICH)
-        # The sync target is the clone's own city, whatever the start script asked for.
-        self.assertEqual(runtime.upstream_url(tokyo, ignore_env=True), "https://github.com/" + TOKYO)
-        self.assertEqual(runtime.upstream_url(tokyo), "https://github.com/" + TOKYO)   # the clone's own (F7)
+        # The sync target is the clone's own city, whatever the start script asked for (V1, F7).
+        self.assertEqual(runtime.upstream_url(tokyo), "https://github.com/" + TOKYO)
 
     def test_default_dest_is_named_after_the_city(self):
         session = hub.Session()                                    # HOME is the empty temp folder
@@ -202,10 +215,10 @@ class TestReviewFollowsTheContract(unittest.TestCase):
         self._home.__exit__(None, None, None)
 
     def test_review_kind_uses_the_shared_table_and_keeps_other(self):
-        self.assertEqual(hub.review_kind({"title": "x", "head": {"ref": "geom/13101-bldg-1"}}), "geometry")
-        self.assertEqual(hub.review_kind({"title": "Attributkorrektur: Geschosse", "head": {"ref": "feature/x"}}), "attribute")
-        self.assertEqual(hub.review_kind({"title": "Fix storeys", "head": {"ref": "feature/x"}}), "other")
-        self.assertEqual(hub.review_kind({"title": "属性を直した", "head": {"ref": "feature/x"}}), "other")  # no loose matching
+        self.assertEqual(hub.review.review_kind({"title": "x", "head": {"ref": "geom/13101-bldg-1"}}), "geometry")
+        self.assertEqual(hub.review.review_kind({"title": "Attributkorrektur: Geschosse", "head": {"ref": "feature/x"}}), "attribute")
+        self.assertEqual(hub.review.review_kind({"title": "Fix storeys", "head": {"ref": "feature/x"}}), "other")
+        self.assertEqual(hub.review.review_kind({"title": "属性を直した", "head": {"ref": "feature/x"}}), "other")  # no loose matching
 
     def test_other_prs_are_listed_not_hidden(self):
         h = hub.Hub.__new__(hub.Hub)
@@ -232,14 +245,30 @@ class TestReviewFollowsTheContract(unittest.TestCase):
         self.assertEqual(item["buildingId"], "13101-bldg-9")   # from the A2 trailer, not the title
 
     def test_ci_reason_verdict_wins_over_the_local_preview(self):
+        import operator_explanation as contract   # the contract master, on the hub's path
         h = hub.Hub.__new__(hub.Hub)
         h._attribute_labels = {}
-        inspection = ("<!-- citygml-automatic-inspection -->\n| Check | Result |\n|---|---|\n"
-                      "| Description and evidence <!--cp:reason--> | ❌ Needs attention |\n")
+        city = tempfile.TemporaryDirectory(); self.addCleanup(city.cleanup)
+        h.root = Path(city.name)   # a PLATEAU city: its building IDs are read from the branch name
+        (h.root / "4dcitygml.json").write_text('{"dialect": "plateau"}', encoding="utf-8")
+        pr = {"number": 8, "title": "Update attributes (Usage)", "body": "## Summary of changes <!--sec:reason-->\n\nlooks fine locally\n",
+              "head": {"ref": "edit/13101-bldg-1", "sha": "abc"}, "base": {"ref": "main", "sha": "base1"},
+              "user": {"login": "p"}, "state": "open"}
+        # CI's report (the ci-report check run, A10) says the reason row fails
+        report = contract.encode_report({
+            "version": 2, "repo": "o/r", "pr": 8, "context": contract.context(pr), "runId": 1, "runAttempt": 1,
+            "runUrl": "u", "state": "fix", "lang": "en", "heading": "h", "labels": {k: k for k in contract.FIELDS},
+            "fields": {k: "" for k in contract.FIELDS}, "lifecycle": [],
+            "checks": [{"key": "reason", "label": "reason", "status": "fail", "severity": "blocking", "ran": True}]})
+        result = contract.check_result("current", report)
+        check_runs = [{"id": 1, "name": "analyze", "app": {"slug": "github-actions"}, "status": "completed",
+                       "conclusion": "success"},
+                      {"id": 2, "name": "ci-report", "app": {"slug": "github-actions"}, "status": "completed",
+                       "conclusion": result["conclusion"], "output": {"text": result["text"]}}]
         responses = {
             "/commits?": (200, []),
-            "/check-runs?": (200, {"check_runs": []}),
-            "/comments?": (200, [{"body": inspection, "user": {"login": "github-actions[bot]", "type": "Bot"}}]),
+            "/check-runs?": (200, {"check_runs": check_runs}),
+            "/comments?": (200, []),
             "/reviews?": (200, []),
         }
 
@@ -249,8 +278,6 @@ class TestReviewFollowsTheContract(unittest.TestCase):
                     return value
             return 404, {}
 
-        pr = {"number": 8, "title": "Update attributes (Usage)", "body": "## Summary of changes <!--sec:reason-->\n\nlooks fine locally\n",
-              "head": {"ref": "edit/13101-bldg-1", "sha": "abc"}, "base": {"ref": "main"}, "user": {"login": "p"}, "state": "open"}
         with patch.object(runtime, "github_api", fake_api):
             item = hub.Hub._review_queue_item(h, "t", "o/r", pr)
         self.assertIn("Reason and evidence not filled in", " ".join(item["adjustmentReasons"]))
@@ -261,13 +288,13 @@ class TestReviewFollowsTheContract(unittest.TestCase):
             {"id": 2, "user": {"login": "a"}, "state": "APPROVED", "commit_id": "abc"},
             {"id": 3, "user": {"login": "b"}, "state": "COMMENTED", "commit_id": "abc"},
         ]
-        latest = hub.latest_reviews(reviews)
+        latest = hub.review.latest_reviews(reviews)
         self.assertEqual(set(latest), {"a"})
         self.assertEqual(latest["a"]["state"], "APPROVED")
 
     def test_building_id_from_trailers(self):
-        self.assertEqual(hub.building_id_from_commit_messages(["Docs\n", "Add\n\nBuilding-Added: X-1\n"]), "X-1")
-        self.assertEqual(hub.building_id_from_commit_messages(["no trailer"]), "")
+        self.assertEqual(hub.review.building_id_from_commit_messages(["Docs\n", "Add\n\nBuilding-Added: X-1\n"]), "X-1")
+        self.assertEqual(hub.review.building_id_from_commit_messages(["no trailer"]), "")
 
 
 if __name__ == "__main__":

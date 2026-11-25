@@ -81,8 +81,9 @@ entrance page — "one screen, one action" — and in addition there are **zero 
 
 A beginner's Mac has neither `gh` nor git credentials (`gh` is not included in the Command
 Line Tools either). So we **implement the OAuth device flow ourselves using only the
-standard library**, finishing authentication with "a button + an 8-digit code" without
-opening a terminal.
+standard library**, finishing authentication with "a button + an 8-digit code" in the
+browser, with no command to type (the terminal only runs the hub; how to open it and how to
+start the tools again: the repository README, *Quick start*).
 
 - The `client_id` is **public information** (the device flow needs no client_secret). Provide
   it via `oauthClientId` in `preset.json` or the environment variable
@@ -187,10 +188,7 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
 - **Python**: the python.org **embeddable package**, bundled as `PythonPortable/`
   (version + SHA-256 pinned; see the repository-root `THIRD_PARTY_NOTICES.md`).
   The per-user launcher (`citygml.ps1`) starts `program/hub.py` with
-  `program/PythonPortable/python.exe`; the fallback starter shipped inside
-  `program/` (`start-windows.bat` = `packaging/start-windows.bat`) resolves
-  **`PythonPortable/` → local `py`/`python`** in that order. No Python install
-  is needed either way.
+  `program/PythonPortable/python.exe`. No Python install is needed.
 - **Git**: MinGit under the compatibility name `PortableGit/`, used whenever it is
   present (`runtime.git_exe()`); otherwise the git on PATH — **no git installation
   is needed**.
@@ -200,8 +198,8 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
 - The detection result can be checked in `/api/status` under `runtime` (git/python
   path, bundled).
 - macOS bundles no binaries (M1): the per-user launcher (`citygml.sh`) uses the
-  `python3` on PATH (Apple's Command Line Tools); `packaging/start-mac.command`
-  is only for running from a source checkout.
+  `python3` on PATH (Apple's Command Line Tools). From a source checkout, run
+  `python3 tools/hub/app.py`.
 
 > `PythonPortable/` and `PortableGit/` live inside `program/` in the zip (same
 > level as `hub.py`).
@@ -216,7 +214,7 @@ so what runs is always inspectable. The Windows zip bundles everything needed:
 | **Your PRs / Issues** | Lists the PRs and Issues you created, with state (open/closed/merged) and **whether there was a response** (review/comments). Only transient CI failures with no data-side items to confirm can be "re-run" via automated inspection. Data defects are routed to automatic re-inspection after fixing; being behind the latest version is routed to re-importing. |
 | **Maintainer approval screen** | Groups the change proposals arriving from the attribute/texture editors by building ID and shows them in two states according to who works next: "waiting for approver confirmation" and "waiting for proposer action". The waiting state carries reason labels such as CI, approver, importing the latest version, or automated inspection in progress. All 11 checks — description, change unit, consistency with the latest version, CityGML format, geometry, attributes, topology, and so on — are shown as pass = green, not applicable = gray, failed = red. The topology check runs on each building's first time (and on geometry changes); later runs that do not change the shape are not applicable. CI never rejects a PR mechanically; it comments the items to confirm and works them out with the proposer. Approvers can also send confirmation comments from 5 templates or free text, recording change requests. Past history, Japanese attribute names, before/after values, supporting documents, the permanent 3D model, and Google Maps can all be checked on the same screen, and approval is recorded. The selected building ID is kept in the URL, so the same building is shown after a reload. `/review.html?demo=1` lets you try the operations without touching real data or the change history. |
 | **Achievement badges** | Shows a rank based on the number of merged PRs (✨→🌱→🌿→🌳→🏛️) and the remaining count to the next rank. |
-| **Trouble / suggestions** | Creates a UX feedback Issue from an in-hub form using the connected GitHub authentication. No re-login to GitHub is needed. The subject, purpose, and environment are pre-filled, and the poster's current achievement badge and merged-PR count are recorded automatically as reference for maintainers. |
+| **Trouble / suggestions** | Links to the city repository's own "new issue" page on GitHub (`/issues/new/choose`), with the issue forms the city's organisation offers. Nothing is written from the hub itself. |
 
 The maintainer cards are shown only to a connected account that can approve in this city
 (write, maintain or admin on the city repository); residents do not see them. The check runs
@@ -229,13 +227,14 @@ hide them).
 | File | Role |
 |---|---|
 | `app.py` | Local HTTP server (status, contribution API, child-process launch). Port 8760, stepping by +2 when taken by another city's hub; a hub already serving the same clone is reused. In the zip: `program/hub.py`. |
+| `review.py` | The review screen's model: open proposals as CI judged them, their checks, history and decisions (the Hub's review side). In the zip: `program/review.py`. |
+| `session.py` | The account side (OAuth device flow, the account chosen for the city, its fork) and the process state of one city (clone, sync, setup). In the zip: `program/session.py`. |
 | `index.html` | Dashboard UI. In the zip: `program/index.html`. |
 | `setup.html` | Initial setup and the account screen (served while there is no clone, or no account for the city). |
 | `settings.html` | Per-city settings (account, copy on GitHub, data folder, version, desktop icon, how to remove the tools). |
 | `review.html` | Maintainer UI for per-building change-history review and approval. |
-| `packaging/start-mac.command` / `.bat` | Launchers for running from a source checkout. The release zip has no top-level launcher any more (hub-v1.2.0): it is the payload of the one-line installer, which unpacks it into `citygml-tools/citygml-hub/<tag>/` and starts `program/hub.py`; `program/citygml.sh` / `citygml.ps1` are the per-user launchers it copies into place. |
 
-- Each tool starts on its default port (attr_editor=8765 / tex_editor=8766); if already
+- Each tool starts on its default port (`runtime.EDITOR_PORTS`: attr_editor=8765 / tex_editor=8766); if already
   listening, it is reused.
 - The GitHub API is called directly via REST / GraphQL with the standard library (no `gh` CLI
   dependency). Contribution data is fetched in one request with the same GraphQL as gh

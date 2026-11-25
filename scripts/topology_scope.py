@@ -34,8 +34,9 @@ class Decision:
 
 
 def building_ids(messages: str) -> set[str]:
-    """The buildings the A2 trailers of these commit messages name (the commit scope gate's parser)."""
-    return {value for value in trailer_buildings(trailers(messages)) if value}
+    """The buildings the A2 trailers of these commit messages name (NUL-separated, as `git log
+    --format=%B%x00` lists them; the commit scope gate's parser, one message at a time)."""
+    return {value for message in messages.split("\x00") for value in trailer_buildings(trailers(message)) if value}
 
 
 def decide(repo: Path, base_sha: str, head_sha: str, kind: str) -> Decision:

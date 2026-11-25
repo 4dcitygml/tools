@@ -32,7 +32,7 @@ def _doc(srs: str, square: list, ground: float, roof: float) -> bytes:
 
 class TestDialect(unittest.TestCase):
     def test_namespaces_follow_the_file(self):
-        root = preview.safe_fromstring(_doc("EPSG:25832", [(0, 0), (1, 0), (1, 1)], 0, 1))
+        root = preview.fromstring(_doc("EPSG:25832", [(0, 0), (1, 0), (1, 1)], 0, 1))
         self.assertEqual(D.ns_for_root(root)["bldg"], "http://www.opengis.net/citygml/building/1.0")
         self.assertIsNotNone(D.file_transformer(root, D.ns_for_root(root)))
 

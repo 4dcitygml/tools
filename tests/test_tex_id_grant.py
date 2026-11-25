@@ -92,7 +92,7 @@ class TestIdGrantNewTexture(unittest.TestCase):
         (root / "citygml" / "box.gml").write_text(_idless_gml(), encoding="utf-8")
         (root / "4dcitygml.json").write_text(json.dumps({
             "id": "test-city", "building_id": {"type": "gml:id"},
-            "lang": "en", "data_dirs": ["citygml"],
+            "lang": "en", "data_dirs": ["citygml"], "crs": "EPSG:6697",   # lat/lon data: the city says so
         }), encoding="utf-8")
         self.repo = tex.TexRepo(root)
 
@@ -135,6 +135,21 @@ class TestIdGrantNewTexture(unittest.TestCase):
         self.assertTrue(all(f["img"] != res["newAtlas"]["img"] for f in res2["faces"]))
 
 
+
+    def test_a_refused_item_writes_no_image(self):
+        # D-3b1: each image was written as soon as its item passed, so a later item's refusal
+        # left the earlier images in the tree (untracked, outside any rollback)
+        res = self.repo.faces_json("box", "gml_TESTBLDG1")
+        self.repo.apply_textures("box", "gml_TESTBLDG1", [
+            {"orig": res["newAtlas"]["img"], "data": base64.b64encode(_JPEG_1PX).decode()}])
+        atlas = self.repo.faces_json("box", "gml_TESTBLDG1")["faces"][0]["img"]
+        folder = Path(self._tmp.name) / "citygml"
+        before = sorted(folder.rglob("*")), (folder / "box.gml").read_bytes()
+        with self.assertRaises(ValueError):
+            self.repo.apply_textures("box", "gml_TESTBLDG1", [
+                {"orig": atlas, "data": base64.b64encode(_JPEG_1PX + b"other").decode()},
+                {"orig": "missing.jpg", "data": base64.b64encode(_JPEG_1PX).decode()}])
+        self.assertEqual((sorted(folder.rglob("*")), (folder / "box.gml").read_bytes()), before)
 
 class TestRingIds(unittest.TestCase):
     """Polygons with IDs whose rings have none (Munich): new textures failed with

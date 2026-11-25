@@ -43,12 +43,21 @@ def _gml_members(members: list[tuple[str, str, int]]) -> str:
     )
 
 
+# The fixtures are PLATEAU data (uro:buildingID, i-UR): their city declares so (v2.0.0: an undeclared
+# city has no dialect, its building ID is gml:id and the i-UR features are off).
+PLATEAU_CITY = {"repo": "o/r", "building_id": {"type": "uro:buildingID"}, "dialect": "plateau", "crs": "EPSG:6697"}
+
+
 class GitRepo:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, declaration: "dict | None" = PLATEAU_CITY):
         self.root = root
         self.run("init", "-q")
         self.run("config", "user.name", "Test")
         self.run("config", "user.email", "test@example.com")
+        if declaration is not None:
+            (root / "4dcitygml.json").write_text(json.dumps(declaration), encoding="utf-8")
+            self.run("add", "4dcitygml.json")
+            self.run("commit", "-q", "-m", "Declare the city")
 
     def run(self, *args: str) -> str:
         return subprocess.check_output(
@@ -74,6 +83,51 @@ class TestCommitBuildingScope(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def update_with_the_button(self, other_branch: str = "main") -> "tuple[str, str]":
+        """A PR on bldg-1, main moving on in another file, then GitHub's "Update branch" (default
+        merge mode): a merge of `other_branch` into the PR. -> (the base it now has, the head)."""
+        main = self.repo.run("rev-parse", "--abbrev-ref", "HEAD")
+        self.repo.run("checkout", "-q", "-b", "edit/13101-bldg-1")
+        self.repo.commit_gml(2, 1, "update one\n\nBuilding: 13101-bldg-1")
+        self.repo.run("checkout", "-q", main)
+        if other_branch != "main":
+            self.repo.run("checkout", "-q", "-b", other_branch)
+        (self.repo.root / "other.gml").write_text(_gml_members([("13102-bldg-9", "13102", 3)]), encoding="utf-8")
+        self.repo.run("add", "other.gml")
+        self.repo.run("commit", "-q", "-m", "another merged proposal\n\nBuilding: 13102-bldg-9")
+        moved = self.repo.run("rev-parse", "HEAD")
+        self.repo.run("checkout", "-q", "edit/13101-bldg-1")
+        self.repo.run("merge", "-q", "--no-ff", "--no-edit", moved)
+        return (moved if other_branch == "main" else self.base), self.repo.run("rev-parse", "HEAD")
+
+    def test_a_pr_updated_with_githubs_button_passes(self):
+        # T24: "Update branch" merges main into the PR; that merge brings only the base
+        base, head = self.update_with_the_button()
+        result = inspect_range(self.repo.root, base, head)
+        self.assertEqual([r.ok for r in result], [True, True], [r.errors for r in result])
+        self.assertEqual(result[0].changed_ids, {"13101-bldg-1"})
+        self.assertEqual(result[1].change_type, "base-update")
+        scope = pr_scope(self.repo.root, base, head)   # the PR changes one building; main's stays out
+        self.assertEqual((scope["modified"], scope["added"], scope["deleted"]), (["13101-bldg-1"], [], []))
+        self.assertIn("base-update", render(result))
+
+    def test_a_merge_with_a_hand_made_change_is_refused(self):
+        base, head = self.update_with_the_button()
+        self.repo.run("reset", "-q", "--soft", "HEAD^")                    # undo, then merge again by hand
+        self.repo.run("reset", "-q", "--hard", "HEAD")
+        self.repo.run("merge", "-q", "--no-ff", "--no-commit", base)
+        (self.repo.root / "tile.gml").write_text(_gml(5, 1), encoding="utf-8")   # a change inside the merge
+        self.repo.run("add", "tile.gml")
+        self.repo.run("commit", "-q", "--no-edit")
+        result = inspect_range(self.repo.root, base, self.repo.run("rev-parse", "HEAD"))
+        self.assertFalse(result[-1].ok)
+        self.assertIn("Rebase onto main", " ".join(result[-1].errors))
+
+    def test_a_merge_of_another_branch_is_refused(self):
+        base, head = self.update_with_the_button(other_branch="side")
+        result = inspect_range(self.repo.root, base, head)
+        self.assertFalse(next(r for r in result if len(self.repo.run("show", "-s", "--format=%P", r.sha).split()) == 2).ok)
 
     def test_one_building_commit_passes(self):
         head = self.repo.commit_gml(2, 1, "update one\n\nBuilding: 13101-bldg-1")
@@ -132,6 +186,19 @@ class TestCommitBuildingScope(unittest.TestCase):
         )
         result = inspect_range(self.repo.root, base, head)
         self.assertTrue(result[0].ok, result[0].errors)
+
+    def test_scope_extract_takes_only_the_packs_municipality_codes(self):
+        # D-b8: the trailer's value was never checked (extract_municipality requires 5 digits), and
+        # a building's 4-digit uro:city counted as its municipality; the pack owns the code's form
+        source = _gml_members([("13101-bldg-1", "13101", 1), ("1310-bldg-2", "1310", 1)])
+        base = self.repo.commit_text(source, "official boundary mesh")
+        head = self.repo.commit_text(_gml_members([("13101-bldg-1", "13101", 1)]),
+                                     "extract\n\nChange-Type: scope-extract\nScope-Municipality: 13101")
+        errors = " ".join(inspect_range(self.repo.root, base, head)[0].errors)
+        self.assertIn("no determinable municipality code: 1310-bldg-2", errors)
+        head = self.repo.commit_text(_gml_members([("1310-bldg-2", "1310", 1)]),
+                                     "extract\n\nChange-Type: scope-extract\nScope-Municipality: 1310")
+        self.assertIn("1310 is not a municipality code", " ".join(inspect_range(self.repo.root, base, head)[-1].errors))
 
     def _city(self, building_id: dict, members: str) -> None:
         # a CityGML 1.0 city in the default namespace, identified as its 4dcitygml.json says
@@ -271,6 +338,15 @@ class TestCommitBuildingScope(unittest.TestCase):
         churn = self.repo.commit_text(self.two().replace("><bldg:", ">\n  <bldg:"), "format only")
         self.assertEqual(self.scope_counts(base, churn), ([], [], [], [], "none"))
 
+    def test_pr_scope_reads_numbers_as_the_diff_does(self):
+        # U6 / D-c1: the PR scope compared raw values, so 1 -> 1.0 was a modification here and no
+        # change in diff_citygml; one rule now (numeric-normalised), renames 1:1 only
+        base = self.base
+        reformatted = self.repo.commit_text(self.two().replace(
+            "<bldg:storeysAboveGround>1</bldg:storeysAboveGround>", "<bldg:storeysAboveGround>1.0</bldg:storeysAboveGround>"),
+            "format only")
+        self.assertEqual(self.scope_counts(base, reformatted), ([], [], [], [], "none"))
+
     def test_pr_scope_counts_the_buildings_of_whole_files(self):
         base = self.base
         (self.repo.root / "other.gml").write_text(_gml_members([("13101-bldg-3", "13101", 1), ("13101-bldg-4", "13101", 1)]),
@@ -289,7 +365,7 @@ class TestCommitBuildingScope(unittest.TestCase):
         self.assertNotIn("/^BLDG renamed/", driver)          # D14's field was the word "renamed"
         self.assertNotIn("--changed-buildings", driver)      # texture changes are in the scope now
         self.assertNotIn("NEWFILE", driver)                  # D17: a new file counted as one building
-        self.assertIn('counts="$("$PY" -c "$scope_py" "$SCOPE_JSON" counts)" || {', driver)
+        self.assertIn('counts="$(jq -r \'.scope // empty', driver)        # U3: jq reads the scope file
 
     def test_a_malformed_file_makes_the_scope_a_finding(self):
         # snapshot broken-xml: the scope failed on a missing end tag and file-scope showed a system error
@@ -301,7 +377,8 @@ class TestCommitBuildingScope(unittest.TestCase):
         with patch.object(cbs, "pr_scope", side_effect=OSError("git failed")):
             self.assertFalse(cbs._scope_or_error(Path("."), "a", "b")["scopeMalformed"])
         driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")
-        self.assertIn('sys.exit(1 if d.get("scopeMalformed") else 2)', driver)
+        step = driver[driver.index("jq -r '.scopeMalformed // false'"):]
+        self.assertLess(step.index("exit 1"), step.index("exit 2"))    # a malformed file: a finding (1), else 2
 
     def test_the_driver_reads_the_facts_instead_of_grepping_messages(self):
         driver = (Path(__file__).resolve().parents[1] / "ci/pr_analysis_main.sh").read_text(encoding="utf-8")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""PLATEAU CityGML attribute editor — local server.
+"""CityGML attribute editor — local server.
 
 Runs a lightweight HTTP server on top of a local clone of a city repository, and
 lets the browser UI (index.html / viewer.html) browse/edit building attributes
@@ -17,17 +17,17 @@ and create PRs.
   screen (never the computer's GitHub CLI).
 
 Usage:
-    python app.py --repo ~/<city clone> [--port 8765] [--no-browser]
+    python app.py --repo ~/<city clone> [--port <port>] [--no-browser]   # runtime.EDITOR_PORTS
     # --repo may be omitted when placed inside the clone (tools/attr_editor/ etc.; auto-detected)
-    # If no clone is found, the first-run setup screen (clone GUI) is shown
 
 Distributed as plain .py with a bundled Python (PythonPortable) on Windows
-(packaging/start-windows.bat; decision 2026-08-28 — no frozen executable).
+(decision 2026-08-28 — no frozen executable).
 The clone location is remembered in ~/.citygml_attr_editor.json.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import subprocess
@@ -48,7 +48,9 @@ if _SHARED is None:
 sys.path.insert(0, str(_SHARED))
 import runtime  # noqa: E402
 import building_identity  # noqa: E402
+import dialects  # noqa: E402
 import citygml_dialect  # noqa: E402
+import codelists as codelist_files  # noqa: E402
 import citygml_faces  # noqa: E402
 import pr_classification  # noqa: E402
 import pr_markers  # noqa: E402
@@ -63,20 +65,32 @@ tr_lang = runtime.translator_in("attr_editor")  # repository-facing text in the 
 # ---- Theme pack (tools/themes/theme_loader.py via runtime; a broken theme.json is ignored) ----
 
 
-def city_map_config(repo_root) -> dict:
-    """Read map settings (tiles/center/zoom) from the clone's 4dcitygml.json.
+_OSM = {"url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png", "maxZoom": 19,
+        "attribution": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}
 
-    Values are fail-closed (only validated ones are adopted). If absent, an empty
-    dict is returned and the frontend uses its defaults (OpenStreetMap, fitBounds to tile bounds).
-    """
-    if repo_root is None:
-        return {}
-    m = runtime.city_meta(repo_root).get("map")
+
+def _gsi(layer: str, ext: str = "png") -> dict:
+    return {"url": f"https://cyberjapandata.gsi.go.jp/xyz/{layer}/{{z}}/{{x}}/{{y}}.{ext}", "maxZoom": 18,
+            "attribution": tr("editor.gsi_attribution", "GSI Tiles")}
+
+
+def basemaps(tiles: "str | None") -> dict:
+    """The background layers of the screens for a city's `map.tiles`: `plan` under the editors'
+    2D map, `street` and `photo` (None: no aerial layer) in the 3D view. OpenStreetMap unless the
+    city declares GSI's tiles, which cover Japan only (V6: before, each page had its own copy)."""
+    if tiles == "gsi":
+        return {"plan": _gsi("pale"), "street": _gsi("std"), "photo": _gsi("seamlessphoto", "jpg")}
+    return {"plan": _OSM, "street": _OSM, "photo": None}
+
+
+def city_map_config(repo_root) -> dict:
+    """The map the screens open on, from the clone's 4dcitygml.json: the background layers and,
+    when the city sets them, the centre and zoom (only validated values are adopted; without
+    them the screens start from a world view and fit the tiles)."""
+    m = runtime.city_meta(repo_root).get("map") if repo_root is not None else None
     if not isinstance(m, dict):
-        return {}
-    out: dict = {}
-    if m.get("tiles") in ("gsi", "osm"):
-        out["tiles"] = m["tiles"]
+        m = {}
+    out: dict = {"basemaps": basemaps(m.get("tiles"))}
     c = m.get("center")
     if (isinstance(c, list) and len(c) == 2
             and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in c)
@@ -86,19 +100,6 @@ def city_map_config(repo_root) -> dict:
     if isinstance(z, (int, float)) and not isinstance(z, bool) and 1 <= z <= 19:
         out["zoom"] = int(z)
     return out
-
-
-def city_map_html(data: bytes, repo_root) -> bytes:
-    """Inject the map settings into the page as window.CITY_MAP (pass through if unset)."""
-    cfg = city_map_config(repo_root)
-    if not cfg:
-        return data
-    payload = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
-    script = f"<script>window.CITY_MAP = {payload};</script>".encode("utf-8")
-    i = data.find(b"</head>")
-    if i < 0:
-        return script + data
-    return data[:i] + script + data[i:]
 
 
 # ---- Language pack (tools/i18n/i18n_loader.py via runtime; a broken catalog falls back to English) ----
@@ -133,7 +134,7 @@ def sync_upstream_main(root) -> "str | None":
     if not runtime.git_exe():
         return None
     result = git_sync.sync_main(Path(root).resolve(), runtime.upstream_url(root),
-                                runtime.git_args(net=True, store=accounts.store_for(accounts.login_for_clone(root))), log=print)
+                                accounts.store_for(accounts.login_for_clone(root)), log=print)
     return result.get("head") if result.get("state") in ("updated", "ref-moved") else None
 
 
@@ -142,39 +143,15 @@ crs_transformer = citygml_dialect.crs_transformer
 ns_for_root = citygml_dialect.ns_for_root
 
 
-def stable_building_id_from_span(
-    span: bytes,
-    gid: str,
-    bid_type: str = "uro:buildingID",
-    invalid_values: "set[str] | frozenset[str] | tuple[str, ...]" = (),
-) -> str:
-    """The stable ID of a building span under the city's rule (building_identity.stable_id)."""
-    return building_identity.stable_id(span, gid, building_identity.IdentityRule(bid_type, frozenset(invalid_values)))
-
-
-# For QName reconstruction (namespace URI → conventional prefix). Used for source-note keys (R2-2)
+# For QName reconstruction (namespace URI → conventional prefix), both CityGML versions (D-3b4).
+# Used for source-note keys (R2-2)
 PREFIX_BY_URI = {
-    "http://www.opengis.net/citygml/2.0": "core",
-    "http://www.opengis.net/citygml/building/2.0": "bldg",
-    "http://www.opengis.net/gml": "gml",
-    "http://www.opengis.net/citygml/appearance/2.0": "app",
-    "http://www.opengis.net/citygml/generics/2.0": "gen",
+    **{uri: prefix for ns in (citygml_dialect.NS, citygml_dialect.NS10) for prefix, uri in ns.items()},
     "http://www.opengis.net/citygml/relief/2.0": "dem",
-    "https://www.geospatial.jp/iur/uro/3.2": "uro",
-    "https://www.geospatial.jp/iur/uro/3.1": "uro",
     "urn:oasis:names:tc:ciq:xsdschema:xAL:2.0": "xAL",
 }
 
-# Source recording rules (docs/provenance-rules.md)
-SRC_SET_NAME = "出典"  # R2-1: name of the gen:genericAttributeSet (at most 1 per building)
-SRC_CODELIST = "DataQualityAttribute_thematicSrcDesc.xml"  # R2-3: notes use the same code table as the upper level
-# Status codes not selectable as evidence for new attribute changes. Still used to display existing data.
-NON_SOURCE_CODES = {"898", "999"}  # unknown / not created
-_SRC_SET_RE = re.compile(
-    ('<gen:genericAttributeSet name="' + SRC_SET_NAME + '"[^>]*>').encode("utf-8")
-    + rb".*?</gen:genericAttributeSet>",
-    re.S,
-)
+# Source recording (docs/provenance-rules.md): the convention is the dialect pack's (Pack.sources)
 _THEMATIC_RE = re.compile(
     rb"<((?:\w+:)?)thematicSrcDesc\b([^>]*)>([^<]*)</(?:\w+:)?thematicSrcDesc>"
 )
@@ -182,7 +159,7 @@ _CREATION_RE = re.compile(rb"<(?:\w+:)?creationDate>[^<]*</(?:\w+:)?creationDate
 
 
 # Always read-only leaves (spec §3: gml:id, geometry, buildingID, creationDate)
-READONLY_TAGS = {"buildingID", "creationDate"}
+READONLY_TAGS = {"creationDate"}   # and the leaf of the city's stable ID (building_identity.identity_leaf)
 # Geometry tags (safety net rejected by the edit API; not shown in the UI)
 GEOMETRY_TAGS = {"posList", "pos", "lowerCorner", "upperCorner"}
 
@@ -201,10 +178,12 @@ def _change_key(change: dict) -> str:
 
 
 def validate_source_selections(
-    changes: list[dict], source_selections: list[dict], code_table: dict[str, str]
+    changes: list[dict], source_selections: list[dict], code_table: dict[str, str],
+    not_sources: frozenset = frozenset(),
 ) -> dict[str, dict[str, str]]:
-    """Verify that every attribute value change has an explicitly selected, valid source.
-    A city whose data has no source code list (only PLATEAU data carries one) records no sources."""
+    """Verify that every attribute value change has an explicitly selected, valid source
+    (`not_sources`: codes that are never one; still shown for existing data). A city whose
+    dialect records no sources, or whose data lacks the code list, records none."""
     leaf_changes = [c for c in changes if c.get("kind") != "src"]
     if not leaf_changes or not code_table:
         return {}
@@ -228,7 +207,7 @@ def validate_source_selections(
                 "editor.err_source_not_in_list",
                 "The selected source is not in the code list. Please reload the page",
             ))
-        if code in NON_SOURCE_CODES:
+        if code in not_sources:
             raise ValueError(tr(
                 "editor.err_source_unknown_code",
                 '"Unknown" or "Not created" cannot be chosen as the source of a changed attribute',
@@ -375,66 +354,18 @@ def build_pr_body(
         + "</sub>\n"
     )
 
-# Display names (localname → English label). Undefined ones display the tag name as-is.
-LABELS = {
-    "class": "Classification",
-    "usage": "Usage",
-    "measuredHeight": "Measured Height",
-    "storeysAboveGround": "Storeys Above Ground",
-    "storeysBelowGround": "Storeys Below Ground",
-    "roofType": "Roof Type",
-    "yearOfConstruction": "Year of Construction",
-    "creationDate": "Creation Date",
-    "buildingID": "Building ID",
-    "prefecture": "Prefecture",
-    "city": "City/Ward",
-    "branchID": "Branch ID",
-    "buildingRoofEdgeArea": "Roof Edge Area",
-    "buildingStructureType": "Structure Type",
-    "fireproofStructureType": "Fireproof Structure Type",
-    "detailedUsage": "Detailed Usage",
-    "urbanPlanType": "Urban Plan Type",
-    "areaClassificationType": "Area Classification Type",
-    "districtsAndZonesType": "Districts and Zones Type",
-    "landUseType": "Land Use Type",
-    "specifiedBuildingCoverageRate": "Specified Building Coverage Rate",
-    "specifiedFloorAreaRate": "Specified Floor Area Rate",
-    "standardFloorAreaRate": "Standard Floor Area Rate",
-    "surveyYear": "Survey Year",
-    "vacancy": "Vacancy Type",
-    "buildingFootprintArea": "Building Footprint Area",
-    "totalFloorArea": "Total Floor Area",
-    "description": "Area Name",
-    "rank": "Flood Risk Rank",
-    "rankOrg": "Flood Risk Rank (Custom)",
-    "depth": "Estimated Flood Depth",
-    "adminType": "Administrative Type",
-    "scale": "Flood Scale",
-    "duration": "Duration",
-    "areaType": "Area Type",
-    "key": "Key",
-    "codeValue": "Value",
-    "value": "Value",
-    "thematicSrcDesc": "Thematic Attribute Source",
-    "geometrySrcDescLod0": "Geometry Source LOD0",
-    "geometrySrcDescLod1": "Geometry Source LOD1",
-    "geometrySrcDescLod2": "Geometry Source LOD2",
-    "geometrySrcDescLod3": "Geometry Source LOD3",
-    "geometrySrcDescLod4": "Geometry Source LOD4",
-    "appearanceSrcDescLod2": "Appearance Source LOD2",
-    "appearanceSrcDescLod3": "Appearance Source LOD3",
-    "appearanceSrcDescLod4": "Appearance Source LOD4",
-    "srcScaleLod0": "Map Information Level LOD0",
-    "srcScaleLod1": "Map Information Level LOD1",
-    "srcScaleLod2": "Map Information Level LOD2",
-    "publicSurveySrcDescLod0": "Public Survey Source LOD0",
-    "publicSurveySrcDescLod1": "Public Survey Source LOD1",
-    "publicSurveySrcDescLod2": "Public Survey Source LOD2",
-    "lod1HeightType": "LOD1 Height Acquisition Method",
-    "CountryName": "Country",
-    "LocalityName": "Location",
-    "name": "Name",
-}
+def _english_labels(prefix: str) -> dict:
+    """Display names in English: the catalog's label.* entries, their one owner (V10: the code
+    kept a second copy). Undefined tags display the tag name as-is."""
+    try:
+        en = json.loads((runtime.i18n_loader.CATALOG_DIR / "attr_editor" / "en.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):   # a broken catalog shows tag names, never stops the editor
+        return {}
+    return {k[len(prefix):]: v for k, v in en.items()
+            if k.startswith(prefix) and (prefix != "label." or not k.startswith("label.risk_"))}
+
+
+LABELS = _english_labels("label.")   # localname → English display name
 
 # localname directly under Building → attribute-card group
 _GROUP_BY_TOPTAG = {
@@ -456,13 +387,7 @@ _GROUP_BY_TOPTAG = {
     "bldgDataQualityAttribute": "quality",
 }
 
-_RISK_TITLES = {
-    "RiverFloodingRiskAttribute": "River Flood Risk",
-    "HighTideRiskAttribute": "High Tide Flood Risk",
-    "TsunamiRiskAttribute": "Tsunami Risk",
-    "InlandFloodingRiskAttribute": "Inland Flood Risk",
-    "LandSlideRiskAttribute": "Landslide Hazard Area",
-}
+_RISK_TITLES = _english_labels("label.risk_")   # risk attribute → English title
 
 
 def ui_label(tag: str) -> str:
@@ -498,14 +423,15 @@ def _local(elem: ET.Element) -> str:
     return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
 
-def _qname(elem: ET.Element) -> str:
-    """The element's QName (prefix:local). Used for source-note keys (R2-2)."""
+def _qname(elem: ET.Element, prefixes: "dict | None" = None) -> str:
+    """The element's QName (prefix:local) by `prefixes` (PREFIX_BY_URI and the dialect pack's).
+    Used for source-note keys (R2-2)."""
     tag = elem.tag
     if not isinstance(tag, str):
         return ""
     if tag.startswith("{"):
         uri, local = tag[1:].split("}", 1)
-        prefix = PREFIX_BY_URI.get(uri)
+        prefix = (prefixes or PREFIX_BY_URI).get(uri)
         return f"{prefix}:{local}" if prefix else local
     return tag
 
@@ -515,28 +441,6 @@ def _line_indent(data: bytes, pos: int) -> bytes:
     line_start = data.rfind(b"\n", 0, pos) + 1
     ws = data[line_start:pos]
     return ws if not ws.strip() else b""
-
-
-# --------------------------------------------------------------------------
-# Mesh code → lat/lon bounds (JIS X 0410)
-# --------------------------------------------------------------------------
-def mesh_bounds(code: str) -> list[float] | None:
-    """Mesh code (8 digits = level 3 / 9 digits = quarter subdivision) → [south, west, north, east]."""
-    if not code.isdigit() or len(code) < 8:
-        return None
-    lat = int(code[0:2]) * 2 / 3
-    lon = int(code[2:4]) + 100
-    lat += int(code[4]) * 2 / 3 / 8
-    lon += int(code[5]) / 8
-    lat += int(code[6]) * 2 / 3 / 80
-    lon += int(code[7]) / 80
-    dlat, dlon = 2 / 3 / 80, 1 / 80
-    if len(code) >= 9:
-        d = int(code[8]) - 1  # 1=SW 2=SE 3=NW 4=NE
-        dlat, dlon = dlat / 2, dlon / 2
-        lat += (d // 2) * dlat
-        lon += (d % 2) * dlon
-    return [lat, lon, lat + dlat, lon + dlon]
 
 
 # --------------------------------------------------------------------------
@@ -551,23 +455,27 @@ class Edit:
         self.extra = dict(extra or {})  # facts the screen shows after sending
 
 
+_sending = threading.local()   # the account a sending thread pinned (Repo._one_account)
+
+
 class Repo:
     def __init__(self, root: Path, data: str | None = None):
         self.root = root.resolve()
-        candidates = sorted(self.root.glob("*/udx/bldg"))
-        if data:
-            candidates = [d for d in candidates if data in str(d.parent.parent.name)]
-        if not candidates:
-            # Without the PLATEAU layout (*/udx/bldg), use data_dirs from 4dcitygml.json
-            # (supports international datasets such as munich=lod2_citygml, newyork=citygml)
-            candidates = [
-                d for d in runtime.data_dirs(self.root)
-                if (not data or data in d.name) and any(d.glob("*.gml"))
-            ]
+        # The data folders the city declares (data_dirs); inside one, its dialect pack may keep the
+        # buildings in a folder of their own. No folder is guessed: an undeclared city is told to declare one.
+        self._pack = runtime.city(self.root).pack
+        self._prefixes = {**PREFIX_BY_URI, **dict(self._pack.namespaces)}
+        packages = {
+            bldg: d for d in runtime.data_dirs(self.root)
+            for bldg in [dialects.buildings_dir(d, self._pack)]
+            if (not data or data in d.name) and any(bldg.glob("*.gml"))
+        }
+        candidates = list(packages)
         if not candidates:
             raise RuntimeError(tr(
                 "editor.err_no_bldg_data",
-                "udx/bldg was not found in {root} (check the --data option)",
+                "No building data in {root}: the city's 4dcitygml.json declares no data_dirs folder "
+                "with CityGML files (or --data names none of them)",
                 root=self.root,
             ))
         # With multiple packages, use the one with the most data (total .gml bytes) (--data can override)
@@ -575,17 +483,16 @@ class Repo:
             candidates,
             key=lambda d: sum(p.stat().st_size for p in d.glob("*.gml")),
         )
+        # The data package: the declared folder that holds them (never above the clone: /raw/ serves
+        # files below it)
+        self.data_root = packages[self.bldg_dir]
         if len(candidates) > 1:
-            names = ", ".join(d.parent.parent.name for d in candidates)
-            print(f"Data package candidates: {names}\n  → using {self.bldg_dir.parent.parent.name} (override with --data)")
-        # The data package: <package>/udx/bldg in PLATEAU's layout, else the data directory itself
-        # (never above the clone: /raw/ serves files below it)
-        plateau_layout = self.bldg_dir.name == "bldg" and self.bldg_dir.parent.name == "udx"
-        self.data_root = self.bldg_dir.parent.parent if plateau_layout else self.bldg_dir
+            print(f"Data package candidates: {', '.join(d.name for d in packages.values())}\n  → using "
+                  f"{self.data_root.name} (override with --data)")
         # City metadata (4dcitygml.json): building ID type and display-language default
         meta = runtime.city_meta(self.root)
-        rule = building_identity.rule_from_config(meta)
-        self._bid_type, self._bid_invalid_values = rule.type, rule.invalid_values
+        self._id_rule = building_identity.rule_from_config(meta)
+        self._crs = runtime.city(self.root).crs           # the files' CRS when they name none
         # Repo working language (4dcitygml.json "lang"): the language of repo-facing
         # generated text (PR title/body). UI labels follow the user's language via tr().
         self._repo_lang = runtime.norm_lang(meta.get("lang"))
@@ -598,22 +505,14 @@ class Repo:
 
     # ---- File listing ----
     def tile_files(self) -> dict[str, Path]:
-        out = {}
-        plateau = sorted(self.bldg_dir.glob("*_bldg_*_op.gml"))
-        if plateau:
-            for p in plateau:
-                out[p.name.split("_", 1)[0]] = p
-        else:
-            # Non-PLATEAU naming (munich's 690_5335_1.gml etc.): use the filename stem as the code
-            for p in sorted(self.bldg_dir.glob("*.gml")):
-                out[p.stem] = p
-        return out
+        return runtime.tile_files(self.bldg_dir, self._pack)
 
     def _tile_bounds(self, code: str, path: Path) -> "list[float] | None":
-        """The tile's frame: its mesh cell for PLATEAU-named tiles (<mesh>_bldg_..._op.gml), else
-        the file's own Envelope (a numeric file name elsewhere is not a Japanese mesh code)."""
-        if re.fullmatch(r"\d+_bldg_.*_op\.gml", path.name):
-            return mesh_bounds(code) or self._envelope_bounds(path)
+        """The tile's frame: the dialect pack's frame of a tile it names (a mesh cell), else the
+        file's own Envelope (a numeric file name elsewhere is not a mesh code)."""
+        pack = self._pack
+        if pack.tile_frame and pack.tile_name and re.fullmatch(pack.tile_name, path.name):
+            return pack.tile_frame(code) or self._envelope_bounds(path)
         return self._envelope_bounds(path)
 
     def _envelope_bounds(self, path: Path) -> "list[float] | None":
@@ -640,12 +539,11 @@ class Repo:
         if len(lo) < 2 or len(hi) < 2:
             return None
         m = re.search(r'srsName="([^"]*)"', head)
-        tf = crs_transformer(m.group(1) if m else "")
-        if tf is not None:
-            s, w = tf(lo[0], lo[1])
-            n, e = tf(hi[0], hi[1])
-        else:
-            s, w, n, e = lo[0], lo[1], hi[0], hi[1]
+        tf = crs_transformer((m.group(1) if m else "") or (self._crs or ""))
+        if tf is None:   # a CRS the tools do not know: no frame, never read as lat/lon
+            return None
+        s, w = tf(lo[0], lo[1])
+        n, e = tf(hi[0], hi[1])
         return [round(min(s, n), 7), round(min(w, e), 7),
                 round(max(s, n), 7), round(max(w, e), 7)]
 
@@ -675,43 +573,51 @@ class Repo:
         return out
 
     # ---- Code lists ----
+    def list_key(self, path: Path) -> str:
+        """The page's key of a code list file: its path below <data_root>/codelists (edition folders
+        included), else its own path."""
+        try:
+            return path.relative_to(self.codelists_dir.resolve()).as_posix()
+        except ValueError:
+            return path.as_posix()
+
     def codelists(self) -> dict:
+        """The lists of <data_root>/codelists (the source list and the pack's default lists live there)."""
         if self._codelists is None:
-            out: dict = {}
-            if self.codelists_dir.is_dir():
-                for p in sorted(self.codelists_dir.glob("*.xml")):
-                    try:
-                        table = {}
-                        root = ET.parse(str(p)).getroot()
-                        for defn in root.iter():
-                            if _local(defn) != "Definition":
-                                continue
-                            code = label = None
-                            for c in defn:
-                                ln = _local(c)
-                                if ln == "name":
-                                    code = (c.text or "").strip()
-                                elif ln == "description":
-                                    label = (c.text or "").strip()
-                            if code is not None:
-                                table[code] = label or ""
-                        out[p.name] = table
-                    except ET.ParseError:
-                        continue
-            self._codelists = out
+            files = sorted(self.codelists_dir.resolve().rglob("*.xml")) if self.codelists_dir.is_dir() else []
+            tables = {self.list_key(p): codelist_files.read(p) for p in files}
+            self._codelists = {k: t for k, t in tables.items() if t is not None}
         return self._codelists
 
     # ---- Tile loading (parse + cache) ----
-    def tile(self, code: str) -> dict:
+    @staticmethod
+    def _stamp(path: Path) -> "tuple | None":
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+
+    def _cached_tile(self, code: str) -> "dict | None":
+        """A parsed tile while its file is as parsed: the hub's sync and the other editor run in
+        other processes and change files without telling this one (D-3c9)."""
         cached = self._tile_cache.get(code)
+        if cached is None or cached["_stamp"] != self._stamp(self.root / cached["relpath"]):
+            return None
+        return cached
+
+    def tile(self, code: str) -> dict:
+        cached = self._cached_tile(code)
         if cached is not None:
             return cached
         with self._locks_guard:
             lock = self._tile_locks.setdefault(code, threading.Lock())
         with lock:
-            cached = self._tile_cache.get(code)
+            cached = self._cached_tile(code)
             if cached is None:
-                cached = self._parse_tile(code)
+                path = self.tile_files().get(code)
+                stamp = self._stamp(path) if path is not None else None   # before reading: a change meanwhile reparses
+                cached = {**self._parse_tile(code), "_stamp": stamp}
                 self._tile_cache[code] = cached
             return cached
 
@@ -724,10 +630,12 @@ class Repo:
         root = ET.fromstring(raw)
         ns = ns_for_root(root)
         # Files in projected systems (UTM, state plane, etc.) are converted to WGS84 lat/lon before returning
-        tf = citygml_dialect.file_transformer(root, ns)
+        tf = citygml_dialect.file_transformer(root, ns, self._crs or "")
 
         buildings: dict[str, dict] = {}
         order: list[str] = []
+        outside: dict[str, dict] = {}   # the lists the values name that are not under <data_root>/codelists
+        list_keys: dict = {}            # codeSpace -> key, found once per tile (a building names hundreds)
         for member in root.findall(f"{{{ns['core']}}}cityObjectMember"):
             bel = member.find(f"{{{ns['bldg']}}}Building")
             if bel is None:
@@ -736,7 +644,7 @@ class Repo:
             if not gid or gid not in spans:
                 continue
             s, e = spans[gid]
-            b = self._parse_building(bel, raw[s:e], ns, tf)
+            b = self._parse_building(bel, raw[s:e], ns, tf, path.parent, outside, list_keys)
             buildings[gid] = b
             order.append(gid)
         # appearance: face id -> {img, uv[, holes]}, by the face's own rings (scripts/citygml_faces.py)
@@ -756,10 +664,12 @@ class Repo:
             "order": order,
             "buildings": buildings,
             "texmap": texmap,
+            "codelists": outside,
         }
 
     def _parse_building(self, bel: ET.Element, span: bytes, ns: dict = NS,
-                        tf=None) -> dict:
+                        tf=None, gml_dir: "Path | None" = None, outside: "dict | None" = None,
+                        list_keys: "dict | None" = None) -> dict:
         gid = bel.get(f"{{{ns['gml']}}}id", "")
 
         # ---- Geometry (same extraction as extract_building_preview.py) ----
@@ -787,15 +697,9 @@ class Repo:
         coords: list[list[float]] = []
         if pos_el is not None and pos_el.text:
             nums = [float(x) for x in pos_el.text.split()]
-            if tf is not None:
-                # Projected posList is in E N h order → convert to (lat, lon)
+            if tf is not None:   # an unknown CRS gives no footprint (no map), never lat/lon
                 coords = [
                     [round(v, 7) for v in tf(nums[i], nums[i + 1])]
-                    for i in range(0, len(nums) - 2, 3)
-                ]
-            else:
-                coords = [
-                    [round(nums[i], 7), round(nums[i + 1], 7)]
                     for i in range(0, len(nums) - 2, 3)
                 ]
 
@@ -823,13 +727,14 @@ class Repo:
                     lod1top = round(float(parts[2]) * zs, 3)
 
         # LOD2 faces (BuildingParts included; holes kept as holes): scripts/citygml_faces.py
-        lod2 = citygml_faces.lod2_faces(bel, ns, tf, zs, gid)
+        lod2 = citygml_faces.lod2_faces(bel, ns, tf, zs, gid) if tf is not None else []   # unknown CRS: no faces
 
         # ---- Attribute tree (enumerate non-geometry leaves) ----
         # Edit address = (tag localname, occurrence index of that tag within the span).
         # Occurrence order is matched against the regex match sequence on the original bytes (values verified too).
         tag_matches: dict[str, list] = {}
         tag_ptr: dict[str, int] = {}
+        id_leaf = building_identity.identity_leaf(span, self._id_rule)
 
         def leaf_index(tag: str, value: str) -> int | None:
             if tag not in tag_matches:
@@ -847,57 +752,72 @@ class Repo:
 
         codelists = self.codelists()
         items: list[dict] = []
-        building_id = ""
         # Source info (resolution rule of docs/provenance-rules.md: note > upper thematicSrcDesc > unknown)
         src_upper: list[str] = []
         src_specific: dict[str, str] = {}
-        src_codelist = SRC_CODELIST
+        sources = self._pack.sources
+        src_codelist = sources.codelist if sources else ""
+
+        defaults = dict(self._pack.default_codelists)
+
+        def codelist_of(el: ET.Element) -> "str | None":
+            """The page's key of the code list of a value: the file its codeSpace names relative to the
+            .gml file, as CI reads it (codelist_files.resolve); a value without codeSpace gets the pack's
+            list for the element from <data_root>/codelists. None: no list, free input."""
+            cs = el.get("codeSpace")
+            if not cs:
+                key = defaults.get(_local(el))
+                return key if key in codelists else None
+            if list_keys is not None and cs in list_keys:
+                return list_keys[cs]
+            path = codelist_files.resolve(cs, gml_dir) if gml_dir is not None else None
+            key = self.list_key(path) if path else None
+            if key is not None and key not in codelists:
+                table = codelist_files.read(path)
+                if table is None:
+                    key = None
+                elif outside is not None:
+                    outside[key] = table
+            if list_keys is not None:
+                list_keys[cs] = key
+            return key
+
+        def leaf(el: ET.Element) -> dict:
+            ln = _local(el)
+            idx = leaf_index(ln, (el.text or ""))
+            return {
+                "tag": ln,
+                "label": ui_label(ln),
+                "value": (el.text or "").strip(),
+                "index": idx,
+                "codelist": codelist_of(el),
+                "uom": el.get("uom"),
+                "readonly": ln in READONLY_TAGS or ln in GEOMETRY_TAGS or idx is None or (ln, idx) == id_leaf,
+                "qname": _qname(el, self._prefixes),
+            }
 
         def collect_leaves(elem: ET.Element, out: list[dict]) -> None:
-            nonlocal building_id
             for child in elem:
                 ln = _local(child)
                 if not ln or ln.startswith("lod") or ln == "boundedBy":
                     continue
                 if len(child) > 0:
                     collect_leaves(child, out)
-                    continue
-                value = (child.text or "").strip()
-                code_space = child.get("codeSpace")
-                codelist = None
-                if code_space:
-                    codelist = code_space.rsplit("/", 1)[-1]
-                    if codelist not in codelists:
-                        codelist = None
-                idx = leaf_index(ln, (child.text or ""))
-                readonly = ln in READONLY_TAGS or ln in GEOMETRY_TAGS or idx is None
-                if ln == "buildingID":
-                    building_id = value
-                out.append(
-                    {
-                        "tag": ln,
-                        "label": ui_label(ln),
-                        "value": value,
-                        "index": idx,
-                        "codelist": codelist,
-                        "uom": child.get("uom"),
-                        "readonly": readonly,
-                        "qname": _qname(child),
-                    }
-                )
+                else:
+                    out.append(leaf(child))
 
         for top in bel:
             ln = _local(top)
             if not ln or ln.startswith("lod") or ln == "boundedBy":
                 continue
-            if ln == "genericAttributeSet" and top.get("name") == SRC_SET_NAME:
+            if sources and ln == "genericAttributeSet" and top.get("name") == sources.set_name:
                 # Source-note set (R2-1): not shown on cards; feeds the resolution rule.
                 # Consume leaf indexes (keeps edit addresses of later same-tag leaves correct)
                 for entry in top:
                     name = entry.get("name") or ""
                     for v in entry:
                         leaf_index(_local(v), (v.text or ""))
-                        if _local(v) == "value" and not name.startswith("根拠資料"):
+                        if _local(v) == "value" and not (sources.evidence_prefix and name.startswith(sources.evidence_prefix)):
                             src_specific[name] = (v.text or "").strip()
                 continue
             if ln == "bldgDataQualityAttribute":
@@ -906,11 +826,7 @@ class Repo:
                         code = (el.text or "").strip()
                         if code:
                             src_upper.append(code)
-                        cs = el.get("codeSpace")
-                        if cs:
-                            cl = cs.rsplit("/", 1)[-1]
-                            if cl in codelists:
-                                src_codelist = cl
+                        src_codelist = codelist_of(el) or src_codelist
             group = _GROUP_BY_TOPTAG.get(ln, "other")
             title = ""
             if ln in ("stringAttribute", "genericAttributeSet"):
@@ -922,27 +838,8 @@ class Repo:
             elif ln == "address":
                 title = tr("editor.addr_group", "Address")
             leaves: list[dict] = []
-            if len(top) == 0:
-                # Direct leaves (class / usage / creationDate etc.)
-                collect_leaves_single = {
-                    "tag": ln,
-                    "label": ui_label(ln),
-                    "value": (top.text or "").strip(),
-                    "index": leaf_index(ln, (top.text or "")),
-                    "codelist": None,
-                    "uom": top.get("uom"),
-                    "readonly": ln in READONLY_TAGS,
-                    "qname": _qname(top),
-                }
-                cs = top.get("codeSpace")
-                if cs:
-                    cl = cs.rsplit("/", 1)[-1]
-                    collect_leaves_single["codelist"] = (
-                        cl if cl in codelists else None
-                    )
-                if collect_leaves_single["index"] is None:
-                    collect_leaves_single["readonly"] = True
-                leaves.append(collect_leaves_single)
+            if len(top) == 0:   # direct leaves (class / usage / creationDate etc.)
+                leaves.append(leaf(top))
             else:
                 collect_leaves(top, leaves)
             if group == "quality":
@@ -960,16 +857,9 @@ class Repo:
                 round((min(lons) + max(lons)) / 2, 7),
             ]
 
-        if not building_id:
-            building_id = stable_building_id_from_span(
-                span,
-                gid,
-                getattr(self, "_bid_type", "uro:buildingID"),
-                getattr(self, "_bid_invalid_values", ()),
-            )
         return {
             "gid": gid,
-            "buildingID": building_id,
+            "buildingID": self.stable_id(span, gid),   # the city's rule, as the send uses (D-3b3)
             "footprint": coords,
             "center": center,
             "height": height,
@@ -982,13 +872,17 @@ class Repo:
                 "upper": src_upper,
                 "specific": src_specific,
                 "codelist": src_codelist,
-            } if codelists.get(src_codelist) else None,
+            } if sources and codelists.get(src_codelist) else None,
         }
+
+    @property
+    def _not_sources(self) -> frozenset:
+        return self._pack.sources.not_sources if self._pack.sources else frozenset()
 
     def _source_table(self, building: dict) -> dict:
         """The source code table of a building ({} when the city's data has none)."""
         src = building.get("src")
-        return (self.codelists().get(str(src.get("codelist") or SRC_CODELIST)) or {}) if src else {}
+        return (self.codelists().get(str(src["codelist"])) or {}) if src else {}
 
     # ---- Response shaping ----
     def tile_json(self, code: str) -> dict:
@@ -998,6 +892,7 @@ class Repo:
             "file": t["file"],
             "relpath": t["relpath"],
             "bounds": t["bounds"],
+            "codelists": t["codelists"],     # the lists outside <data_root>/codelists that its values name
             "buildings": [
                 {k: b[k] for k in ("gid", "buildingID", "footprint", "center", "height", "items", "src")}
                 for b in (t["buildings"][g] for g in t["order"])
@@ -1050,12 +945,13 @@ class Repo:
         leaf_changes = [c for c in changes if c.get("kind") != "src"]
         src_changes = [c for c in changes if c.get("kind") == "src"]
 
+        id_leaf = building_identity.identity_leaf(span, self._id_rule)
         for ch in leaf_changes:
             tag = str(ch["tag"])
             idx = int(ch["index"])
             old = str(ch["old"])
             new = str(ch["new"])
-            if tag in READONLY_TAGS or tag in GEOMETRY_TAGS:
+            if tag in READONLY_TAGS or tag in GEOMETRY_TAGS or (tag, idx) == id_leaf:
                 raise ValueError(tr("editor.err_readonly", "{tag} is read-only", tag=tag))
             if new == old:
                 continue
@@ -1131,15 +1027,24 @@ class Repo:
             "r28": list(dict.fromkeys(r28)),
         }
 
-    def _other_udx_changes(self, rel: str) -> list[str]:
-        return [
-            line
-            for line in self._git("status", "--porcelain").stdout.splitlines()
-            if line.strip()
-            and not line.startswith("??")
-            and "/udx/" in line[3:]
-            and line[3:].strip() != rel
-        ]
+    def stable_id(self, span: bytes, gid: str) -> str:
+        """A building's ID under the city's rule: shown, checked and sent alike."""
+        return building_identity.stable_id(span, gid, self._id_rule)
+
+    def _other_data_changes(self, rel: str) -> list[str]:
+        """Tracked files other than `rel` changed under any declared data folder (D-3b2: one
+        folder was looked at, git's quoted names were missed, a Windows `rel` never matched)."""
+        folders = [d.relative_to(self.root).as_posix() for d in runtime.data_dirs(self.root)]
+        if not folders:
+            return []
+        out = self._git("status", "--porcelain", "-z", "--untracked-files=no", "--", *folders).stdout
+        target, others, entries = rel.replace("\\", "/"), [], iter(out.split("\0"))
+        for entry in entries:
+            if entry[:1] in ("R", "C"):
+                next(entries, None)   # -z: a rename's source path follows as its own entry
+            if entry and entry[3:] != target:
+                others.append(entry[3:])
+        return others
 
     def _pretest(self, body: dict) -> dict:
         """Run safe pre-submission checks that the distributed build alone can execute."""
@@ -1185,7 +1090,7 @@ class Repo:
             if building is None:
                 raise KeyError(gid)
             source_table = self._source_table(building)
-            validate_source_selections(changes, source_selections, source_table)
+            validate_source_selections(changes, source_selections, source_table, self._not_sources)
             checks.append({
                 "key": "source",
                 "label": tr("editor.th_source", "Source"),
@@ -1204,8 +1109,7 @@ class Repo:
             spans = building_spans(new_raw)
             building_id = gid
             if gid in spans:
-                building_id = stable_building_id_from_span(
-                    new_raw[slice(*spans[gid])], gid, self._bid_type, self._bid_invalid_values)
+                building_id = self.stable_id(new_raw[slice(*spans[gid])], gid)
             add("building", tr("editor.check_building_label", "Target building"),
                 gid in spans,
                 tr("editor.check_building_pass",
@@ -1233,7 +1137,7 @@ class Repo:
                 tr("editor.check_xml_fail",
                    "The changed XML cannot be parsed: {exc}", exc=exc))
 
-        others = self._other_udx_changes(rel)
+        others = self._other_data_changes(rel)
         add(
             "scope", tr("editor.check_scope_label", "Changed file scope"), not others,
             tr("editor.check_scope_pass", "Only the target building's file will be sent")
@@ -1278,9 +1182,9 @@ class Repo:
             return self._pretest(body)
 
     def _apply_src_change(self, raw: bytes, span: bytes, qname: str, old: str, new: str) -> bytes:
-        """Replace the source-note (gen "出典" set) value, or insert one per convention if absent.
+        """Replace the source-note value (the pack's set of notes), or insert one per convention if absent.
 
-        - R2-1: the set has the fixed name="出典", at most 1 per building (append to an existing one)
+        - R2-1: the set has the pack's fixed name, at most 1 per building (append to an existing one)
         - R2-5: with no set, insert immediately after core:creationDate
         - Indentation and line endings are copied from surrounding lines (consistent with byte preservation)
         """
@@ -1293,7 +1197,9 @@ class Repo:
         eol = b"\r\n" if b"\r\n" in span else b"\n"
         qb = qname.encode("utf-8")
         newb = _xml_escape(new)
-        m_set = _SRC_SET_RE.search(span)
+        set_name = self._pack.sources.set_name.encode("utf-8")
+        m_set = re.search(b'<gen:genericAttributeSet name="' + re.escape(set_name) + rb'"[^>]*>.*?</gen:genericAttributeSet>',
+                          span, re.S)
         entry_re = re.compile(
             rb'(<gen:stringAttribute name="' + re.escape(qb) + rb'">\s*<gen:value>)'
             rb"([^<]*)(</gen:value>)",
@@ -1344,12 +1250,11 @@ class Repo:
                 " is not supported",
             ))
         indent = _line_indent(span, anchor.start())
-        xmlns = (
+        xmlns = (   # the generics module of the file's own version (D-3b4: always 2.0)
             b""
-            if b"xmlns:gen=" in raw[: raw.find(b"<core:cityObjectMember>")]
-            else b' xmlns:gen="http://www.opengis.net/citygml/generics/2.0"'
+            if b"xmlns:gen=" in raw[: raw.find(building_identity.member_markers(raw)[0])]
+            else b' xmlns:gen="' + citygml_dialect.ns_for_bytes(raw)["gen"].encode("utf-8") + b'"'
         )
-        set_name = SRC_SET_NAME.encode("utf-8")
         block = (
             indent + b'<gen:genericAttributeSet name="' + set_name + b'"' + xmlns + b">" + eol
             + indent + b"\t<gen:stringAttribute name=\"" + qb + b"\">" + eol
@@ -1384,8 +1289,21 @@ class Repo:
     # ---- git / PR ----
     @property
     def login(self) -> "str | None":
-        """The account this editor works as for this clone (accounts.login_for_clone)."""
-        return accounts.login_for_clone(self.root)
+        """The account this editor works as for this clone (accounts.login_for_clone), read
+        fresh, except in a sending thread: one account for the push and the PR (D-3c6)."""
+        pinned = getattr(_sending, "login", None)
+        return pinned[0] if pinned else accounts.login_for_clone(self.root)
+
+    @contextlib.contextmanager
+    def _one_account(self):
+        """A send reads the clone's account once, under the send lock: a rebind mid-send cannot
+        split push and PR. The pin belongs to the sending thread alone, so a second request (the
+        server answers each in its own thread) neither overwrites it nor clears it (B04)."""
+        _sending.login = (accounts.login_for_clone(self.root),)
+        try:
+            yield
+        finally:
+            _sending.login = None
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         net = bool(args) and args[0] in ("push", "fetch", "pull")
@@ -1402,14 +1320,13 @@ class Repo:
 
         Runs right before a submission, so it is allowed to take as long as the
         transfer needs; only a stalled transfer is cut (git_sync's low-speed abort)."""
-        return git_sync.fetch_main(self.root, runtime.upstream_url(self.root),
-                                   runtime.git_args(net=True, store=accounts.store_for(self.login)), log=print)
+        return git_sync.fetch_main(self.root, runtime.upstream_url(self.root), accounts.store_for(self.login), log=print)
 
     def _fresh_pr_base(self, rel: str) -> "str | None":
         """Commit to cut the edit branch from, so the PR base is never stale.
 
         None (offline etc.) falls back to branching from the local HEAD as
-        before; the CI freshness comment then remains the after-the-fact net.
+        before; GitHub's out-of-date notice then remains the after-the-fact net.
         When upstream moved the target file itself, the browser edit was made
         against old bytes: sync main so a page reload serves the latest data,
         and ask the user to redo the edit.
@@ -1454,22 +1371,36 @@ class Repo:
         Everything here is read from the clone and the account store; nothing is
         guessed from the computer's global Git configuration."""
         login = self.login
-        identity = accounts.clone_identity(self.root)
-        upstream = runtime.upstream_nwo(self.root)
-        origin = self._origin_nwo()            # the seam tests use for the GitHub-facing name
-        origin_url = self._origin_url()
-        origin_ok = bool(login and origin and origin_url.startswith("https://github.com/")
-                         and origin.split("/")[0].lower() == login.lower())
         return {
             "ok": True,
             "account": login,
-            "identity": identity,
-            "origin": origin,
-            "originOk": origin_ok,
-            "upstream": upstream,
+            "identity": accounts.clone_identity(self.root),
+            "origin": self._origin_nwo(),
+            "originOk": self._origin_ok(login),
+            "upstream": runtime.upstream_nwo(self.root),
             "branchPattern": "edit/<building id>-<date>-<time>",
-            "autoPr": bool(accounts.token_for(self.login)),
+            "autoPr": bool(accounts.token_for(login)),
+            "blocked": self._send_blocked(login),
         }
+
+    def _origin_ok(self, login: "str | None") -> bool:
+        """origin is the account's copy on GitHub (over HTTPS): where a push as this account goes."""
+        origin = self._origin_nwo()            # the seam tests use for the GitHub-facing name
+        return bool(login and origin and self._origin_url().startswith("https://github.com/")
+                    and origin.split("/")[0].lower() == login.lower())
+
+    def _send_blocked(self, login: "str | None") -> str:
+        """Why nothing can be sent yet ("" when a send can go): the one rule the confirmation shows
+        and the send itself checks under its lock (V6, P1). A send therefore never pushes without an
+        account, without the account's author in the clone, or to a copy that is not the account's."""
+        if not (login and all(accounts.clone_identity(self.root).values())):
+            return tr("editor.confirm_blocked", "Nothing can be sent yet. Open the hub, choose the GitHub account for this "
+                      "city (Settings → GitHub account), then open this screen again.")
+        if not self._origin_ok(login):
+            return tr("editor.confirm_origin_bad", "Nothing can be sent yet: the upload target of this data folder is not "
+                      "your copy under this account. Open the hub and choose the account again (Settings → Change); "
+                      "the hub sets the upload target.")
+        return ""
 
     def _origin_url(self) -> str:
         r = self._git("remote", "get-url", "origin", check=False)
@@ -1478,34 +1409,34 @@ class Repo:
     def _origin_nwo(self) -> "str | None":
         return runtime.github_nwo(self._origin_url())
 
+    def _head(self, branch: str) -> "str | None":
+        """The proposal's head as GitHub names it, `<fork owner>:<branch>` (None without a fork)."""
+        origin = self._origin_nwo()
+        return f"{origin.split('/', 1)[0]}:{branch}" if origin else None
+
     def _compare_url(self, branch: str) -> "str | None":
         """GitHub screen for proposing changes upstream. Never a fork-internal-only compare."""
-        origin = self._origin_nwo()
-        if not origin:
-            return None
-        owner = origin.split("/", 1)[0]
-        return (
-            f"https://github.com/{runtime.upstream_nwo(getattr(self, 'root', None))}/compare/main...{owner}:{branch}?expand=1"
-        )
+        head = self._head(branch)
+        return (f"https://github.com/{runtime.upstream_nwo(getattr(self, 'root', None))}/compare/main...{head}?expand=1"
+                if head else None)
 
     def _create_pr_api(self, branch: str, title: str,
                        body: str) -> "tuple[str | None, str | None]":
         """Reuse the hub's OAuth connection to create the proposal without a GitHub screen."""
         token = accounts.token_for(self.login)
-        origin = self._origin_nwo()
-        if not token or not origin:
+        head = self._head(branch)
+        if not token or not head:
             return None, None
-        owner = origin.split("/", 1)[0]
         try:
             code, data = runtime.github_api(
                 f"/repos/{runtime.upstream_nwo(self.root)}/pulls", token, method="POST",
-                payload={"title": title, "head": f"{owner}:{branch}", "base": "main", "body": body})
+                payload={"title": title, "head": head, "base": "main", "body": body})
         except (urllib.error.URLError, OSError) as exc:
             code, data = 0, {"message": tr("editor.api_conn_error", "Connection error: {reason}",
                                            reason=getattr(exc, "reason", exc))}
         if code == 201 and data.get("html_url"):
             return str(data["html_url"]), None
-        message = str(data.get("message") or f"HTTP {code}")
+        message = runtime.api_error(code, data)
         if accounts.is_org_restriction(code, data):
             message = tr("editor.err_org_restricted",
                          "The organization that hosts this city has not approved this tool yet. "
@@ -1578,26 +1509,36 @@ class Repo:
         differed: the attribute editor committed without a pathspec, so it could sweep in another
         editor's staged files, D18, and its rollback kept nothing of the texture editor's cleanup).
 
-        Under the send lock: a base fetched just now, no other udx/ change in the tree, `apply()`
+        Under the send lock: a base fetched just now, no other change in the data folders, `apply()`
         validates and writes the edit and returns an Edit; the stable building ID from the written
         file; a branch named by the A5 prefix of `kind`; a path-limited commit with the Building
         trailer; push to the account's fork; the PR through the API (or GitHub's compare page).
         Any failure before the PR returns the clone to where it was."""
         runtime.require_min_hub(self.root)
-        with git_sync.clone_lock(self.root):   # one lock with the other editor and the hub's sync (D18)
+        if not runtime.city_of(self.root):   # V1, D-3c1: a clone that names no city sends nowhere
+            raise RuntimeError(tr("editor.no_city", "This copy of the data does not name its city "
+                                  "(4dcitygml.json repo), so it cannot send a proposal. Open the "
+                                  "city's copy from the dashboard."))
+        with git_sync.clone_lock(self.root), self._one_account():   # one lock with the other editor and the hub's sync (D18)
             # The edit branch is cut from the freshly fetched upstream main, so the
             # PR base cannot be stale (the practice repo rewrites main every day).
             pr_base = self._fresh_pr_base(rel)
-            # Working-tree check: no tracked files under udx/ changed other than the target
-            # (the commit takes only its own paths, so non-udx/ and untracked changes are tolerated)
-            others = self._other_udx_changes(rel)
+            # Working-tree check: no tracked file in the data folders changed other than the target
+            # (the commit takes only its own paths, so other and untracked changes are tolerated)
+            others = self._other_data_changes(rel)
             if others:
                 raise RuntimeError(tr(
-                    "editor.err_udx_dirty",
-                    "There are changes to files other than the target under udx/."
-                    " Please clean them up first:\n{list}",
+                    "editor.err_data_dirty",
+                    "Other files in the city's data have changes that are not sent."
+                    " Please undo or send them first:\n{list}",
                     list="\n".join(others[:10]),
                 ))
+            # The confirmation's rule, under the lock with the pinned account, before the edit is
+            # written (D-3b1): an account, its author in the clone (else git would put the computer's
+            # global name and e-mail into a public commit) and origin = the account's copy.
+            blocked = self._send_blocked(self.login)
+            if blocked:
+                raise RuntimeError(blocked)
             edit = apply()
 
             # The stable building ID, from the written file (same rule as suggest_commit.py)
@@ -1606,32 +1547,23 @@ class Repo:
             building_id = gid
             if gid in spans:
                 s, e = spans[gid]
-                building_id = stable_building_id_from_span(
-                    raw[s:e], gid, getattr(self, "_bid_type", "uro:buildingID"),
-                    getattr(self, "_bid_invalid_values", ()))
+                building_id = self.stable_id(raw[s:e], gid)
             safe_bid = re.sub(r"[^A-Za-z0-9._-]", "-", building_id)
             branch = f"{pr_classification.BRANCH_PREFIXES[kind][0]}{safe_bid}-{datetime.now():%Y%m%d-%H%M%S}"
             message, pr_title, pr_body = edit.describe(building_id)
             paths = [rel] + list(edit.added)
 
-            # The commit is authored by the clone's own identity (the account's noreply address).
-            # Without it git would take the computer's global name and e-mail into a public commit.
-            if self.login and not all(accounts.clone_identity(self.root).values()):
-                self._tile_cache.pop(code, None)
-                self._git("checkout", "--", rel, check=False)
-                raise RuntimeError(tr(
-                    "editor.err_no_identity",
-                    "This copy of the city has no author set for the account, so nothing was sent."
-                    " Open the hub and choose the account again (Settings → GitHub account)."))
-
-            prev = self._git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+            # the way back: the branch, or the commit of a detached clone (D-3b5: "HEAD" was taken)
+            prev = (self._git("symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip()
+                    or self._git("rev-parse", "HEAD").stdout.strip())
 
             def rollback() -> None:
                 self._git("checkout", prev, check=False)
                 self._git("checkout", "--", rel, check=False)
                 target_dir = (self.root / rel).parent
-                for a in edit.added:   # new files are untracked here: delete them by hand
-                    p = self.root / a
+                # new files are untracked here: delete them by hand, but never an image main has
+                kept = {Path(t) for t in self._git("ls-files", "--", *edit.added).stdout.splitlines()} if edit.added else set()
+                for p in {self.root / a for a in edit.added if Path(a) not in kept}:
                     p.unlink(missing_ok=True)
                     if p.parent != target_dir and p.parent.is_dir() and not any(p.parent.iterdir()):
                         p.parent.rmdir()   # a folder the edit created (new texturing's appearance folder)
@@ -1652,12 +1584,6 @@ class Repo:
             if push.returncode != 0:
                 rollback()
                 self._git("branch", "-D", branch, check=False)
-                if not self.login:
-                    raise RuntimeError(tr(
-                        "editor.err_push_no_account",
-                        "No GitHub account is connected for this city, so nothing can be sent."
-                        " Your edits remain on this screen. Open the hub, choose the account"
-                        " (Settings → GitHub account), then press Send again."))
                 raise RuntimeError(tr(
                     "editor.err_push_failed",
                     "Could not send to GitHub. Your edits remain on this screen."
@@ -1719,7 +1645,7 @@ class Repo:
             if building is None:
                 raise KeyError(gid)
             selected_sources = validate_source_selections(
-                changes, source_selections, self._source_table(building)
+                changes, source_selections, self._source_table(building), self._not_sources
             )
             leaf_lookup: dict[str, dict] = {}
             qname_counts: dict[str, int] = {}
@@ -1881,69 +1807,27 @@ class Repo:
 class Handler(runtime.LocalHandler):
     APP_ID = "attr_editor"  # selects the language catalog (tex_editor overrides in its subclass)
     repo: "Repo | None" = None  # set at startup
+    hub: "str | None" = None    # the hub's address when the hub launched this editor
 
     @property
     def root(self) -> "Path | None":
         return self.repo.root if self.repo is not None else None
 
     def page_transform(self, data: bytes) -> bytes:
-        return city_map_html(data, self.root)
+        """Both editors' screens get what they share, inline like common.js / common.css: editor.css first
+        in the head (the page's own style wins over it), editor.js (only definitions the pages call)."""
+        data = runtime.after_head_start(data, b'<style id="citygml-editor-style">\n'
+                                        + (APP_DIR / "editor.css").read_bytes() + b"</style>\n")
+        return data.replace(b"</head>", b'<script id="citygml-editor">\n'
+                            + (APP_DIR / "editor.js").read_bytes().replace(b"</", b"<\\/") + b"</script>\n</head>", 1)
 
     def _file(self, path: Path, values: "dict | None" = None) -> None:
-        self.serve_file(path, values)
+        self.serve_file(path, {"map": city_map_config(self.root), "hub": self.hub, **(values or {})})
 
     # ---- Routing ----
     def do_GET(self) -> None:
         try:
-            path = urlparse(self.path).path
-            if path in ("/", "/index.html"):
-                self._file(APP_DIR / "index.html")
-            elif path == "/viewer.html":
-                self._file(APP_DIR / "viewer.html")
-            elif path == "/city-logo":
-                self._city_logo()
-            elif path == "/api/tiles":
-                self._json(
-                    {
-                        "ok": True,
-                        "tiles": self.repo.tiles_json(),
-                        "resources": self.repo.resources_json(),
-                    }
-                )
-            elif path == "/api/codelists":
-                self._json(self.repo.codelists())
-            elif path == "/api/status":
-                self._json({"ok": True, **self.repo.git_status()})
-            elif path == "/api/submission":
-                self._json(self.repo.submission_info())
-            elif path == "/api/repo":
-                # Self-report so the hub can check which city the editor on this port serves
-                self._json({"ok": True, "root": str(self.repo.root),
-                            "app": self.APP_ID})
-            elif path.startswith("/api/tile/"):
-                code = path.rsplit("/", 1)[-1]
-                self._json({"ok": True, "tile": self.repo.tile_json(code)})
-            elif path.startswith("/api/building/"):
-                parts = path.split("/")
-                if len(parts) != 5:
-                    self._error("bad path")
-                    return
-                self._json({"ok": True, "building": self.repo.building_json(parts[3], unquote(parts[4]))})
-            elif path.startswith("/textures/"):
-                rel = path[len("/textures/"):]
-                p = None
-                if self.repo.tex_override is not None:
-                    cand = self._safe_child(self.repo.tex_override, rel)
-                    if cand is not None and cand.is_file():
-                        p = cand  # use the variant if present, else fall back to the original
-                if p is None:
-                    p = self._safe_child(self.repo.bldg_dir, rel)
-                self._file(p) if p else self._error("forbidden", 403)
-            elif path.startswith("/raw/"):
-                # /raw/specification/... /raw/metadata/... (primary evidence documents)
-                p = self._safe_child(self.repo.data_root, path[len("/raw/"):])
-                self._file(p) if p else self._error("forbidden", 403)
-            else:
+            if not self.route_get(urlparse(self.path).path):
                 self._error("not found", 404)
         except FileNotFoundError as e:
             self._error(tr("editor.err_tile_not_found", "Tile not found: {exc}", exc=e), 404)
@@ -1954,6 +1838,60 @@ class Handler(runtime.LocalHandler):
             pass
         except Exception as e:  # noqa: BLE001 — returned as an API response
             self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
+
+    def route_get(self, path: str) -> bool:
+        """Answer one GET; False for a path this tool does not serve (the texture editor adds
+        its own paths over these and shares the error answers of do_GET)."""
+        if path in ("/", "/index.html"):
+            self._file(APP_DIR / "index.html")
+        elif path == "/viewer.html":
+            self._file(APP_DIR / "viewer.html")
+        elif path == "/city-logo":
+            self._city_logo()
+        elif path == "/api/tiles":
+            self._json(
+                {
+                    "ok": True,
+                    "tiles": self.repo.tiles_json(),
+                    "resources": self.repo.resources_json(),
+                }
+            )
+        elif path == "/api/codelists":
+            self._json(self.repo.codelists())
+        elif path == "/api/status":
+            self._json({"ok": True, **self.repo.git_status()})
+        elif path == "/api/submission":
+            self._json(self.repo.submission_info())
+        elif path == "/api/repo":
+            # Self-report so the hub can check which city the editor on this port serves
+            self._json({"ok": True, "root": str(self.repo.root),
+                        "app": self.APP_ID})
+        elif path.startswith("/api/tile/"):
+            code = path.rsplit("/", 1)[-1]
+            self._json({"ok": True, "tile": self.repo.tile_json(code)})
+        elif path.startswith("/api/building/"):
+            parts = path.split("/")
+            if len(parts) != 5:
+                self._error("bad path")
+                return True
+            self._json({"ok": True, "building": self.repo.building_json(parts[3], unquote(parts[4]))})
+        elif path.startswith("/textures/"):
+            rel = path[len("/textures/"):]
+            p = None
+            if self.repo.tex_override is not None:
+                cand = self._safe_child(self.repo.tex_override, rel)
+                if cand is not None and cand.is_file():
+                    p = cand  # use the variant if present, else fall back to the original
+            if p is None:
+                p = self._safe_child(self.repo.bldg_dir, rel)
+            self._file(p) if p else self._error("forbidden", 403)
+        elif path.startswith("/raw/"):
+            # /raw/specification/... /raw/metadata/... (primary evidence documents)
+            p = self._safe_child(self.repo.data_root, path[len("/raw/"):])
+            self._file(p) if p else self._error("forbidden", 403)
+        else:
+            return False
+        return True
 
     def do_POST(self) -> None:
         try:
@@ -1981,20 +1919,23 @@ class Handler(runtime.LocalHandler):
             self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
 
 
-def main() -> None:
+def main(handler=None, repo_class=None, app: str = "attr_editor", title: str = "CityGML attribute editor") -> None:
+    """Either editor's start (the texture editor passes its handler, Repo, app id and title)."""
+    handler, repo_class = handler or Handler, repo_class or Repo
     runtime.console_safe()
     accounts.scrub_git_env()   # the shell's git overrides never reach the clone
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=sys.modules[handler.__module__].__doc__)
     parser.add_argument("--repo", type=Path, help="local clone of the city repository (can be omitted when run from inside the clone)")
     parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
     parser.add_argument("--textures", type=Path,
                         help="texture replacement directory (for 3D tone variant comparison; missing images show originals)")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=runtime.EDITOR_PORTS[app])
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--hub", help="the hub's address (the hub passes it; the screen links back to it)")
     args = parser.parse_args()
 
-    Handler.repo = open_repo(Repo, args)
-    runtime.serve(Handler, args.port, ["CityGML attribute editor: {url}", f"  Data: {Handler.repo.bldg_dir}"],
+    handler.repo, handler.hub = open_repo(repo_class, args), args.hub
+    runtime.serve(handler, args.port, [title + ": {url}", f"  Data: {handler.repo.bldg_dir}"],
                   open_browser=not args.no_browser)
 
 
@@ -2004,6 +1945,7 @@ def open_repo(repo_class, args):
     neither clones (its own first-run setup was never reached from the hub, S12) nor syncs at start
     (it raced the hub's sync on the same clone); a send fetches the city's main itself."""
     runtime.migrate_config()   # the hub has done it already; a standalone start does it here (S18)
+    accounts.migrate_tokens()  # TEMPORARY (V2): remove in v1.7.0, once every hub has started once on v1.6
     repo_root = args.repo or runtime.detect_repo() or runtime.last_clone()
     if repo_root is None:
         sys.exit("Error: no clone found. Start the editors from the hub, or pass --repo <clone>.")

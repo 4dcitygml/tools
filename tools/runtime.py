@@ -17,6 +17,7 @@ See docs/client-runtime-contract.md.
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import shlex
@@ -45,8 +46,13 @@ WINDOWS = sys.platform.startswith("win")
 for _dir in (SHARED_DIR.parent / "scripts", SHARED_DIR):
     if _dir.is_dir() and str(_dir) not in sys.path:
         sys.path.insert(0, str(_dir))
+# the dialect packs: dialects/ at the source tree's root (next to the hub in the bundle)
+if (SHARED_DIR.parent / "dialects").is_dir() and str(SHARED_DIR.parent) not in sys.path:
+    sys.path.append(str(SHARED_DIR.parent))
 
 try:
+    import city_declaration  # noqa: E402  (scripts/ in the source tree, next to this file in the bundle)
+    import release_tags  # noqa: E402
     from i18n import i18n_loader  # noqa: E402
     from themes import theme_loader  # noqa: E402
 except ImportError as _missing:   # a partial install: say what to do, not a traceback
@@ -127,12 +133,10 @@ def read_json(path, default=None):
 
 # ---- versions (contract §5) ----
 
-_HUB_TAG_RE = re.compile(r"^hub-v(\d+)\.(\d+)\.(\d+)$")
-
-
 def version_tuple(tag) -> "tuple | None":
-    m = _HUB_TAG_RE.match(str(tag or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else None
+    """(X, Y, Z) of a hub tag (scripts/release_tags.py; a lab prerelease's suffix is ordered with
+    its version: D-5-1, such a running hub had no version, so its banner never cleared)."""
+    return release_tags.version_key(str(tag or "").strip(), "hub")
 
 
 def running_hub_tag() -> "str | None":
@@ -369,7 +373,6 @@ def save_config(values: dict) -> dict:
 
 # ---- the city (contract §1) ----
 
-DEFAULT_CITY_URL = "https://github.com/4dcitygml/sample-munich-station"   # the default practice city
 
 
 def normalize_upstream(value) -> "str | None":
@@ -397,14 +400,19 @@ def city_key(value) -> "str | None":
     return url.split("github.com/")[-1].lower() if url else None
 
 
+def city(root) -> "city_declaration.Declaration":
+    """The clone's declaration (4dcitygml.json), read by its one reader (scripts/city_declaration.py)."""
+    return city_declaration.read(root)
+
+
 def city_meta(root) -> dict:
-    """The clone's 4dcitygml.json (data only; {} when absent)."""
-    return read_json(Path(root) / "4dcitygml.json")
+    """The clone's 4dcitygml.json over its dialect pack's defaults, as data ({} when absent)."""
+    return city(root).resolved
 
 
 def min_hub(root) -> "str | None":
     """The oldest hub a city accepts proposals from (4dcitygml.json `min_hub`), or None."""
-    value = city_meta(root).get("min_hub")
+    value = city(root).raw.get("min_hub")
     return str(value) if version_tuple(value) else None
 
 
@@ -429,28 +437,23 @@ def require_min_hub(root) -> None:
 
 def clone_city(root) -> "str | None":
     """The city a clone belongs to, from its own 4dcitygml.json (never from the environment)."""
-    return city_key(city_meta(root).get("repo", ""))
+    return city_key(city(root).repo)
 
 
-def norm_lang(value) -> str:
-    """A 4dcitygml.json `lang` (BCP 47) as a catalog language: the primary subtag, en when absent."""
-    primary = str(value or "").split("-")[0].strip().lower()
-    return primary or "en"
+norm_lang = city_declaration.language   # a declared `lang` as a catalog language (primary subtag, en)
 
 
 def repo_lang(root) -> str:
     """The city's working language (4dcitygml.json `lang`): the language of repository-facing
     text such as PR titles and bodies. The UI language is ui_lang()."""
-    return norm_lang(city_meta(root).get("lang"))
+    return city(root).language
 
 
 def data_dirs(root) -> "list[Path]":
     """The data directories 4dcitygml.json declares, resolved, existing and inside the clone."""
     root = Path(root)
     out = []
-    for rel in city_meta(root).get("data_dirs") or []:
-        if not isinstance(rel, str):
-            continue
+    for rel in city(root).data_dirs:
         d = root / rel
         if d.is_dir() and d.resolve().is_relative_to(root.resolve()):
             out.append(d.resolve())
@@ -462,40 +465,47 @@ def requested_city() -> "str | None":
     return city_key(os.environ.get("CITYGML_UPSTREAM", ""))
 
 
-def upstream_url(root=None, *, ignore_env: bool = False) -> str:
-    """URL of the city repository. Priority: the clone's 4dcitygml.json > the clone's git
-    remote `upstream` > CITYGML_UPSTREAM > the practice city. The city of a clone is the
-    clone's own (S18, F7: the environment came first, so an editor started with another
-    city's variable sent there); the variable chooses the city while there is no clone.
-    ignore_env=True asks for the clone's own city only (the sync target)."""
-    if root:
-        declared = normalize_upstream(city_meta(root).get("repo", ""))
-        if declared:
-            return declared
-        remote = normalize_upstream(git_output(root, "remote", "get-url", "upstream", timeout=10))
-        if remote:
-            return remote
-    if not ignore_env:
-        env = normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
-        if env:
-            return env
-    return DEFAULT_CITY_URL
+def city_of(root) -> "str | None":
+    """The city a clone belongs to, as the URL of its repository: only the clone's own
+    4dcitygml.json (`repo`) says it. None for a clone that names no city: it is synced to
+    nothing and sends nowhere (V1; D-3c1: such a clone was reset to the practice city)."""
+    return normalize_upstream(city(root).repo)
 
 
-def upstream_nwo(root=None, *, ignore_env: bool = False) -> str:
-    return upstream_url(root, ignore_env=ignore_env).split("github.com/")[-1]
+def upstream_url(root=None) -> "str | None":
+    """URL of the city repository: with a clone, the clone's own city (city_of; None when it
+    names none); before a clone exists, the city the launcher asked for (CITYGML_UPSTREAM; the
+    launcher chooses a practice city by language when none is given, 5-14: the hub had a default
+    of its own), else None. The environment never picks the city of an existing clone (V1)."""
+    if root is not None:
+        return city_of(root)
+    return normalize_upstream(os.environ.get("CITYGML_UPSTREAM", ""))
+
+
+def upstream_nwo(root=None) -> "str | None":
+    url = upstream_url(root)
+    return url.split("github.com/")[-1] if url else None
+
+
+def tile_files(folder, pack) -> "dict[str, Path]":
+    """The tiles of a buildings folder by their code: the dialect pack's tile names when the
+    folder has such files (only those), else every CityGML file by its name (munich's
+    690_5335_1.gml). The one rule of the editors and the hub (V7: the hub had its own copy)."""
+    files = sorted(Path(folder).glob("*.gml"))
+    if pack.tile_name:
+        named = {m.group(1): p for p in files if (m := re.fullmatch(pack.tile_name, p.name))}
+        if named:
+            return named
+    return {p.stem: p for p in files}
 
 
 def has_building_data(root) -> bool:
-    """Whether a folder is a city clone with building data (PLATEAU */udx/bldg or the
-    data_dirs declared in 4dcitygml.json)."""
-    root = Path(root)
+    """Whether a folder is a city clone with building data: CityGML files in a data folder its
+    4dcitygml.json declares (data_dirs; or inside it, where the dialect pack keeps them)."""
     try:
-        if any(root.glob("*/udx/bldg")):
-            return True
+        return any(any(d.rglob("*.gml")) for d in data_dirs(root))
     except OSError:
         return False
-    return any(any(d.glob("*.gml")) for d in data_dirs(root))
 
 
 def detect_repo() -> "Path | None":
@@ -509,20 +519,38 @@ def detect_repo() -> "Path | None":
     return None
 
 
-def remember_clone(city, dest) -> None:
-    """Record dest as the clone of city (cities[<city>].repo), used now (last_used). The city's
-    entry is merged, never replaced: its account binding and any key another tool wrote survive."""
-    # to the microsecond: last_clone() orders by it, and two clones can be opened within a second
-    stamp = datetime.now().astimezone().isoformat(timespec="microseconds")
+def city_entry(city, *, forget: bool = False, **changes) -> dict:
+    """The one writer of a city's entry in the settings (cities[<owner/repo>], the key in lower
+    case; 3c-1: it was written in four places): changes are merged into the entry (a value None
+    removes that key), or forget=True removes the whole entry. Merged, never replaced, so a key
+    another tool wrote survives. Returns the entry as written ({} when forgotten or no city)."""
+    key = str(city or "").lower()
+    written: dict = {}
 
     def mutate(cfg: dict) -> None:
         cities = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
-        if city:
-            entry = cities.get(city) if isinstance(cities.get(city), dict) else {}
-            cities[city] = {**entry, "repo": str(dest), "last_used": stamp}
+        if forget:
+            cities.pop(key, None)
+        else:
+            entry = dict(cities.get(key)) if isinstance(cities.get(key), dict) else {}
+            for name, value in changes.items():
+                if value is None:
+                    entry.pop(name, None)
+                else:
+                    entry[name] = value
+            cities[key] = entry
+            written.update(entry)
         cfg["cities"] = cities
 
-    update_config(mutate)
+    if key:
+        update_config(mutate)
+    return written
+
+
+def remember_clone(city, dest) -> None:
+    """Record dest as the clone of city (cities[<city>].repo), used now (last_used)."""
+    # to the microsecond: last_clone() orders by it, and two clones can be opened within a second
+    city_entry(city, repo=str(dest), last_used=datetime.now().astimezone().isoformat(timespec="microseconds"))
 
 
 def saved_clone_for(city: str) -> "Path | None":
@@ -739,16 +767,29 @@ def translator_in(app: str):
 
 
 def page(data: bytes, app: str, root=None, values: "dict | None" = None) -> bytes:
-    """A screen as served: the clone's theme (when there is a clone), the values the
-    page needs as `window.CITYGML` (JSON, before any script of the page runs), then the
-    language pack. The one way a tool hands facts to its HTML."""
+    """A screen as served: the look every screen shares (tools/common.css) first in its head, the
+    clone's theme (when there is a clone), the values the page needs as `window.CITYGML` (JSON,
+    before any script of the page runs), the language pack, then what every screen shares
+    (tools/common.js). The one way a tool hands facts, helpers and its base look to its HTML."""
+    data = after_head_start(data, b'<style id="citygml-common-style">\n' + (SHARED_DIR / "common.css").read_bytes() + b"</style>\n")
     data = themed_html(data, root)
     if values is not None:
         payload = json.dumps(values, ensure_ascii=False).replace("</", "<\\/")
-        block = f'<script id="citygml-values">window.CITYGML = {payload};</script>\n'.encode("utf-8")
-        i = data.find(b"</head>")
-        data = data[:i] + block + data[i:] if i >= 0 else block + data
-    return localized_html(data, app)
+        data = _before_head_end(data, f'<script id="citygml-values">window.CITYGML = {payload};</script>\n'.encode("utf-8"))
+    data = localized_html(data, app)
+    common = (SHARED_DIR / "common.js").read_bytes().replace(b"</", b"<\\/")
+    return _before_head_end(data, b'<script id="citygml-common">\n' + common + b"</script>\n")
+
+
+def after_head_start(data: bytes, block: bytes) -> bytes:
+    """block first in the head, so the page's own styles (and a theme after them) win over it."""
+    m = re.search(rb"<head\b[^>]*>", data)
+    return data[:m.end()] + b"\n" + block + data[m.end():] if m else block + data
+
+
+def _before_head_end(data: bytes, block: bytes) -> bytes:
+    i = data.find(b"</head>")
+    return data[:i] + block + data[i:] if i >= 0 else block + data
 
 
 def localized_html(data: bytes, app: str) -> bytes:
@@ -774,7 +815,7 @@ def themed_html(data: bytes, root) -> bytes:
 def city_logo(root) -> "tuple[Path, str] | None":
     """The clone's logo file and its media type, or None (validated by the theme pack)."""
     try:
-        return theme_loader.resolve_logo(root)
+        return theme_loader.resolve_logo(root, city(root).logo if root is not None else None)
     except Exception:
         return None
 
@@ -783,29 +824,32 @@ def city_logo(root) -> "tuple[Path, str] | None":
 
 class Memo:
     """One remembered value with an expiry, cleared on events (the only cache shape the tools use).
+    The value answers for a key (for example the account and the city it was asked for): asked
+    with another key, it is not fresh and has no value.
 
-        fresh, value = memo.get()            # fresh is False once the value expired or was cleared
-        memo.set(value, ttl=60)              # remember for ttl seconds
+        fresh, value = memo.get(key)         # fresh is False once the value expired, was cleared or answers another key
+        memo.set(value, ttl=60, key=key)     # remember for ttl seconds
         memo.clear()                         # an event made the value stale
     """
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._value = None
+        self._key = self._value = None
         self._until = 0.0
 
-    def get(self) -> "tuple[bool, object]":
+    def get(self, key=None) -> "tuple[bool, object]":
         with self._lock:
+            if key != self._key:
+                return False, None
             return time.time() < self._until, self._value
 
-    def set(self, value, ttl: float):
+    def set(self, value, ttl: float, key=None):
         with self._lock:
-            self._value, self._until = value, time.time() + ttl
+            self._key, self._value, self._until = key, value, time.time() + ttl
         return value
 
     def clear(self) -> None:
-        with self._lock:
-            self._value, self._until = None, 0.0
+        self.set(None, 0)
 
 
 # ---- the local HTTP server every tool is ----
@@ -816,6 +860,20 @@ CONTENT_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".pdf": "application/pdf",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".csv": "text/csv; charset=utf-8",
 }
+
+
+_MIME = mimetypes.MimeTypes()   # the standard table only: never the computer's (the Windows registry)
+
+
+def media_type(name) -> str:
+    """The media type of a file name: the tools' own table first, then Python's standard one."""
+    return (CONTENT_TYPES.get(Path(str(name)).suffix.lower()) or _MIME.guess_type(str(name))[0]
+            or "application/octet-stream")
+
+
+def api_error(code: int, data) -> str:
+    """GitHub's message of a failed API call, else the HTTP status (V5: written out eleven times)."""
+    return str((data.get("message") if isinstance(data, dict) else "") or f"HTTP {code}")
 
 
 class LocalHandler(BaseHTTPRequestHandler):
@@ -925,11 +983,118 @@ def port_open(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, port)) == 0
 
 
-def free_port(start: int, step: int = 2, tries: int = 20) -> int:
-    """First port from start (stepping by step) that nothing listens on."""
+# The editors' first ports: the hub starts them there (or on the next free one) and a
+# hand-started editor uses them by default (V8: written in the hub and in each editor)
+EDITOR_PORTS = {"attr_editor": 8765, "tex_editor": 8766}
+
+
+def free_port(start: int, step: int = 2, tries: int = 20, accept=None) -> int:
+    """First port from start (stepping by step) that nothing listens on, or that accept(port)
+    takes as it is (the hub: its own city's editor already listening). The one port search."""
     port = start
     for _ in range(tries):
-        if not port_open(port):
+        if not port_open(port) or (accept is not None and accept(port)):
             return port
         port += step
     return port
+
+
+# ---- Tool updates (hub-v1.2.0): check automatically, fetch on request, apply at the next start ----
+# The version of the hub is decided by 4dcitygml/tools releases (cities distribute no
+# code and pin no client version). At start the hub asks the releases API once; a
+# newer version is announced in a banner. "Get it now" runs the launcher's fetch mode
+# (fetch_latest_hub: download, SHA-256 digest check, unpack into the versioned
+# folder next to the running one). Nothing is downloaded without that click, and the
+# running hub is never modified; the launcher picks the newest installed version at
+# the next start. A city may declare `min_hub` in 4dcitygml.json: an older hub can view
+# but cannot send or request a retry (require_min_hub, from hub-v1.5.0 on); the
+# banner says why and stays. It is judged when the clone opens and again after the sync,
+# since the sync may bring the city's new min_hub.
+def releases_api() -> str:
+    """The latest release the launcher installs: CITYGML_RELEASES_API, else CITYGML_TOOLS_REPO's, else
+    4dcitygml/tools (the same order as install/release/citygml.sh and citygml.ps1; D10: the check
+    used to look at 4dcitygml/tools while "Get it now" fetched from the overridden repository)."""
+    if os.environ.get("CITYGML_RELEASES_API"):
+        return os.environ["CITYGML_RELEASES_API"]
+    repo = os.environ.get("CITYGML_TOOLS_REPO") or ""
+    repo = repo if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) else "4dcitygml/tools"
+    return f"https://api.github.com/repos/{repo}/releases/latest"
+
+
+def latest_hub_release(release) -> "dict | None":
+    """{tag, notesUrl} of GitHub's latest release when it is a published hub-v release, else None.
+    GitHub chooses it (5-5: the hub, the sh and the ps1 installer chose the newest each their own
+    way): the hub series is the only one marked latest, and a prerelease never is."""
+    if not isinstance(release, dict) or release.get("draft") or not version_tuple(release.get("tag_name")):
+        return None
+    return {"tag": release["tag_name"], "notesUrl": release.get("html_url") or ""}
+
+
+def fetch_releases(url: "str | None" = None) -> dict:
+    status, raw, _ = request(url or releases_api(), headers={"Accept": "application/vnd.github+json"}, timeout=20)
+    if status != 200:
+        raise RuntimeError(f"GitHub releases API answered HTTP {status}")   # rate limit, outage: named, not "up to date"
+    data = json.loads(raw.decode("utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+class UpdateManager:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = {
+            "running": running_hub_tag(), "latest": None, "available": False, "checked": False,
+            "notesUrl": "", "minHub": None, "minHubOk": True, "minHubFinal": False, "error": "",
+            "fetch": {"state": "idle", "tag": None, "message": ""},
+        }
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return json.loads(json.dumps(self._state))
+
+    def _set(self, **kw) -> None:
+        with self._lock:
+            self._state.update(kw)
+
+    def set_min_hub(self, clone_root, final: bool = False) -> None:
+        """Judge the city's min_hub against the running version: locally, without the network.
+        Called when the clone opens and (final) after the sync."""
+        required = min_hub(clone_root)
+        self._set(minHub=required, minHubOk=below_min_hub(clone_root) is None,
+                  minHubFinal=final or self._state["minHubFinal"])
+
+    def check_async(self, fetch_json=None) -> None:
+        def work():
+            try:
+                latest = latest_hub_release((fetch_json or fetch_releases)())
+            except Exception as e:  # offline etc.: the running version stays; min_hub is judged anyway
+                self._set(checked=True, error=str(e))
+                return
+            running = version_tuple(self._state["running"])
+            newest = version_tuple(latest["tag"]) if latest else None
+            available = bool(newest and (running is None or newest > running))
+            fetch = dict(self._state["fetch"])
+            if latest and (hubs_dir() / latest["tag"] / "program" / "hub.py").is_file() and available:
+                fetch = {"state": "done", "tag": latest["tag"], "message": ""}
+            self._set(checked=True, latest=latest["tag"] if latest else None,
+                      notesUrl=(latest or {}).get("notesUrl", ""), available=available, fetch=fetch)
+        threading.Thread(target=work, name="citygml-update-check", daemon=True).start()
+
+    def fetch_async(self, fetch=None) -> dict:
+        """Start the launcher's fetch of the newest version (fetch_latest_hub); the
+        state reports running / done / failed. fetch is a test seam."""
+        with self._lock:
+            tag = self._state.get("latest")
+            if self._state["fetch"]["state"] == "running":
+                return dict(self._state["fetch"])
+            if not tag:
+                return {"state": "failed", "tag": None, "message": "No newer version is known"}
+            self._state["fetch"] = {"state": "running", "tag": tag, "message": ""}
+
+        def work():
+            try:
+                got = (fetch or fetch_latest_hub)()
+                self._set(fetch={"state": "done", "tag": got or tag, "message": ""})
+            except Exception as e:
+                self._set(fetch={"state": "failed", "tag": tag, "message": public_message(e)})
+        threading.Thread(target=work, name="citygml-update-fetch", daemon=True).start()
+        return {"state": "running", "tag": tag, "message": ""}

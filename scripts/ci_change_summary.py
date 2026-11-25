@@ -32,8 +32,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.diff_citygml import diff_files, diff_sources  # noqa: E402
-from scripts.repo_git import blob  # noqa: E402
+from scripts import md_report  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
+from scripts.diff_citygml import buildings_at, diff_files, diff_maps  # noqa: E402
 from scripts.citygml_constants import SUMMARY_MARKER  # noqa: E402,F401  (marker distinct from preview's)
 from scripts.gate_result import malformed_input  # noqa: E402
 
@@ -52,13 +53,6 @@ def _cell(value: Optional[str]) -> str:
     return f"`{value}`"
 
 
-def _truncate(items: list, cap: int) -> tuple[list, int]:
-    """Return the first cap items and the number of items over the cap."""
-    if len(items) <= cap:
-        return items, 0
-    return items[:cap], len(items) - cap
-
-
 def _render_modified(building: dict, lines: list[str]) -> None:
     lines.append(f"#### `{building['id']}`")
     lines.append(
@@ -70,7 +64,7 @@ def _render_modified(building: dict, lines: list[str]) -> None:
         lines.append(f"- **Attribute diffs**: {note}")
         lines.append("")
         return
-    shown, rest = _truncate(diffs, MAX_ATTR_ROWS_PER_BUILDING)
+    shown, rest = md_report.capped(diffs, MAX_ATTR_ROWS_PER_BUILDING)
     lines.append(f"- **Attribute diffs** ({len(diffs)}):")
     lines.append("")
     lines.append("| path | Old | New |")
@@ -83,7 +77,7 @@ def _render_modified(building: dict, lines: list[str]) -> None:
 
 
 def _render_id_list(buildings: list[dict], lines: list[str]) -> None:
-    shown, rest = _truncate(buildings, MAX_BUILDINGS_PER_SECTION)
+    shown, rest = md_report.capped(buildings, MAX_BUILDINGS_PER_SECTION)
     for b in shown:
         lines.append(f"- `{b['id']}`")
     if rest:
@@ -135,7 +129,7 @@ def _render_footer(preview_url: Optional[str], lines: list[str]) -> str:
     if preview_url:
         lines.append("---")
         lines.append(f"🔗 3D preview: [Open in the Cesium viewer]({preview_url})")
-    return "\n".join(lines).rstrip() + "\n"
+    return md_report.fit("\n".join(lines).rstrip() + "\n")
 
 
 def render_markdown(diff_result: dict, preview_url: Optional[str] = None) -> str:
@@ -176,10 +170,9 @@ def collect_ci_results(
     A file that is not well-formed XML is appended to `unreadable` instead (the schema row names it)."""
     results: list[dict] = []
     for rel_path in gml_files:
-        old_bytes = blob(repo, base_sha, rel_path)
-        new_bytes = blob(repo, head_sha, rel_path)
         try:
-            result = diff_sources(old_bytes, new_bytes, rel_path, rel_path)
+            result = {"old": rel_path, "new": rel_path,
+                      **diff_maps(buildings_at(repo, base_sha, rel_path), buildings_at(repo, head_sha, rel_path))}
         except Exception as exc:  # noqa: BLE001
             if unreadable is None or not malformed_input(exc):
                 raise
@@ -215,8 +208,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # CI mode: compare the changed-file list over base..head and combine into one comment
         if not (args.base_sha and args.head_sha):
             parser.error("--base-sha and --head-sha are required when using --file-list.")
-        listed = (ln.strip() for ln in args.file_list.read_text(encoding="utf-8").splitlines())
-        gml_files = [p for p in listed if p.endswith(".gml")]
+        gml_files = changed_list(args.file_list)
         repo = args.repo or REPO_ROOT
         unreadable: list[str] = []
         results = collect_ci_results(repo, args.base_sha, args.head_sha, gml_files, unreadable)

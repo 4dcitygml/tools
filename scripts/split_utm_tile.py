@@ -21,19 +21,18 @@ import re
 import sys
 from pathlib import Path
 
-from lxml import etree
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.citygml_xml import GML, bbox as member_bbox  # noqa: E402
+from scripts.citygml_xml import bbox as member_bbox, members, rebuild_root, refuse_global_appearance, union, write_gml  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
 
+TILE_NAME = re.compile(r"(\d{3,4})_(\d{4})(?:_\d+)?")   # <E km>_<N km>[_<size km>]
 
 
 def tile_origin_from_name(name: str) -> tuple[int, int]:
-    m = re.match(r"(\d{3,4})_(\d{4})", name)
+    m = TILE_NAME.match(name)
     if not m:
         raise SystemExit(f"Cannot extract km-scale tile origin E_N from filename: {name}")
     return int(m.group(1)) * 1000, int(m.group(2)) * 1000
@@ -53,20 +52,17 @@ def main() -> None:
     n = args.tile_km // args.out_km
     origin_e, origin_n = tile_origin_from_name(args.input.name)
     outdir = args.outdir or args.input.parent
+    outdir.mkdir(parents=True, exist_ok=True)
 
     root = safe_parse(str(args.input), huge_tree=True, remove_blank_text=False).getroot()
+    refuse_global_appearance(root, args.input.name)
 
-    if any(etree.QName(c).localname == "appearanceMember" for c in root
-           if isinstance(c.tag, str)):
-        raise SystemExit("Tiles with global appearance not supported (texture redistribution required)")
-
-    members = [c for c in root if isinstance(c.tag, str)
-               and etree.QName(c).localname == "cityObjectMember"]
+    all_members = members(root)
     step = args.out_km * 1000
     cells: dict[tuple[int, int], list] = {}
-    cell_bbox: dict[tuple[int, int], list] = {}
+    cell_boxes: dict[tuple[int, int], list] = {}
     no_coord = 0
-    for m in members:
+    for m in all_members:
         bb = member_bbox(m)
         if bb is None:
             no_coord += 1
@@ -76,44 +72,23 @@ def main() -> None:
             key = (min(n - 1, max(0, int((cx - origin_e) // step))),
                    min(n - 1, max(0, int((cy - origin_n) // step))))
         cells.setdefault(key, []).append(m)
-        if bb is not None:
-            cur = cell_bbox.setdefault(key, list(bb))
-            cur[0], cur[1], cur[2] = min(cur[0], bb[0]), min(cur[1], bb[1]), min(cur[2], bb[2])
-            cur[3], cur[4], cur[5] = max(cur[3], bb[3]), max(cur[4], bb[4]), max(cur[5], bb[5])
+        cell_boxes.setdefault(key, []).append(bb)
 
-    # Carry over the srs attributes of the original Envelope
-    env = root.find(f"{{{GML}}}boundedBy/{{{GML}}}Envelope")
-    srs = dict(env.attrib) if env is not None else {}
-
-    suffix = re.sub(r"^\d{3,4}_\d{4}", "", args.input.stem)  # rest of the name (normally empty)
+    # the rest of the name after <E>_<N>[_<size>] (normally empty; D-4a5: a re-split kept the old size)
+    suffix = TILE_NAME.sub("", args.input.stem, count=1)
     total_out = 0
     for (ix, iy), ms in sorted(cells.items()):
         e_km = (origin_e + ix * step) // 1000
         n_km = (origin_n + iy * step) // 1000
-        new_root = etree.Element(root.tag, nsmap=root.nsmap)
-        for k, v in root.attrib.items():
-            new_root.set(k, v)
-        name_el = etree.SubElement(new_root, f"{{{GML}}}name")
-        name_el.text = f"{e_km}_{n_km}_{args.out_km}km"
-        bb = cell_bbox.get((ix, iy))
-        if bb:
-            bounded = etree.SubElement(new_root, f"{{{GML}}}boundedBy")
-            e2 = etree.SubElement(bounded, f"{{{GML}}}Envelope")
-            for k, v in srs.items():
-                e2.set(k, v)
-            etree.SubElement(e2, f"{{{GML}}}lowerCorner").text = f"{bb[0]} {bb[1]} {bb[2]}"
-            etree.SubElement(e2, f"{{{GML}}}upperCorner").text = f"{bb[3]} {bb[4]} {bb[5]}"
-        for m in ms:
-            new_root.append(m)
+        new_root = rebuild_root(root, ms, union(cell_boxes[(ix, iy)]), name=f"{e_km}_{n_km}_{args.out_km}km")
         out = outdir / f"{e_km}_{n_km}_{args.out_km}{suffix}.gml"
-        etree.ElementTree(new_root).write(str(out), encoding="UTF-8",
-                                          xml_declaration=True)
+        write_gml(new_root, out, like=args.input)
         total_out += len(ms)
         print(f"  {out.name}  {len(ms)} buildings  {out.stat().st_size / 1e6:.1f} MB")
 
-    match_status = "Match" if total_out == len(members) else "Mismatch!"
-    print(f"Total (output) {total_out} / input {len(members)} → {match_status}  No coords: {no_coord}")
-    if total_out != len(members):
+    match_status = "Match" if total_out == len(all_members) else "Mismatch!"
+    print(f"Total (output) {total_out} / input {len(all_members)} → {match_status}  No coords: {no_coord}")
+    if total_out != len(all_members):
         sys.exit(1)
 
 

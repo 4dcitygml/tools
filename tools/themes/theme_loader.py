@@ -125,8 +125,10 @@ LOGO_TYPES = {
 LOGO_MAX_BYTES = 1 << 20  # 1 MiB (plenty for a decorative header image)
 
 
-def resolve_logo(repo_root: "Path | None") -> "tuple[Path, str] | None":
-    """Resolve the municipality logo from the city repo's 4dcitygml.json; return (real path, Content-Type).
+def resolve_logo(repo_root: "Path | None", rel=None) -> "tuple[Path, str] | None":
+    """Resolve the municipality logo `rel` (the declaration's `logo`, read by
+    scripts/city_declaration.py through the runtime) inside the city repo; return (real path,
+    Content-Type).
 
     Validation is fail-closed: if the path is not relative (leading /, backslash,
     `..`), the extension is not in the raster allowlist, it resolves outside the
@@ -136,13 +138,6 @@ def resolve_logo(repo_root: "Path | None") -> "tuple[Path, str] | None":
     if repo_root is None:
         return None
     root = Path(repo_root).resolve()
-    cj = root / "4dcitygml.json"
-    if not cj.is_file():
-        return None
-    try:
-        rel = json.loads(cj.read_text(encoding="utf-8")).get("logo")
-    except (OSError, ValueError):
-        return None
     if not isinstance(rel, str) or not rel:
         return None
     if rel.startswith("/") or "\\" in rel or ".." in rel:

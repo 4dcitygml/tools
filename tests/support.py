@@ -158,7 +158,7 @@ class FakeGitHub:
         parts = path.split("/")
         if len(parts) == 4 and parts[1] == "repos" and parts[3] == self.repo:
             if parts[2] in self.forks:
-                return 200, {"fork": True, "full_name": f"{parts[2]}/{self.repo}"}
+                return 200, {"fork": True, "full_name": f"{parts[2]}/{self.repo}", "parent": {"full_name": self.upstream}}
             return 404, {}
         return 404, {}
 
@@ -191,3 +191,14 @@ def bind_account(city: str, login: str, token: str, user_id: int) -> None:
     """A stored account bound to a city (what the account screen does)."""
     accounts.save_account(login, token, user_id)
     accounts.bind_city_login(city, login)
+
+
+def ready_to_send(repo, city: str = TOKYO, login: str = "alice", token: str = "tok-a", user_id: int = 1) -> None:
+    """What the send asks for (Repo._send_blocked): the account bound to the city, its author in the
+    clone, and origin standing for the account's copy on GitHub. The push itself still goes to the
+    fixture's local remote: only the GitHub-facing names are replaced."""
+    bind_account(city, login, token, user_id)
+    accounts.apply_clone_identity(repo.root, login, user_id)
+    nwo = f"{login}/{city.split('/')[-1]}"
+    repo._origin_nwo = lambda: nwo
+    repo._origin_url = lambda: f"https://github.com/{nwo}.git"

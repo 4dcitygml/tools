@@ -22,13 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.extract_building_preview import (  # noqa: E402
-    _attach_tex,
-    _extract_buildings,
-    _extract_texmap,
-    _finalize_url,
-    _match_buildings,
-)
+from scripts.extract_building_preview import preview_url, preview_pairs  # noqa: E402
 
 
 def build_preview_url(old_gml: Path, new_gml: Path, base_url: str) -> str:
@@ -38,30 +32,11 @@ def build_preview_url(old_gml: Path, new_gml: Path, base_url: str) -> str:
     Returns an empty string when there are no changed buildings (matching
     extract_building_preview's behavior).
     """
-    old_bytes = old_gml.read_bytes() if old_gml.exists() else b""
-    new_bytes = new_gml.read_bytes() if new_gml.exists() else b""
-
-    old_bldgs: dict = {}
-    new_bldgs: dict = {}
-    if old_bytes:
-        old_bldgs = _extract_buildings(old_bytes)
-    if new_bytes:
-        new_bldgs = _extract_buildings(new_bytes)
-
-    pairs = _match_buildings(old_bldgs, new_bldgs)
+    pairs = preview_pairs(old_gml.read_bytes() if old_gml.exists() else None,
+                          new_gml.read_bytes() if new_gml.exists() else None)
     if not pairs:
         return ""
-
-    old_tex: dict = {}
-    new_tex: dict = {}
-    if old_bytes:
-        old_tex = _extract_texmap(old_bytes)
-    if new_bytes:
-        new_tex = _extract_texmap(new_bytes)
-    for pair in pairs:
-        _attach_tex(pair, old_tex, new_tex)
-
-    return _finalize_url(pairs, base_url)
+    return preview_url(pairs, base_url)
 
 
 def main() -> int:

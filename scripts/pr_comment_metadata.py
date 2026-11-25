@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.md_report import changed_list  # noqa: E402
 from scripts.citygml_constants import METADATA_MARKER  # noqa: E402
 
 # Hidden payload line. base64 contains no `-`, so it cannot break the HTML comment.
@@ -89,11 +90,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--preview-url", default=None)
     args = p.parse_args(argv)
 
-    changed = [
-        line.strip()
-        for line in args.file_list.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    changed = changed_list(args.file_list, "")
     meta = build_metadata(
         args.pr, args.branch, args.base_sha, args.head_sha, changed, args.preview_url
     )

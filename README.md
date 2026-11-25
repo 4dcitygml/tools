@@ -42,8 +42,10 @@ request.
 
 ## Quick start
 
-1. Paste the one-line command from your city's README into Terminal (macOS)
-   or PowerShell (Windows). Without a city argument it connects to a practice
+1. Open a terminal: on macOS, *Terminal* (Cmd+Space, type "Terminal", Return;
+   or Applications > Utilities > Terminal); on Windows, *PowerShell* (Start,
+   type "PowerShell", Enter). Paste the one-line command from your city's README
+   and press Return / Enter. Without a city argument it connects to a practice
    city chosen by your language:
 
    ```
@@ -55,10 +57,16 @@ request.
    `~/Documents/citygml-tools/`, and starts the hub. Running it again is always
    safe: it installs the newest release if there is one, then starts the tools
    (offline, the installed tools start).
-2. The hub opens in your browser, connected to that city. Choose the city's
-   GitHub account once (the screen states exactly what you authorize); the hub
-   creates your copy of the city. After setup a desktop icon starts the tools.
-3. Newer versions are announced inside the hub; *Get it now* downloads and
+2. The hub opens in your browser, connected to that city. Keep the terminal
+   window open while you work: closing it stops the tools (the screens then say
+   so). Choose the city's GitHub account once (the screen states exactly what you
+   authorize); the hub creates your copy of the city.
+3. Next time, start the tools with the command the terminal and the last setup
+   screen show (`~/Documents/citygml-tools/citygml.sh <owner>/<repo>`; on Windows
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "<Documents>\citygml-tools\citygml.ps1" <owner>/<repo>`),
+   by running the one-line command again, or with a desktop icon: the last setup
+   screen and *Settings* create one on request.
+4. Newer versions are announced inside the hub; *Get it now* downloads and
    verifies them, and they are used from the next start. Viewing the data
    itself needs no account: open the city repository or the portal.
 

@@ -33,7 +33,7 @@ for _import_root in (HERE, TOOLS_ROOT):
 
 from scripts.diff_citygml import diff_sources  # noqa: E402
 from scripts.reconstruct_minimal import Result, building_spans, reconstruct  # noqa: E402
-from generic_to_uro import detect_uro_namespace, restore_generic_uro  # noqa: E402
+from dialects.plateau.generic_to_uro import detect_uro_namespace, restore_generic_uro  # noqa: E402  (the i-UR restore is the pack's)
 
 CORE_NS = b"http://www.opengis.net/citygml/2.0"
 SAFE_SCHEMA = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

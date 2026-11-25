@@ -53,8 +53,8 @@ from scripts.diff_citygml import diff_sources  # noqa: E402
 from scripts.gate_result import malformed_input  # noqa: E402
 
 # Member spans and the file's own spelling of cityObjectMember come from the shared identity module
-# (PLATEAU writes <core:cityObjectMember>, CityGML 1.0 data often the default-namespace <cityObjectMember>).
-from scripts.building_identity import building_spans, citymodel_close, member_markers  # noqa: E402,F401
+# (with a prefix, <core:cityObjectMember>; CityGML 1.0 data often the default-namespace <cityObjectMember>).
+from scripts.building_identity import building_spans, citymodel_close, member_markers  # noqa: E402
 
 
 def _tag_localname(path: str) -> str:
@@ -131,10 +131,6 @@ def classify(n_modified: int, n_added: int, n_deleted: int, n_renamed: int = 0) 
     return "none"
 
 
-def _classify(modified: list[str], added: list[str], deleted: list[str]) -> str:
-    return classify(len(modified), len(added), len(deleted))
-
-
 def reconstruct(base: bytes, head: bytes) -> Result:
     """Assemble and return a clean version: base with only head's semantic changes applied."""
     diff = diff_sources(base, head, "base", "head", include_unchanged=False)
@@ -167,8 +163,8 @@ def reconstruct(base: bytes, head: bytes) -> Result:
                 ok = True
                 for d in attr_diffs:
                     old, new = d.get("old"), d.get("new")
-                    if old is None or new is None:
-                        ok = False  # leaf added/removed (structural change) -> fall back to block replacement
+                    if old is None or new is None or "/@" in d["path"]:
+                        ok = False  # leaf added/removed or an XML attribute changed -> fall back to block replacement
                         break
                     replaced = _leaf_replace(span, _tag_localname(d["path"]), old, new)
                     if replaced is None:
@@ -318,21 +314,6 @@ def main(argv: list[str] | None = None) -> int:
     head = args.head.read_bytes()
     r = reconstruct(base, head)
     _print_report(r, base, head)
-
-    # Emit per-file counts + building IDs to stdout for whole-PR scope determination
-    # (CI unions the IDs across all files and classifies them together with appearance-changed buildings (a)).
-    print(
-        f"COUNTS modified={len(r.modified)} added={len(r.added)} "
-        f"deleted={len(r.deleted)} renamed={len(r.renamed)} classification={r.classification}"
-    )
-    for bid in r.modified:
-        print(f"BLDG modified {bid}")
-    for bid in r.added:
-        print(f"BLDG added {bid}")
-    for bid in r.deleted:
-        print(f"BLDG deleted {bid}")
-    for old_id, new_id in r.renamed:
-        print(f"BLDG renamed {new_id} {old_id}")
 
     if not r.verified:
         # Semantics cannot be preserved = this tool cannot handle it. Error out without writing.

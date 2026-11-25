@@ -14,12 +14,12 @@ from pathlib import Path
 
 from scripts.diff_citygml import (
     _extract_attributes,
-    _geometry_hash,
+    geometry_hash,
     _norm_num,
     diff_files,
     diff_sources,
 )
-from lxml import etree
+from scripts.safe_xml import fromstring
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -72,8 +72,8 @@ class _TmpMixin(unittest.TestCase):
         p.write_text(content, encoding="utf-8")
         return p
 
-    def parse_building(self, xml: str) -> etree._Element:
-        root = etree.fromstring(_model(xml).encode("utf-8"))
+    def parse_building(self, xml: str):
+        root = fromstring(_model(xml).encode("utf-8"))
         return root.find(".//{http://www.opengis.net/citygml/building/2.0}Building")
 
 
@@ -176,7 +176,7 @@ class TestGeometryHash(_TmpMixin):
     def test_hash_changes_on_real_change(self) -> None:
         a = self.parse_building(_building("b", poslist="0 0 0 1 0 0"))
         b = self.parse_building(_building("b", poslist="0 0 0 1 0 9"))
-        self.assertNotEqual(_geometry_hash(a), _geometry_hash(b))
+        self.assertNotEqual(geometry_hash(a), geometry_hash(b))
 
     def test_hash_is_face_order_independent(self) -> None:
         # Two buildings differing only in face order hash identically (set comparison)
@@ -190,15 +190,15 @@ class TestGeometryHash(_TmpMixin):
         f2 = "3 3 3 4 4 4"
         e1 = self.parse_building(_building("b", extra=two_faces.format(a=f1, b=f2)))
         e2 = self.parse_building(_building("b", extra=two_faces.format(a=f2, b=f1)))
-        self.assertEqual(_geometry_hash(e1), _geometry_hash(e2))
+        self.assertEqual(geometry_hash(e1), geometry_hash(e2))
 
     def test_no_geometry_returns_none(self) -> None:
-        root = etree.fromstring(_model(
+        root = fromstring(_model(
             '<core:cityObjectMember><bldg:Building gml:id="x">'
             '<bldg:measuredHeight>5</bldg:measuredHeight></bldg:Building></core:cityObjectMember>'
         ).encode("utf-8"))
         b = root.find(".//{http://www.opengis.net/citygml/building/2.0}Building")
-        self.assertIsNone(_geometry_hash(b))
+        self.assertIsNone(geometry_hash(b))
 
 
 class TestAttributeExtraction(_TmpMixin):
@@ -215,6 +215,14 @@ class TestAttributeExtraction(_TmpMixin):
         # Regular attributes are extracted
         self.assertEqual(attrs["/measuredHeight"], "10.0")
         self.assertEqual(attrs["/storeysAboveGround"], "3")
+
+    def test_appearance_of_every_version_is_excluded(self) -> None:
+        # D-4c1: a CityGML 1.0 building's local appearance was read as attributes
+        b = fromstring(b'<bldg:Building xmlns:bldg="http://www.opengis.net/citygml/building/1.0" '
+                       b'xmlns:app="http://www.opengis.net/citygml/appearance/1.0"><bldg:measuredHeight>9</bldg:measuredHeight>'
+                       b'<app:appearance><app:Appearance><app:theme>rgb</app:theme></app:Appearance></app:appearance>'
+                       b'</bldg:Building>')
+        self.assertEqual(_extract_attributes(b), {"/measuredHeight": "9"})
 
     def test_repeated_path_indexing(self) -> None:
         extra = ("<uro:thematicSrcDesc>000</uro:thematicSrcDesc>"
@@ -274,6 +282,85 @@ class TestRealFixtures(unittest.TestCase):
         paths = {d["path"] for d in b["attribute_diffs"]}
         self.assertIn("/measuredHeight", paths)
 
+
+
+class TestOneRenameRule(unittest.TestCase):
+    """U6 / D-c1 (decided): one rename rule for every comment and gate: equal content after numeric
+    normalisation, and only unambiguous 1:1 pairs. Before, diff_citygml compared raw values (a
+    13.80 -> 13.8 id change read as a deletion and an addition) and reviewability_lint paired
+    greedily (two identical buildings re-numbered read as renames)."""
+
+    def test_numeric_normalised_and_one_to_one(self) -> None:
+        from scripts.diff_citygml import load_buildings
+        from scripts.reviewability_lint import analyze_file
+        old = _model(_building("a1", height="13.80")).encode()
+        new = _model(_building("a2", height="13.8")).encode()
+        result = diff_sources(old, new, "o", "n")
+        self.assertEqual([(b["status"], b.get("old_id")) for b in result["buildings"]], [("renamed", "a1")])
+        lint = analyze_file(load_buildings(old), load_buildings(new), "t.gml")
+        self.assertEqual([(w["type"], w.get("old_id")) for w in lint["warnings"]], [("id_change", "a1")])
+        twins_old = _model(_building("x1"), _building("x2")).encode()
+        twins_new = _model(_building("y1"), _building("y2")).encode()
+        self.assertEqual(diff_sources(twins_old, twins_new, "o", "n")["summary"]["renamed"], 0)
+        lint = analyze_file(load_buildings(twins_old), load_buildings(twins_new), "t.gml")
+        self.assertEqual(sorted(w["type"] for w in lint["warnings"]), ["lifecycle_added"] * 2 + ["lifecycle_deleted"] * 2)
+
+
+class TestOnlyGeometryIsExcluded(unittest.TestCase):
+    """D-c9 (decided, dialect-neutral): only geometry is left out of the comparison. Before, every
+    gml element was (gml:name and gml:description changes read as unchanged), and an attribute's
+    uom or codeSpace was never read."""
+
+    def status(self, old_extra: str, new_extra: str, **kw) -> list:
+        old = _model(_building("b", extra=old_extra, **kw.get("old", {}))).encode()
+        new = _model(_building("b", extra=new_extra, **kw.get("new", {}))).encode()
+        return [(e["status"], [d["path"] for d in e.get("attribute_diffs", [])]) for e in diff_sources(old, new, "o", "n")["buildings"]]
+
+    def test_name_description_uom_and_codespace_count(self) -> None:
+        self.assertEqual(self.status("<gml:name>Old hall</gml:name>", "<gml:name>New hall</gml:name>"),
+                         [("modified", ["/name"])])
+        self.assertEqual(self.status("<gml:description>a</gml:description>", "<gml:description>b</gml:description>"),
+                         [("modified", ["/description"])])
+        self.assertEqual(self.status('<bldg:usage codeSpace="a.xml">1</bldg:usage>', '<bldg:usage codeSpace="b.xml">1</bldg:usage>'),
+                         [("modified", ["/usage/@codeSpace"])])
+        uom = self.status("", "", new={"height": "10.0"})
+        self.assertEqual(uom, [])                                    # same value, same uom
+        old = _model(_building("b")).encode()
+        new = old.replace(b'uom="m"', b'uom="ft"')
+        self.assertEqual([d["path"] for d in diff_sources(old, new, "o", "n")["buildings"][0]["attribute_diffs"]],
+                         ["/measuredHeight/@uom"])
+        geometry = _model(_building("b")).encode().replace(b"<gml:Solid>", b'<gml:Solid gml:id="s1">')
+        self.assertEqual(diff_sources(_model(_building("b")).encode(), geometry, "o", "n")["buildings"], [])
+
+    def test_the_minimal_diff_rebuilds_such_a_change(self) -> None:
+        from scripts.reconstruct_minimal import reconstruct
+        old = _model(_building("b")).encode()
+        new = old.replace(b'uom="m"', b'uom="ft"')
+        result = reconstruct(old, new)
+        self.assertEqual(diff_sources(new, result.output, "h", "r")["buildings"], [])
+
+
+class TestOneParsePerRevision(unittest.TestCase):
+    """U6: the gates parsed each changed file's two revisions again and again (about 15 times a
+    PR); in a run, buildings_at parses a blob once and the others read the result."""
+
+    def test_a_blob_is_parsed_once_per_run(self) -> None:
+        import os
+        from unittest.mock import patch
+        from scripts import diff_citygml
+        from tests.test_commit_building_scope import GitRepo
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as run:
+            repo = GitRepo(Path(tmp))
+            sha = repo.commit_text(_model(_building("b1", height="12.5")), "one")
+            self.assertEqual(diff_citygml.buildings_at(repo.root, sha, "missing.gml"), {})
+            with patch.dict(os.environ, {"CITYGML_RUN": run}):
+                first = diff_citygml.buildings_at(repo.root, sha, "tile.gml")
+                with patch.object(diff_citygml, "_load", side_effect=AssertionError("parsed twice")):
+                    self.assertEqual(diff_citygml.buildings_at(repo.root, sha, "tile.gml"), first)
+                self.assertEqual(len(list((Path(run) / "buildings").iterdir())), 1)
+            self.assertEqual(first["b1"][0]["/measuredHeight"], "12.5")
+            with patch.dict(os.environ, {"CITYGML_RUN": ""}):   # outside a run nothing is written
+                self.assertEqual(diff_citygml.buildings_at(repo.root, sha, "tile.gml"), first)
 
 if __name__ == "__main__":
     unittest.main()

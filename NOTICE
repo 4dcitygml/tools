@@ -48,7 +48,7 @@ directory-set hash below is the SHA-256 of the sorted concatenation of
      (CC BY 4.0 attribution: 国土交通省 Project PLATEAU)
    - Set hash: 623d2139989b8463521d869cf002a0ba3247ff22beafc3cfa3add4a0be007d0f
 
-schemas/i4dur/ (2 files, set hash
+dialects/plateau/i4dur/ (2 files, set hash
 10156133c27310dc3beda3a112194d5f0f4f3fc7e8d1165121635f2d301d7c97) and
 schemas/master.xsd (sha256
 746d1f942892b93d25891cf9e9c6ec26aeace3dd23a559396f84fbb3694e101c) are this

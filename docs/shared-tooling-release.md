@@ -72,7 +72,8 @@ tools-v1.1.0 includes shared reports and standard approvals.
 Required machine checks are `analyze` and `ci-report`; the retired operator-only
 confirmation gate is not reinstated. See [implementation status](implementation-status.md).
 
-Cities pin only the CI tools version (`CITYGML_TOOLS_REF` in their workflows).
+Cities pin only the CI tools version: the `tools` key of their `4dcitygml.json`, a commit a
+`tools-v*` tag points to (Exchange Contract A11).
 The **Hub client** is not pinned by cities: its version is decided by the
 `hub-v*` releases of this repository (see below). A new client does not update
 city CI or change an ongoing case's tools version.
@@ -81,9 +82,12 @@ city CI or change an ongoing case's tools version.
 
 - **Entry**: one command from the city's README —
   `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh)" -- <owner/repo>`
-  (Windows: the `citygml.ps1` equivalent). The script comes from the moving tag
-  `install-v1` of this repository, installs the newest `hub-v*` release after
-  verifying it against the SHA-256 digest GitHub publishes for the asset, keeps
+  (Windows: the `citygml.ps1` equivalent). The tag `install-v1` of this repository
+  holds a bootstrap (`install/citygml.sh`, `.ps1`) that never moves again: it fetches
+  the installer attached to the latest hub release (`releases/latest/download/citygml.sh`,
+  `.ps1`; from `install/release/`) and runs it. The installer installs GitHub's latest
+  release (the hub series is the only one marked latest; a suffixed tag is a prerelease)
+  after verifying it against the SHA-256 digest GitHub publishes for the asset, keeps
   a copy of itself in `~/Documents/citygml-tools/`, and hands over to the hub.
   Without an argument it connects to a practice city chosen by the system language.
 - **Afterwards**: the hub creates a desktop launcher (`.app` / `.lnk`) that

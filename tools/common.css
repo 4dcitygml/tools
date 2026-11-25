@@ -1,0 +1,44 @@
+/* Copyright (c) 2026 4dcitygml */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* What every screen of the tools looks like in common (#66; before, each page kept its own palette
+   and buttons and they differed): the palette, the page, links, code, buttons, the header band, the
+   spinner, and the note and banners common.js shows. runtime.page puts it first into each screen's
+   head, every selector inside :where() (no weight): any rule of a page wins over it, so a page's own
+   <style> keeps only its differences; a city's theme (theme.json) comes last. */
+:root {
+  --bg: #f5f6f8; --card: #fff; --border: #dde1e6; --text: #1c2733; --muted: #6b7785;
+  --accent: #0969da; --ok: #1f883d; --warn: #b8860b; --danger: #c92a2a;
+}
+:where(*) { box-sizing: border-box; }
+:where(html, body) { margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 13px;
+  color: var(--text); background: var(--bg); }
+:where(a) { color: var(--accent); }
+:where(code) { background: #eaeef2; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+:where(.muted) { color: var(--muted); }
+
+:where(button) { font: inherit; border-radius: 6px; border: 1px solid var(--border); background: #f6f8fa;
+  padding: 6px 14px; cursor: pointer; }
+:where(button:hover) { background: #eef1f4; }
+:where(button.primary) { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; }
+:where(button.danger) { color: var(--danger); }
+:where(button:disabled) { opacity: .45; cursor: default; }
+
+/* The dark band at the top (a theme recolours it: header_bg, header_fg) */
+:where(header, #header) { background: #24292f; color: #fff; }
+:where(#cityLogo) { height: 28px; }  /* the city's logo (/city-logo; stays hidden if absent) */
+
+:where(.spinner) { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc;
+  border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+  vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* common.js: the short note (toast), the error and stop banners, the link back to the hub */
+:where(#toast) { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #24292f;
+  color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 12px; display: none; z-index: 100;
+  box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+:where(#errBanner, #stopBanner) { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+  color: #fff; padding: 8px 16px; border-radius: 8px; z-index: 5000; font-size: 13px; max-width: 80vw;
+  box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+:where(#errBanner) { background: #c92a2a; cursor: pointer; }
+:where(#stopBanner) { background: #9a3412; }
+:where(.hubBack) { color: inherit; margin-right: 12px; white-space: nowrap; }

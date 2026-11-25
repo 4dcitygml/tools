@@ -62,10 +62,9 @@ class TestFindRegressions(unittest.TestCase):
 
 
 class TestRender(unittest.TestCase):
-    def test_clean_has_marker_and_check(self):
-        out = render({"regressions": [], "checked": 3, "skipped": 0})
-        self.assertTrue(out.startswith(VAL3DITY_MARKER))
-        self.assertIn("✅", out)
+    def test_a_clean_check_posts_nothing(self):
+        # U2/U3: topology_gate.sh grepped the clean text to drop the comment
+        self.assertEqual(render({"regressions": [], "checked": 3, "skipped": 0}), "")
 
     def test_regression_lists_building_and_code(self):
         out = render({"regressions": [
@@ -76,6 +75,52 @@ class TestRender(unittest.TestCase):
         self.assertIn("104", out)
         self.assertIn("ring self-intersection", out)
 
+
+
+GML = (b'<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" '
+       b'xmlns:bldg="http://www.opengis.net/citygml/building/2.0" xmlns:gml="http://www.opengis.net/gml">'
+       b'<core:cityObjectMember><bldg:Building gml:id="b"><bldg:lod1Solid><gml:Solid srsName="EPSG:6677">'
+       b'<gml:posList>0 0 0 1 0 0 1 1 0 0 0 0</gml:posList></gml:Solid></bldg:lod1Solid></bldg:Building>'
+       b'</core:cityObjectMember></core:CityModel>')
+
+
+class TestEachCallStandsAlone(unittest.TestCase):
+    """D-c3: every call wrote subset.json and report.json in one folder, so a val3dity run that
+    wrote no report read the previous call's (a failed base run read the head's, hiding the
+    regression). D-c4: a base that could not be validated read as {} and every invalid head
+    building as new; such a file is undecidable now and skipped."""
+
+    def test_a_failed_run_never_reads_another_calls_report(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        from scripts import val3dity_gate as g
+        calls = []
+
+        def run(cmd, **_kw):
+            calls.append(cmd)
+            if "to-cityjson" in cmd:
+                out = Path(next(a for a in cmd if a.startswith("--output=")).split("=", 1)[1])
+                (out / "subset.json").write_text("{}")
+            elif len(calls) == 2:   # the first val3dity run writes its report; the second fails
+                rep = Path(cmd[cmd.index("--report") + 1])
+                rep.write_text(json.dumps({"features": [{"id": "b", "validity": False, "errors": [{"code": 203}]}]}))
+            return type("R", (), {"returncode": 0})()
+        with tempfile.TemporaryDirectory() as td, patch.object(g, "_target_crs", return_value=None), \
+                patch.object(g.subprocess, "run", side_effect=run):
+            self.assertEqual(g._validate_ids(GML, {"b"}, Path(td), "EPSG:6677"), {"b": {"valid": False, "codes": ["203"]}})
+            self.assertIsNone(g._validate_ids(GML, {"b"}, Path(td), "EPSG:6677"))
+
+    def test_an_undecidable_base_skips_the_file(self):
+        from unittest.mock import patch
+        from scripts import val3dity_gate as g
+        maps = {b"base": {"b": ({"/h": "1"}, "g")}, b"head": {"b": ({"/h": "2"}, "g")}}
+        with patch("scripts.repo_git.blob", side_effect=lambda repo, sha, rel: sha.encode()), \
+                patch.object(g, "buildings_at", side_effect=lambda repo, sha, rel: maps[sha.encode()]), \
+                patch.object(g, "_city_crs", return_value=None), \
+                patch.object(g, "_validate_ids", side_effect=[{"b": V(False, ["203"])}, None]):
+            result = g.gate_ci(Path("."), "base", "head", ["t.gml"])
+        self.assertEqual((result["regressions"], result["skipped"]), ([], 1))
 
 if __name__ == "__main__":
     unittest.main()
@@ -116,6 +161,18 @@ class TestCityCrs(unittest.TestCase):
         self.assertTrue(580000 < x < 590000 and 4505000 < y < 4515000, (x, y))   # Manhattan in UTM 18N meters
         self.assertAlmostEqual(z, 8.6 * 1200 / 3937, places=3)   # US feet heights become metres too
         self.assertEqual(root.find(".//{http://www.opengis.net/gml}Envelope").get("srsName"), "EPSG:32618")
+
+    def test_the_files_own_crs_comes_before_the_declared_one(self):
+        # D-c8: an explicit --crs first (CI ignored it), then the file's srsName, then the declaration
+        from lxml import etree
+        from scripts.val3dity_gate import _source_crs
+        named = etree.fromstring(b'<CityModel xmlns:gml="http://www.opengis.net/gml"><gml:boundedBy>'
+                                 b'<gml:Envelope srsName="EPSG:25832"/></gml:boundedBy></CityModel>')
+        bare = etree.fromstring(b"<CityModel/>")
+        self.assertEqual(_source_crs(named, None, "EPSG:2263"), "EPSG:25832")
+        self.assertEqual(_source_crs(bare, None, "EPSG:2263"), "EPSG:2263")
+        self.assertEqual(_source_crs(named, "EPSG:6697", "EPSG:2263"), "EPSG:6697")
+        self.assertIsNone(_source_crs(bare))
 
     def test_city_crs_is_never_guessed(self):
         import tempfile

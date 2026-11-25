@@ -6,21 +6,23 @@
 A city declares in `4dcitygml.json` which value is its stable building ID
 (`building_id.type`):
 
-- ``uro:buildingID`` (default, PLATEAU): the value of ``<uro:buildingID>``
-- ``gml:id``: the ``gml:id`` of the ``Building`` element (Munich etc.)
+- ``gml:id`` (also when a city declares nothing): the ``gml:id`` of the ``Building`` element
+- ``core:externalReference``: the object name of the Building's first external reference (the
+  ALKIS identifier of Bavarian LoD2 data)
 - ``gen:<NAME>``: the value of the generic string attribute ``<NAME>`` (New York's BIN)
+- ``<prefix>:<leaf>``: the value of an ADE leaf of that local name, any prefix (a dialect pack's
+  identity leaf; the pack gives the city's default)
 
 ``building_id.invalid_values`` lists source placeholders that never identify a
 building; a building whose value is absent or invalid falls back to its ``gml:id``.
 
-The attribute editor carries the same rule in ``tools/attr_editor/app.py``
-(it is shipped without ``scripts/``); a test keeps the two in step.
+The hub bundle ships this module, so the editors read the same rule.
 
 The trailers of a commit message that name buildings (Exchange Contract A2) are read here
 too, for the commit scope gate, the topology scope, the history index and the hub.
 
 Byte-level helpers: city object members are located by the file's own spelling
-of ``cityObjectMember`` (``<core:cityObjectMember>`` in PLATEAU, the default
+of ``cityObjectMember`` (``<core:cityObjectMember>`` with a prefix, the default
 namespace ``<cityObjectMember>`` in CityGML 1.0 data), so edits stay
 byte-preserving in every dialect.
 """
@@ -35,25 +37,47 @@ _COM_ANY_RE = re.compile(rb"<((?:\w+:)?cityObjectMember)[ >]")
 _CITYMODEL_CLOSE_RE = re.compile(rb"</(?:\w+:)?CityModel>")
 # gml:id of a Building (1.0/2.0, any prefix) inside a member
 _BUILDING_GML_ID_RE = re.compile(rb'<(?:\w+:)?Building\b[^>]*?\sgml:id="([^"]+)"')
-BUILDINGID_RE = re.compile(rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>([^<]+)</(?:\w+:)?buildingID>")
-# PLATEAU's municipality code of a building (uro:city, any prefix)
-CITY_RE = re.compile(rb"<(?:\w+:)?city(?:\s[^>]*)?>([^<]+)</(?:\w+:)?city>")
 
 # Every trailer the commit scope gate reads (A2); Created-By and others are convention only.
-TRAILER_RE = re.compile(
-    r"^(Building|Building-Added|Building-Deleted|Change-Type|Scope-Municipality"
-    r"|Building-ID-From|Building-ID-To|Provenance-Manifest|Lifecycle-Manifest|Corrects|Reset-To):"
-    r"[ \t]*(.+?)[ \t]*$",
-    re.MULTILINE,
-)
+TRAILER_KEYS = ("Building", "Building-Added", "Building-Deleted", "Change-Type", "Scope-Municipality",
+                "Building-ID-From", "Building-ID-To", "Provenance-Manifest", "Lifecycle-Manifest", "Corrects", "Reset-To")
 BUILDING_TRAILERS = ("Building", "Building-Added", "Building-Deleted")   # one building per value
+_KEYS = {key.lower(): key for key in TRAILER_KEYS}
+_TRAILER_LINE = re.compile(r"([A-Za-z0-9][A-Za-z0-9-]*)[ \t]*:[ \t]*(.*?)[ \t]*")
+
+# The Change-Type kinds (A2; the commit scope gate enforces them). The identity kinds work for
+# every city (S11); a dialect pack adds its own (dialects.Pack.kinds), the last two of CHANGE_TYPES.
+IDENTITY_KINDS = frozenset({"identity-baseline", "identity-correction"})
+WHOLE_FILE_KINDS = frozenset({"source-baseline", "layout", "scope-extract"})   # files at once, no building trailers
+GENERIC_KINDS = frozenset({"lifecycle", "layout", "source-baseline", "practice-reset"}) | IDENTITY_KINDS
+# (schema-migration is designed but has no gate yet, so it is not accepted)
+CHANGE_TYPES = GENERIC_KINDS | {"scope-extract", "schema-update"}
 
 
 def trailers(message: str) -> dict[str, list[str]]:
-    """The A2 trailers of a commit message (or of several), key -> values in order."""
+    """The A2 trailers of one commit message as git reads them (git interpret-trailers --parse;
+    U9, D-b1): the final paragraph, never the first (the subject), and only when every line of it
+    is a `Token: value` trailer (a line that starts with white space continues the one before);
+    keys regardless of case. key -> values in order."""
+    lines = (message or "").replace("\r\n", "\n").split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    blank = [i for i, line in enumerate(lines) if not line.strip()]
+    if not blank or not any(line.strip() for line in lines[:blank[-1]]):
+        return {}   # one paragraph: the subject alone
+    entries: list[list[str]] = []
+    for line in lines[blank[-1] + 1:]:
+        if line[:1] in (" ", "\t") and entries:
+            entries[-1][1] += " " + line.strip()
+            continue
+        m = _TRAILER_LINE.fullmatch(line)
+        if m is None:
+            return {}   # prose in the last paragraph: it is no trailer block
+        entries.append([m.group(1), m.group(2)])
     result: dict[str, list[str]] = {}
-    for key, value in TRAILER_RE.findall(message or ""):
-        result.setdefault(key, []).append(value.strip())
+    for key, value in entries:
+        if key.lower() in _KEYS and value.strip():
+            result.setdefault(_KEYS[key.lower()], []).append(value.strip())
     return result
 
 
@@ -101,16 +125,17 @@ def building_spans(raw: bytes) -> dict[str, tuple[int, int]]:
 
 @dataclass(frozen=True)
 class IdentityRule:
-    type: str = "uro:buildingID"
+    type: str = "gml:id"   # a city that declares no building_id (v2.0.0: no dialect is the default)
     invalid_values: frozenset = frozenset()
 
 
+
 def rule_from_config(cfg: dict | None) -> IdentityRule:
-    """The rule a city's 4dcitygml.json declares (PLATEAU's uro:buildingID when it declares none)."""
+    """The rule a city's 4dcitygml.json declares; gml:id when it declares none."""
     spec = (cfg or {}).get("building_id") if isinstance(cfg, dict) else None
-    if not isinstance(spec, dict):
+    if not isinstance(spec, dict) or not str(spec.get("type") or "").strip():
         return IdentityRule()
-    kind = str(spec.get("type") or "uro:buildingID").strip() or "uro:buildingID"
+    kind = str(spec["type"]).strip()
     invalid = frozenset(str(v) for v in (spec.get("invalid_values") or []) if str(v))
     return IdentityRule(kind, invalid)
 
@@ -122,51 +147,46 @@ def leaf_pattern(tag_local: str) -> "re.Pattern[bytes]":
     return re.compile(rb"(<(?:\w+:)?" + t + rb"\b[^>]*>)([^<]*)(</(?:\w+:)?" + t + rb">)")
 
 
+def _value_pattern(rule: IdentityRule, value: bytes = rb"[^<]*?") -> "re.Pattern[bytes]":
+    """Where the rule keeps the stable ID in a member's bytes: groups are what precedes the value,
+    the value and what follows it, so it can be read or replaced in place (one pattern per type)."""
+    if rule.type == "gml:id":
+        return re.compile(rb'(<(?:\w+:)?Building\b[^>]*?\sgml:id=")(' + value + rb')(")')
+    if rule.type == "core:externalReference":   # the first external reference's object name (CityGML core)
+        return re.compile(rb"(<(?:\w+:)?externalObject\b[^>]*>\s*<(?:\w+:)?name\b[^>]*>\s*)(" + value
+                          + rb")(\s*</(?:\w+:)?name>)")
+    if rule.type.startswith("gen:"):
+        name = re.escape(rule.type[4:].encode("utf-8"))
+        return re.compile(rb'(<(?:\w+:)?stringAttribute\s+name="' + name + rb'"\s*>\s*<(?:\w+:)?value>\s*)('
+                          + value + rb')(\s*</(?:\w+:)?value>)')
+    t = re.escape(rule.type.split(":", 1)[-1].encode("utf-8"))   # the declared leaf, by its local name
+    return re.compile(rb"(<(?:\w+:)?" + t + rb"(?:\s[^>]*)?>\s*)(" + value + rb")(\s*</(?:\w+:)?" + t + rb">)")
+
+
 def stable_id(span: bytes, gml_id: str, rule: IdentityRule = IdentityRule()) -> str:
     """The stable building ID of one member under the city's rule (gml_id when absent or invalid)."""
     if rule.type == "gml:id":
         return gml_id
-    if rule.type.startswith("gen:"):
-        name = re.escape(rule.type[4:].encode("utf-8"))
-        m = re.search(rb'<(?:\w+:)?stringAttribute\s+name="' + name + rb'"\s*>\s*<(?:\w+:)?value>([^<]+)</', span)
-        value = m.group(1).decode("utf-8").strip() if m else ""
-        return value if value and value not in rule.invalid_values else gml_id
-    value = building_id(span) or ""
+    hit = _value_pattern(rule).search(span)
+    value = hit.group(2).decode("utf-8", errors="replace").strip() if hit else ""
     return value if value and value not in rule.invalid_values else gml_id
+
+
+def identity_leaf(span: bytes, rule: IdentityRule = IdentityRule()) -> "tuple[str, int] | None":
+    """The leaf that holds the stable ID under the rule, as (local name, its occurrence among the
+    member's leaves of that name, leaf_pattern's order); None for gml:id or when it is absent.
+    The editors keep it read-only: an ID changes only by an identity change (A2)."""
+    hit = None if rule.type == "gml:id" else _value_pattern(rule).search(span)
+    if not hit:
+        return None
+    tag = re.search(rb"</(?:\w+:)?([\w.-]+)>", hit.group(3)).group(1).decode("utf-8")
+    return tag, sum(1 for m in leaf_pattern(tag).finditer(span) if m.start(2) < hit.start(2))
 
 
 def replace_stable_id(span: bytes, old: str, new: str, rule: IdentityRule = IdentityRule()) -> bytes:
     """The member with its stable ID changed from old to new where the rule keeps it (the
-    Building's gml:id, the generic attribute's value, or the code-list attribute), every other
-    byte as it was. Unchanged when old is not found there."""
-    o, n = re.escape(old.encode("utf-8")), new.encode("utf-8")
-    if rule.type == "gml:id":
-        pattern = rb'(<(?:\w+:)?Building\b[^>]*?\sgml:id=")' + o + rb'(")'
-    elif rule.type.startswith("gen:"):
-        name = re.escape(rule.type[4:].encode("utf-8"))
-        pattern = (rb'(<(?:\w+:)?stringAttribute\s+name="' + name + rb'"\s*>\s*<(?:\w+:)?value>\s*)' + o
-                   + rb'(\s*</(?:\w+:)?value>)')
-    else:
-        pattern = rb"(<(?:\w+:)?buildingID(?:\s[^>]*)?>\s*)" + o + rb"(\s*</(?:\w+:)?buildingID>)"
-    return re.sub(pattern, lambda m: m.group(1) + n + m.group(2), span, count=1)
+    Building's gml:id, the external reference, the generic attribute's value, or the declared
+    leaf), every other byte as it was. Unchanged when old is not found there."""
+    n = new.encode("utf-8")
+    return _value_pattern(rule, re.escape(old.encode("utf-8"))).sub(lambda m: m.group(1) + n + m.group(3), span, count=1)
 
-
-def building_id(span: bytes) -> "str | None":
-    """The <uro:buildingID> value of one member (any prefix), or None."""
-    hit = BUILDINGID_RE.search(span)
-    value = hit.group(1).decode("utf-8", errors="replace").strip() if hit else ""
-    return value or None
-
-
-def municipality_values(span: bytes) -> "set[str]":
-    """Every non-empty municipality code (uro:city) of one member."""
-    values = {m.group(1).decode("utf-8", errors="replace").strip() for m in CITY_RE.finditer(span)}
-    values.discard("")
-    return values
-
-
-def municipality(span: bytes) -> "str | None":
-    """The member's municipality code when it has exactly one (a member naming two cities has
-    no determinable municipality), else None."""
-    values = municipality_values(span)
-    return next(iter(values)) if len(values) == 1 else None

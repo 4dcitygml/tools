@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A small part of the AdV building-function list (Gebaeudefunktion), for the 5b skeleton. -->
+<gml:Dictionary xmlns:gml="http://www.opengis.net/gml" gml:id="Building_function">
+<gml:name>Building_function</gml:name>
+<gml:dictionaryEntry><gml:Definition gml:id="f1000"><gml:description>Wohngebaeude</gml:description><gml:name>31001_1000</gml:name></gml:Definition></gml:dictionaryEntry>
+<gml:dictionaryEntry><gml:Definition gml:id="f2000"><gml:description>Gebaeude fuer Wirtschaft oder Gewerbe</gml:description><gml:name>31001_2000</gml:name></gml:Definition></gml:dictionaryEntry>
+<gml:dictionaryEntry><gml:Definition gml:id="f9998"><gml:description>Nach Quellenlage nicht zu spezifizieren</gml:description><gml:name>31001_9998</gml:name></gml:Definition></gml:dictionaryEntry>
+</gml:Dictionary>

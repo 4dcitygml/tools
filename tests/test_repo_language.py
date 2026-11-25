@@ -30,27 +30,20 @@ from pathlib import Path
 
 from tests.support import EnglishEnv, runtime
 
-# which recorded outcome the driver turns into which gate row (ci/pr_analysis_main.sh, S17)
-_GATE_OUTCOMES = {"reason": "REASON", "classification": "CLASSIFICATION", "commit-scope": "COMMIT_SCOPE",
-                  "freshness": "FRESHNESS", "schema": "FORMAT", "minimal-diff": "REVIEWABILITY",
-                  "texture": "TEXTURE", "structure": "STRUCTURE", "plausibility": "PLATEAU", "model": "PREVIEW",
-                  "reproduction": "REPRODUCTION", "scope-reproducibility": "SCOPE_REPRODUCIBILITY",
-                  "topology": "TOPOLOGY"}
+# the rows a plain data PR does not have (the driver records them na)
+_NOT_APPLICABLE = {"scope-reproducibility": "na", "reproduction": "na", "topology": "na"}
 
 
-def write_gates(runner_temp: Path, env: dict) -> None:
-    """Record the gate rows as the driver would for these outcomes: success 0, failure 1, the
-    classification's warn-only mode 0 with a warning; any other value leaves the row unrecorded."""
+def write_rows(runner_temp: Path, statuses: dict, default: str = "pass") -> None:
+    """Every gate row as the driver records it (U2: the rows are the only state): a status per
+    key, `default` for the others, None for no result (the summary then shows pending)."""
     from scripts import gate_result
-    code = {"success": (0, 0), "failure": (1, 0), "warning": (0, 1)}
-    for key, var in _GATE_OUTCOMES.items():
-        if env.get(var + "_OUTCOME") in code:
-            exit_code, warnings = code[env[var + "_OUTCOME"]]
-            gate_result.write(runner_temp, gate_result.result(key, exit_code, warnings=warnings))
-    repo, quality = env.get("REPO_SCOPE_OUTCOME"), env.get("QUALITY_OUTCOME")
-    if repo or quality:                     # file-scope folds both (the driver writes it after the quality step)
-        worst = 1 if "failure" in (repo, quality) else 0
-        gate_result.write(runner_temp, gate_result.result("file-scope", worst))
+    code = {"pass": (0, 0), "warn": (0, 1), "fail": (1, 0), "error": (2, 0), "na": (None, 0)}
+    for row in gate_result.ROWS:
+        status = statuses.get(row.key, default)
+        if status is not None:
+            exit_code, warnings = code[status]
+            gate_result.write(runner_temp, gate_result.result(row.key, exit_code, status != "na", warnings=warnings))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -111,14 +104,14 @@ class TestTitlesKeepClassifying(_EnglishEnv):
         for lang in LANGS:
             for many in (False, True):
                 pr = {"title": title_for(lang, many), "head": {"ref": "feature-x"}}
-                self.assertEqual(hub.review_kind(pr), "attribute",
+                self.assertEqual(hub.review.review_kind(pr), "attribute",
                                  f"{lang} many={many}: {pr['title']!r}")
 
     def test_tex_titles_classify_as_texture(self):
         for lang in LANGS:
             for add in (False, True):
                 pr = {"title": tex_title_for(lang, add), "head": {"ref": "feature-x"}}
-                self.assertEqual(hub.review_kind(pr), "texture",
+                self.assertEqual(hub.review.review_kind(pr), "texture",
                                  f"{lang} add={add}: {pr['title']!r}")
 
     def test_tex_titles_match_ci_shell_literals(self):
@@ -193,10 +186,13 @@ class TestLabelResolution(_EnglishEnv):
         self.assertEqual(attr.label_in("ja", "someDataName", "data label"), "data label")
 
     def test_label_catalog_covers_exactly_the_label_tables(self):
-        """label.* keys ⇔ LABELS/_RISK_TITLES tags, in every language.
+        """label.* keys: the English catalog is the tables (V10: the code kept a second copy),
+        and every language has the same keys.
 
         (The static key-hygiene test in test_i18n cannot see these keys —
         they are built dynamically — so completeness is pinned here.)"""
+        self.assertEqual(attr.LABELS["storeysAboveGround"], "Storeys Above Ground")
+        self.assertEqual(attr._RISK_TITLES["TsunamiRiskAttribute"], "Tsunami Risk")
         expected = ({f"label.{t}" for t in attr.LABELS}
                     | {f"label.risk_{t}" for t in attr._RISK_TITLES})
         for lang in LANGS:
@@ -257,17 +253,14 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                 encoding="utf-8")
             env = dict(os.environ, GITHUB_REPOSITORY="",
                        GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT),
-                       RUNNER_TEMP=str(tmpdir), GML_COUNT="1",
-                       REASON_OUTCOME="failure", FRESHNESS_OUTCOME="success",
-                       CLASSIFICATION_OUTCOME=classification)
-            for key in ('COMMIT_SCOPE', 'QUALITY', 'FORMAT', 'REVIEWABILITY', 'STRUCTURE', 'PLATEAU', 'PREVIEW'):
-                env[key + '_OUTCOME'] = 'success'
+                       RUNNER_TEMP=str(tmpdir), CITYGML_RUN=str(tmpdir))
+            rows = {**_NOT_APPLICABLE, "reason": "fail",
+                    "classification": {"success": "pass", "failure": "fail", "warning": "warn"}[classification]}
             if incomplete:
-                env['REASON_OUTCOME'] = 'success'
-                env['FORMAT_OUTCOME'] = 'cancelled'
+                rows.update(reason="pass", schema=None)   # the format check did not finish
             if strict:
                 env["STRICT_GATE"] = "1"
-            write_gates(tmpdir, env)
+            write_rows(tmpdir, rows)
             proc = subprocess.run(
                 ["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")],
                 cwd=tmpdir, env=env, capture_output=True, text=True)
@@ -276,12 +269,20 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
             self.structured = json.loads((tmpdir / 'out/inspection.json').read_text())
             return proc, inspection, resubmission
 
+    def test_a_broken_declaration_still_gives_every_output(self):
+        # D-a1: json.loads of 4dcitygml.json was unguarded after inspection.md was written, so
+        # resubmission.md and inspection.json were never written and the job failed even without
+        # STRICT_GATE. The one reader (scripts/city_declaration.py) reads it as empty.
+        proc, inspection, resubmission = self._run('{"lang": "ja", broken')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("<!-- citygml-auto-resubmission -->", resubmission)
+        self.assertEqual(self.structured["lang"], "en")
+
     def test_incomplete_process_blocks_without_asking_proposer_to_fix_data(self):
         proc, inspection, resubmission = self._run('{"lang":"ja"}', strict=True, incomplete=True)
         self.assertEqual(proc.returncode, 1)
-        self.assertIn('<!-- status:pending -->', resubmission)
-        self.assertNotIn('<!-- status:active -->', resubmission)
-        self.assertEqual(len(self.structured['checks']), 14)   # v3.0.0: + classification
+        self.assertNotIn('<!-- status:', resubmission)   # T15: the report's state is the machine form
+        self.assertEqual(len(self.structured['checks']), 14)   # v3.0.0: + classification; v4.0.0: - freshness, + code-list
         self.assertEqual(next(r['status'] for r in self.structured['checks'] if r['key']=='schema'), 'pending')
 
     def test_unclassified_pr_gets_the_guidance_table_in_repo_language(self):
@@ -306,11 +307,11 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
             (tmpdir / "citygml_repo_scope.json").write_text(json.dumps(
                 {"ok": False, "rejected": [{"path": "install/start-mac.command", "note": "executable code", "category": "rejected"}]}),
                 encoding="utf-8")
-            env = dict(os.environ, GITHUB_REPOSITORY="", GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT), RUNNER_TEMP=str(tmpdir),
-                       GML_COUNT="0", REASON_OUTCOME="success", FRESHNESS_OUTCOME="success",
-                       CLASSIFICATION_OUTCOME="success", REPO_SCOPE_OUTCOME="failure", STRICT_GATE="1",
-                       COMMIT_SCOPE_OUTCOME="success", TEXTURE_OUTCOME="success")
-            write_gates(tmpdir, env)
+            env = dict(os.environ, GITHUB_REPOSITORY="", GITHUB_EVENT_PATH=str(event), TOOLS_DIR=str(REPO_ROOT),
+                       RUNNER_TEMP=str(tmpdir), CITYGML_RUN=str(tmpdir), STRICT_GATE="1")
+            # no CityGML file: the driver records the per-file rows na
+            write_rows(tmpdir, {"reason": "pass", "classification": "pass", "commit-scope": "pass",
+                                "file-scope": "fail", "texture": "pass"}, default="na")
             proc = subprocess.run(["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")], cwd=tmpdir, env=env,
                                   capture_output=True, text=True)
             structured = json.loads((tmpdir / "out" / "inspection.json").read_text())
@@ -330,8 +331,8 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         self.assertIn("### Hinweis", resubmission)
         self.assertIn("`geom/`", resubmission)
 
-    def run_rows(self, statuses: dict, lang='{"lang": "en"}'):
-        """The summary over explicit gate rows (every other applicable row passes)."""
+    def run_rows(self, statuses: dict, lang='{"lang": "en"}', env_extra=None):
+        """The summary over explicit gate rows (every other row passes; status None: no result file)."""
         import subprocess
         from scripts import gate_result
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,36 +342,53 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
                                                encoding="utf-8")
             (tmpdir / "out").mkdir()
             (tmpdir / "out" / "plausibility_lint.md").write_text("**❌ 0 error(s) / ⚠️ 1 warning(s)**", encoding="utf-8")
-            for row in gate_result.ROWS:
-                status = statuses.get(row.key, "pass")
-                code = {"pass": 0, "fail": 1, "warn": 1, "error": 2}[status]
-                gate_result.write(tmpdir, gate_result.result(row.key, code))
+            write_rows(tmpdir, statuses)
             env = dict(os.environ, GITHUB_REPOSITORY="", GITHUB_EVENT_PATH=str(tmpdir / "event.json"), TOOLS_DIR=str(REPO_ROOT),
-                       RUNNER_TEMP=str(tmpdir), GML_COUNT="1", STRICT_GATE="1", TOPOLOGY_APPLICABLE="true")
+                       RUNNER_TEMP=str(tmpdir), CITYGML_RUN=str(tmpdir), STRICT_GATE="1", **(env_extra or {}))
             proc = subprocess.run(["bash", str(REPO_ROOT / "ci" / "inspection_summary.sh")], cwd=tmpdir, env=env,
                                   capture_output=True, text=True)
             return (proc, json.loads((tmpdir / "out/inspection.json").read_text()),
                     (tmpdir / "out/inspection.md").read_text(encoding="utf-8"),
                     (tmpdir / "out/resubmission.md").read_text(encoding="utf-8"))
 
-    def test_every_recorded_value_has_a_reader(self):
-        # S4: records nothing read (PR_CLASS, PREVIEW_URL, a dozen *_OUTCOME) are gone; the rows come
-        # from the gates' result files, and the outcomes file carries only what the summary reads
+    def test_every_row_is_decided_by_the_driver(self):
+        # U2: applicability was decided twice (the driver's gate_na and the summary's own facts in a
+        # second state store, citygml_outcomes.env); the driver records every row, nothing else
         import re
-        ci = REPO_ROOT / "ci"
-        recorded = set()
-        for script in ci.glob("*.sh"):
-            recorded |= set(re.findall(r"\brecord ([A-Z_]+)", script.read_text(encoding="utf-8")))
-        summary = (REPO_ROOT / "scripts" / "inspection_summary.py").read_text(encoding="utf-8")
-        self.assertTrue(recorded)
-        self.assertEqual(sorted(v for v in recorded if f'"{v}"' not in summary), [])
+        from scripts import gate_result
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        recorded = set(re.findall(r"\bgate(?:_na)? ([a-z-]+)", driver)) | {"topology"}   # ci/topology_gate.sh when it runs
+        self.assertEqual(sorted(row.key for row in gate_result.ROWS if row.key not in recorded), [])
+        for script in (REPO_ROOT / "ci").glob("*.sh"):
+            self.assertNotIn("citygml_outcomes", script.read_text(encoding="utf-8"), script.name)
+        self.assertNotIn("_OUTCOME", (REPO_ROOT / "scripts" / "inspection_summary.py").read_text(encoding="utf-8"))
+        # D-a4: a scope-extract PR whose Scope-Municipality is not unique logged an error, no row
+        # failed, and the per-building gates ran; it stays a scope-extract PR and its row fails
+        self.assertIn('SCOPE_ENABLED="$(flag scopeExtract)"', driver)
+        row = driver[driver.index("# --- Scope extraction reproducibility"):driver.index("gate scope-reproducibility")]
+        self.assertIn("cannot be determined uniquely", row)
 
     def test_the_driver_keeps_no_state_between_runs(self):
         # A12: fixed /tmp scratch files, and result files of an earlier run read as this run's
         import re
         driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"(?<!:-)/tmp/\S*", driver), [])
-        self.assertIn('rm -rf gates citygml_commit_scope.json', driver)
+        # U3: one run folder, made afresh as a whole; nothing written into the city checkout (D-a8)
+        self.assertIn('rm -rf "$RUN"; mkdir -p "$RUN/scratch"', driver)
+        self.assertEqual(driver.count("${RUNNER_TEMP:-/tmp}"), 1)
+        self.assertEqual(re.findall(r"> (?:all_changed|changed_gml|preview_url)\.txt", driver), [])
+
+    def test_the_driver_alone_decides_applicability(self):
+        # U2 / D-a7: the summary decided applicability again from recorded facts and hid a gate that
+        # ran (topology on a scope-extract PR, the texture row when no image changed) as not
+        # applicable; it now shows every gate's own result, and a row without one is pending
+        old_facts = {"SCOPE_EXTRACT": "true", "TOPOLOGY_APPLICABLE": "true", "CHECK_KIND": "attribute",
+                     "IMAGES_CHANGED": "false", "GML_COUNT": "1"}
+        _, structured, _, _ = self.run_rows({"topology": "warn", "model": "na", "minimal-diff": None}, env_extra=old_facts)
+        rows = {r["key"]: r["status"] for r in structured["checks"]}
+        self.assertEqual((rows["topology"], rows["texture"], rows["model"], rows["minimal-diff"]),
+                         ("warn", "pass", "na", "pending"))
+        self.assertEqual((structured["hasGml"], structured["bulk"]), (True, True))   # from the rows: schema, reproduction ran
 
     def test_a_warning_shows_and_does_not_block(self):
         # D15: plausibility_lint's header always carries the cross and warning signs; the row now comes
@@ -389,8 +407,33 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         self.assertEqual(structured["context"], contract.context(pr))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("⚠️ Warning (does not block)", inspection)
-        self.assertIn("<!-- status:resolved -->", resubmission)
+        self.assertIn("<!-- citygml-auto-resubmission -->", resubmission)
         self.assertIn("Warnings (no action required)", resubmission)
+
+    def test_a_changed_invalid_code_fails_its_own_row_and_leaves_the_advisory_one(self):
+        # one plausibility_lint run: exit 1 is code-list's (blocking); the plausibility row gets 0 and shows warnings
+        proc, structured, inspection, _ = self.run_rows({"code-list": "fail", "plausibility": "warn"})
+        rows = {r["key"]: r for r in structured["checks"]}
+        self.assertEqual((rows["code-list"]["status"], rows["code-list"]["severity"]), ("fail", "blocking"))
+        self.assertEqual(rows["plausibility"]["status"], "warn")
+        self.assertTrue(inspection.splitlines()[1].startswith("## ❌ "))
+        self.assertNotEqual(proc.returncode, 0)    # STRICT_GATE refuses the merge
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        block = driver[driver.index("scripts/plausibility_lint.py"):driver.index("Analysis main driver complete")]
+        self.assertIn('gate code-list "$rc"\n', block)
+        self.assertIn('[ "$rc" = "1" ] && rc=0', block)
+        self.assertIn('gate plausibility "$rc" --counts-json', block)
+        self.assertIn("gate_na code-list", block)
+
+    def test_the_heading_carries_the_worst_sign_and_the_language_is_the_catalogs(self):
+        # D-a8: the heading always showed the pass sign, and inspection.json carried `lang` raw
+        heading = lambda md: md.splitlines()[1]
+        _, structured, inspection, _ = self.run_rows({}, lang='{"lang": "ja-JP"}')
+        self.assertTrue(heading(inspection).startswith("## ✅ "))
+        self.assertEqual(structured["lang"], "ja")
+        for statuses, sign in (({"plausibility": "warn"}, "⚠️"), ({"schema": "fail"}, "❌"),
+                               ({"schema": "fail", "structure": "error"}, "⚙️")):
+            self.assertTrue(heading(self.run_rows(statuses)[2]).startswith("## " + sign + " "), statuses)
 
     def test_a_system_error_blocks_and_is_not_the_proposers_data(self):
         # D16: the gate could not judge; the row says so and the proposer is not asked to fix data
@@ -400,7 +443,7 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("⚙️ 仕組みのエラー", inspection)
         self.assertIn("データの問題ではありません", resubmission)
-        self.assertNotIn("<!-- status:active -->", resubmission)
+        self.assertNotIn("<!-- status:", resubmission)
 
     def test_ja_repo_gets_japanese_comments_with_fixed_markers(self):
         proc, inspection, resubmission = self._run('{"lang": "ja"}')
@@ -413,7 +456,7 @@ class TestCiCommentsFollowRepoLanguage(_EnglishEnv):
         # machine contract unchanged
         self.assertIn("<!-- citygml-automatic-inspection -->", inspection)
         self.assertIn("<!--cp:reason-->", inspection)
-        self.assertIn("<!-- status:active -->", resubmission)
+        self.assertTrue(resubmission.startswith("<!-- citygml-auto-resubmission -->\n## 💬 "))
 
     def test_missing_config_keeps_english(self):
         proc, inspection, _ = self._run(None)

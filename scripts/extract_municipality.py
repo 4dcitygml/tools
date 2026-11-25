@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Remove building blocks of municipalities other than the specified one from CityGML building GML.
 
+A building's municipality is what the city's dialect pack reads from it (Pack.municipality, in
+the form Pack.municipality_code); a city whose pack has no municipality cannot be extracted.
 Preserves target ``core:cityObjectMember`` and other byte strings unchanged,
 deleting only members of non-target buildings. Same input and municipality code
 always yields the same output byte string.
@@ -24,8 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.building_identity import building_spans, municipality_values
-from scripts.safe_xml import safe_fromstring
+from scripts.building_identity import building_spans
+from scripts import city_declaration
+from scripts.safe_xml import fromstring
 
 _BUILDING_RE = re.compile(rb"<(?:\w+:)?Building\b")
 _GML_ID = "{http://www.opengis.net/gml}id"
@@ -34,7 +37,7 @@ _XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 
 def _missing_local_references(raw: bytes) -> set[str]:
     """Return the set of unresolved local ``#id`` references in the XML."""
-    root = safe_fromstring(raw, huge_tree=True)
+    root = fromstring(raw)
     ids: set[str] = set()
     references: set[str] = set()
     for element in root.iter():
@@ -52,23 +55,21 @@ def _missing_local_references(raw: bytes) -> set[str]:
     return references - ids
 
 
-def _municipality(member: bytes, gml_id: str) -> str:
-    values = municipality_values(member)
-    if len(values) != 1:
-        shown = ", ".join(sorted(values)) or "none"
-        raise ValueError(
-            f"{gml_id}: Cannot uniquely determine municipality code ({shown})"
-        )
-    value = next(iter(values))
-    if not (len(value) == 5 and value.isdigit()):
-        raise ValueError(f"{gml_id}: Invalid municipality code: {value}")
+def _municipality(member: bytes, gml_id: str, pack) -> str:
+    value = pack.municipality(member)
+    if value is None:   # none, two, or not a code of the pack's form
+        raise ValueError(f"{gml_id}: Cannot uniquely determine municipality code")
     return value
 
 
-def extract(raw: bytes, municipality: str) -> tuple[bytes, dict[str, object]]:
-    """Delete only the out-of-scope buildings and return the output and tallies."""
-    if not (len(municipality) == 5 and municipality.isdigit()):
-        raise ValueError("Municipality code must be 5 digits.")
+def extract(raw: bytes, municipality: str, pack=None) -> tuple[bytes, dict[str, object]]:
+    """Delete only the out-of-scope buildings and return the output and tallies (pack: the
+    city's dialect, the one declared in the working directory unless given)."""
+    pack = pack or city_declaration.read(Path.cwd()).pack
+    if not (pack.municipality and pack.municipality_code):
+        raise ValueError("This city's dialect has no municipality code: nothing to extract by.")
+    if not re.fullmatch(pack.municipality_code, municipality):
+        raise ValueError(f"Municipality code must be of the form {pack.municipality_code}.")
 
     source_missing_references = _missing_local_references(raw)
     spans = building_spans(raw)
@@ -84,7 +85,7 @@ def extract(raw: bytes, municipality: str) -> tuple[bytes, dict[str, object]]:
     edits: list[tuple[int, int]] = []
     for gml_id, (start, end) in spans.items():
         member = raw[start:end]
-        if _municipality(member, gml_id) == municipality:
+        if _municipality(member, gml_id, pack) == municipality:
             retained.append(gml_id)
         else:
             removed.append(gml_id)
@@ -128,10 +129,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--municipality", required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dialect", help="the data's dialect pack (default: the city declared in the working directory)")
     args = parser.parse_args(argv)
 
     try:
-        output, report = extract(args.input.read_bytes(), args.municipality)
+        import dialects
+        pack = dialects.dialect(args.dialect) if args.dialect else None
+        output, report = extract(args.input.read_bytes(), args.municipality, pack)
     except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
         parser.error(str(exc))
     args.output.parent.mkdir(parents=True, exist_ok=True)

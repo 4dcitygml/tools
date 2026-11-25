@@ -37,19 +37,6 @@ Administrative PRs (source-update etc.) must fill in all required sections.
 - [ ] Lifecycle (building merge / split / rebuild; involves add/delete)
 - [ ] Other:
 
-## Source / manifest (source-update / schema / layout etc.)
-<!-- For everyday corrections, supporting evidence alone is fine. Required for the administrative PR types below. -->
-- Source-From:
-- Source-To:
-- Scope-Mesh:
-- Attribute-Family:
-- Allowed-Paths:
-- History-Manifest:
-- Manifest-SHA256:
-- Building-Count:
-- First-Building-ID:
-- Last-Building-ID:
-
 ## Checklist
 - [ ] Created from the latest main, with no conflict against earlier PRs on the same mesh
 - [ ] For normal updates, each commit is **1 commit = 1 `uro:buildingID`**

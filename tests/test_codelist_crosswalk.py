@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import codelist_crosswalk as X
+from dialects.plateau import codelist_crosswalk as X
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,7 +49,7 @@ class CrosswalkTest(unittest.TestCase):
         self.assertEqual(X.codelist_file_candidates("detail.landUseType", "iur-3.2")[1], "Common_landUseType.xml")
 
     def test_shipped_crosswalk_3_0_to_3_1(self) -> None:
-        cw = json.loads((REPO_ROOT / "semantics/codelists/iur-3.0__iur-3.1.json").read_text(encoding="utf-8"))
+        cw = json.loads((REPO_ROOT / "dialects/plateau/semantics/codelists/iur-3.0__iur-3.1.json").read_text(encoding="utf-8"))
         self.assertEqual((cw["from"], cw["to"]), ("iur-3.0", "iur-3.1"))
         geo = cw["lists"]["quality.geometrySrcDesc"]["codes"]
         self.assertEqual(geo["9"]["relation"], "exact"); self.assertEqual(geo["9"]["to"], ["801"])

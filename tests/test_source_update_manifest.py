@@ -6,13 +6,15 @@ and the commit scope gate's PR-level rules for manifest-backed commits."""
 from __future__ import annotations
 
 import argparse
+
+from scripts.building_identity import IdentityRule   # the fixtures are keyed by their buildingID (a PLATEAU city)
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import source_update_manifest as S
+from dialects.plateau import source_update_manifest as S
 from scripts.commit_building_scope import inspect_range
 from scripts.provenance_manifest import manifest_ref, validate
 from tests.test_commit_building_scope import GitRepo
@@ -36,7 +38,7 @@ def gml(buildings: list[tuple[str, dict]]) -> bytes:
 def _args(tmp: Path, current: bytes, new: bytes, family: str = "storeys") -> argparse.Namespace:
     (tmp / "current.gml").write_bytes(current)
     (tmp / "new.gml").write_bytes(new)
-    return argparse.Namespace(repository="example/13101-example", mesh="53394611", municipality="13101", family=family,
+    return argparse.Namespace(rule=IdentityRule("uro:buildingID"), repository="example/13101-example", mesh="53394611", municipality="13101", family=family,
                               current=str(tmp / "current.gml"), current_label="2024", current_uri=None,
                               edition_new=("2025", str(tmp / "new.gml")), new_uri=None, product="udx/bldg/tile.gml",
                               tools_repo="4dcitygml/tools", tools_commit="0" * 40, plan_issue="https://example.com/issues/3",
@@ -100,7 +102,7 @@ class SourceUpdateGateTest(unittest.TestCase):
         (repo.root / "tile.gml").write_bytes(content)
         repo.run("add", "tile.gml")
         ref = ref or manifest_ref(self.MANIFEST, data)
-        repo.run("commit", "-q", "-m", f"Update storeys of {stable}\n\nBuilding: {stable}\nAttribute-Family: storeys\nProvenance-Manifest: {ref}\n")
+        repo.run("commit", "-q", "-m", f"Update storeys of {stable}\n\nBuilding: {stable}\nProvenance-Manifest: {ref}\n")
         return repo.run("rev-parse", "HEAD")
 
     def test_manifest_backed_commits_pass_and_deviations_fail(self) -> None:

@@ -26,8 +26,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts import citygml_dialect, citygml_faces  # noqa: E402
-from scripts.safe_xml import safe_fromstring  # noqa: E402
+from scripts import city_declaration, citygml_dialect, citygml_faces, pr_markers  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
+from scripts.safe_xml import fromstring  # noqa: E402
 from scripts.repo_git import blob  # noqa: E402
 
 # GitHub caps a PR comment body at 65,536 characters. We keep the generated
@@ -47,11 +48,8 @@ def _points(text: str, tf, zs: float) -> list[list[float]]:
     values = _split_floats(text)
     out = []
     for i in range(0, len(values) - 2, 3):
-        if tf is None:
-            out.append([values[i], values[i + 1], values[i + 2]])
-        else:
-            lat, lon = tf(values[i], values[i + 1])
-            out.append([round(lat, 7), round(lon, 7), round(values[i + 2] * zs, 3)])
+        lat, lon = tf(values[i], values[i + 1])
+        out.append([round(lat, 7), round(lon, 7), round(values[i + 2] * zs, 3)])
     return out
 
 
@@ -66,11 +64,14 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
     LOD2 face (data with LOD2 only). Buildings lacking an id or any of these
     are skipped.
     """
-    root = safe_fromstring(xml_bytes, huge_tree=True)
+    root = fromstring(xml_bytes)
     ns = citygml_dialect.ns_for_root(root)
-    tf = citygml_dialect.file_transformer(root, ns)
-    zs = getattr(tf, "z_scale", 1.0) if tf is not None else 1.0
+    tf = citygml_dialect.file_transformer(root, ns, city_declaration.read(".").crs or "")
+    if tf is None:   # a CRS the tools do not know: no preview, never read as lat/lon
+        return {}
+    zs = getattr(tf, "z_scale", 1.0)
     gml, bldg = ns["gml"], ns["bldg"]
+    by_ring, by_poly = citygml_faces.texture_rings(root, ns)
     buildings: dict[str, dict] = {}
 
     for building in root.iter(f"{{{bldg}}}Building"):
@@ -92,7 +93,11 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
 
         # LOD2 geometry: the boundedBy polygons, BuildingParts included, holes as holes
         # (scripts/citygml_faces.py, the one reader the editors use too)
-        faces = [citygml_faces.public_face(f) for f in citygml_faces.lod2_faces(building, ns, tf, zs, gml_id)]
+        ringed = citygml_faces.lod2_faces(building, ns, tf, zs, gml_id)
+        faces = [citygml_faces.public_face(f) for f in ringed]
+        # each face's texture (image URI kept verbatim: identical file names may sit in different
+        # appearance folders), looked up by the face's own rings; it rides in the URL fragment
+        tex = {f["id"]: t for f in ringed if (t := citygml_faces.face_texture(f, by_ring, by_poly)) is not None}
 
         if pos_text:
             ring = _points(pos_text, tf, zs)
@@ -137,27 +142,12 @@ def _extract_buildings(xml_bytes: bytes) -> dict[str, dict]:
 
         if faces:
             entry["lod2"] = faces
+        if tex:
+            entry["tex"] = tex
 
         buildings[gml_id] = entry
 
     return buildings
-
-
-def _extract_texmap(xml_bytes: bytes) -> dict[str, dict]:
-    """Texture of every LOD2 face: face id -> {"img", "uv"[, "holes"]}, looked up by the face's
-    own rings (scripts/citygml_faces.py). The image URI is kept verbatim (a relative path):
-    identical file names may exist in different appearance folders."""
-    root = safe_fromstring(xml_bytes, huge_tree=True)
-    ns = citygml_dialect.ns_for_root(root)
-    by_ring, by_poly = citygml_faces.texture_rings(root, ns)
-    texmap: dict[str, dict] = {}
-    for building in root.iter(f"{{{ns['bldg']}}}Building"):
-        gml_id = building.get(f"{{{ns['gml']}}}id") or ""
-        for face in citygml_faces.lod2_faces(building, ns, gid=gml_id):
-            tex = citygml_faces.face_texture(face, by_ring, by_poly)
-            if tex is not None:
-                texmap[face["id"]] = tex
-    return texmap
 
 
 def _centroid(building: dict) -> tuple[float, float]:
@@ -174,7 +164,8 @@ def _match_buildings(
     """Pair up old and new buildings into change records.
 
     Returns a list of {"old": ..., "new": ...} dicts covering three cases:
-    same-id buildings whose geometry or height changed, added buildings paired
+    same-id buildings whose geometry, height or texture changed (the LOD2 faces too: a roof-only
+    edit, D-c6), added buildings paired
     with their geographically nearest removed candidate, and removed buildings
     that no added building claimed.
     """
@@ -184,7 +175,7 @@ def _match_buildings(
         old_b = old_bldgs.get(gml_id)
         if old_b is None:
             continue
-        if old_b["height"] != new_b["height"] or old_b["coords"] != new_b["coords"]:
+        if any(old_b.get(k) != new_b.get(k) for k in ("height", "base", "coords", "lod1top", "lod2", "tex")):
             pairs.append({"old": old_b, "new": new_b})
 
     removed = [b for bid, b in old_bldgs.items() if bid not in new_bldgs]
@@ -218,27 +209,6 @@ def _match_buildings(
     return pairs
 
 
-def _attach_tex(pair: dict, old_tex: dict, new_tex: dict) -> None:
-    """Embed texture data into a change pair, in place.
-
-    For each side of the pair that carries LOD2 faces, gather the texture
-    entries (image URI + UV coordinates) keyed by face id and store them under
-    a "tex" key. Because the UVs ride along inside the URL fragment itself,
-    the viewer needs no companion file such as uvmap.json.
-    """
-    for side, texmap in (("old", old_tex), ("new", new_tex)):
-        building = pair.get(side)
-        if not building or "lod2" not in building:
-            continue
-        tex = {
-            face["id"]: texmap[face["id"]]
-            for face in building["lod2"]
-            if face["id"] in texmap
-        }
-        if tex:
-            building["tex"] = tex
-
-
 def _encode(all_pairs: list[dict], base_url: str) -> str:
     """Serialize pairs into the final viewer URL.
 
@@ -258,7 +228,7 @@ def _encode(all_pairs: list[dict], base_url: str) -> str:
     return f"{base_url}/#{b64}"
 
 
-def _finalize_url(all_pairs: list[dict], base_url: str) -> str:
+def preview_url(all_pairs: list[dict], base_url: str) -> str:
     """Encode the pairs, degrading texture detail until the URL fits.
 
     Stage 1 tries the full payload. Stage 2 strips textures from the old side
@@ -299,6 +269,12 @@ def _finalize_url(all_pairs: list[dict], base_url: str) -> str:
     return ""
 
 
+def preview_pairs(old_bytes: "bytes | None", new_bytes: "bytes | None") -> list[dict]:
+    """The change pairs of one file between two revisions (None: the file is absent there)."""
+    return _match_buildings(_extract_buildings(old_bytes) if old_bytes else {},
+                            _extract_buildings(new_bytes) if new_bytes else {})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -311,38 +287,35 @@ def main() -> None:
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--file-list", type=Path, required=True)
     parser.add_argument("--base-url", default="")
+    parser.add_argument("--comment", type=Path, default=None,
+                        help="also write the preview comment there (only with --base-url, where a viewer is served)")
     args = parser.parse_args()
 
-    # Only building GML files are relevant for the preview.
-    listed = (ln.strip() for ln in args.file_list.read_text().splitlines())
-    targets = [p for p in listed if p.endswith(".gml") and "/bldg/" in p]
-    if not targets:
-        print("")
-        return
-
+    # every changed CityGML file: one without buildings gives no pair (no layout is assumed, D-c6)
     all_pairs: list[dict] = []
-    for rel_path in targets:
-        old_bytes = blob(args.repo, args.base_sha, rel_path)
-        new_bytes = blob(args.repo, args.head_sha, rel_path)
-
-        old_bldgs = _extract_buildings(old_bytes) if old_bytes is not None else {}
-        new_bldgs = _extract_buildings(new_bytes) if new_bytes is not None else {}
-
-        pairs = _match_buildings(old_bldgs, new_bldgs)
-        if not pairs:
-            continue
-
-        old_tex = _extract_texmap(old_bytes) if old_bytes is not None else {}
-        new_tex = _extract_texmap(new_bytes) if new_bytes is not None else {}
-        for pair in pairs:
-            _attach_tex(pair, old_tex, new_tex)
-
-        all_pairs.extend(pairs)
+    for rel_path in changed_list(args.file_list):
+        all_pairs.extend(preview_pairs(blob(args.repo, args.base_sha, rel_path), blob(args.repo, args.head_sha, rel_path)))
 
     if not all_pairs:
         print("")
         return
-    print(_finalize_url(all_pairs, args.base_url))
+    url = preview_url(all_pairs, args.base_url)
+    print(url)
+    if args.comment and args.base_url and url:
+        args.comment.write_text(preview_comment(url), encoding="utf-8")
+    elif args.comment and args.base_url:
+        print("Preview: nothing to generate (attribute-only change, no geometry diff, etc. Analysis is fine)",
+              file=sys.stderr)
+
+
+def preview_comment(url: str) -> str:
+    """The PR comment with the preview link (the marker from scripts/pr_markers.py, U3)."""
+    return "\n".join([
+        pr_markers.PREVIEW, "## 🏙️ Building preview (Cesium 3D)", "",
+        "Shows the changed buildings in 3D: before the update (🔴 red) and after (🔵 blue).", "",
+        f"**[▶ Open in the Cesium viewer]({url})**", "",
+        "<sub>The building data is embedded in the URL and decoded only in your browser (the fragment is never "
+        "sent to a server). LOD0/1/2 and textures can be toggled at the top of the page.</sub>"]) + "\n"
 
 
 if __name__ == "__main__":

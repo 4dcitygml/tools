@@ -16,7 +16,7 @@ Removed items (LOD2/3 detailed geometry, textures):
 - `app:appearanceMember` under CityModel (inline appearance) + `*_appearance/` image directory
 
 Preserved (attributes + coarse positioning geometry):
-- All attributes (use type, floor count, height, source `uro:*`, address, buildingID, etc.)
+- All attributes (use type, floor count, height, the ADE's attributes, address, building ID, etc.)
 - `bldg:lod0RoofEdge` / `lod0FootPrint` (LOD0), `bldg:lod1Solid` / `lod1MultiSurface` (LOD1)
 
 Usage:
@@ -34,15 +34,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from lxml import etree
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.diff_citygml import APP_NS  # noqa: E402
-from scripts.citygml_xml import localname as _localname  # noqa: E402
+from dialects import buildings_dir  # noqa: E402
+from scripts.citygml_xml import children, localname as _localname, serialize, write_gml  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
+from scripts.texture_check import texture_images  # noqa: E402
 
 # localnames of elements to remove directly under a building (bldg namespace: LOD2+ detailed geometry, thematic surfaces, installations, rooms).
 DROP_LOCALNAMES = frozenset({
@@ -53,17 +52,17 @@ DROP_LOCALNAMES = frozenset({
     "outerBuildingInstallation", "interiorBuildingInstallation", "interiorRoom",
 })
 
-_BUILDING_LOCALNAMES = frozenset({"Building"})
-_APPEARANCE_MEMBER = f"{{{APP_NS}}}appearanceMember"
+# a building and its parts (D-4a2: a BuildingPart kept its LOD2)
+_BUILDING_LOCALNAMES = frozenset({"Building", "BuildingPart"})
 
 
 def _remove_appearance(root) -> int:
-    """Remove appearanceMember elements directly under CityModel; return the number removed."""
-    n = 0
-    for am in root.findall(_APPEARANCE_MEMBER):
+    """Remove appearanceMember elements directly under CityModel, any CityGML version (D-4a3: the
+    2.0 namespace was fixed, so 1.0 appearances stayed); return the number removed."""
+    found = children(root, "appearanceMember")
+    for am in found:
         root.remove(am)
-        n += 1
-    return n
+    return len(found)
 
 
 def _remove_lod2plus(root) -> int:
@@ -87,7 +86,7 @@ def strip_tree(tree) -> dict:
 
 
 def _serialized_len(tree) -> int:
-    return len(etree.tostring(tree, xml_declaration=True, encoding="UTF-8"))
+    return len(serialize(tree.getroot()).encode("utf-8"))
 
 
 def measure_tree(tree) -> dict:
@@ -114,27 +113,18 @@ def measure_tree(tree) -> dict:
 
 
 def _texture_dir_bytes(bldg_dir: Path) -> int:
-    """Total bytes of *_appearance directories (texture images) under udx/bldg."""
-    total = 0
-    for app_dir in bldg_dir.glob("*_appearance"):
-        for p in app_dir.rglob("*"):
-            if p.is_file():
-                total += p.stat().st_size
-    return total
+    """Total bytes of the texture images in the buildings folder."""
+    return sum(p.stat().st_size for p in texture_images(bldg_dir))
 
 
 def _iter_gml(dataset: Path) -> list:
-    bldg = dataset / "udx" / "bldg"
-    if not bldg.is_dir():
-        # Also accept the case where the path points directly at the bldg directory rather than the dataset root
-        bldg = dataset
-    return sorted(bldg.glob("*.gml"))
+    return sorted(buildings_dir(dataset).glob("*.gml"))
 
 
 def measure_dataset(dataset: Path) -> dict:
     """Measure a dataset's size breakdown by LOD/appearance (no output files written)."""
     gml_files = _iter_gml(dataset)
-    bldg_dir = (dataset / "udx" / "bldg") if (dataset / "udx" / "bldg").is_dir() else dataset
+    bldg_dir = buildings_dir(dataset)
     orig_gml = 0
     stripped_gml = 0
     lod2_geom = 0
@@ -184,9 +174,9 @@ def render_measure_markdown(results: list) -> str:
 
 
 def write_lite(dataset: Path, out_dir: Path) -> dict:
-    """Derive the lite version into out_dir/<dataset name>/udx/bldg/ (texture images are not generated)."""
+    """Derive the lite version into out_dir/<dataset name>/<its buildings folder>/ (texture images are not generated)."""
     gml_files = _iter_gml(dataset)
-    dest_bldg = out_dir / dataset.name / "udx" / "bldg"
+    dest_bldg = out_dir / dataset.name / buildings_dir(dataset).relative_to(dataset)
     dest_bldg.mkdir(parents=True, exist_ok=True)
     n = 0
     stripped_bytes = 0
@@ -194,7 +184,7 @@ def write_lite(dataset: Path, out_dir: Path) -> dict:
         tree = safe_parse(str(f))
         strip_tree(tree)
         out = dest_bldg / f.name
-        tree.write(str(out), xml_declaration=True, encoding="UTF-8")
+        write_gml(tree.getroot(), out, like=f)
         stripped_bytes += out.stat().st_size
         n += 1
     # Copy codelists since they are needed to resolve attribute meanings (textures excluded).
@@ -207,7 +197,7 @@ def write_lite(dataset: Path, out_dir: Path) -> dict:
 def main(argv: Optional[list] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("datasets", nargs="+", type=Path, help="Dataset directory (contains */udx/bldg)")
+    p.add_argument("datasets", nargs="+", type=Path, help="Dataset directory (its buildings folder, or the folder a dialect pack names inside it)")
     p.add_argument("--measure", action="store_true", help="Measure and display capacity breakdown (do not write)")
     p.add_argument("--output", type=Path, default=None, help="Output directory for lite version")
     p.add_argument("--json", action="store_true", help="Output as JSON")

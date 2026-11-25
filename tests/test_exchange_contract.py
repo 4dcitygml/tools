@@ -56,14 +56,14 @@ class TestContractDocMatchesCode(unittest.TestCase):
     contract must be updated in the same change."""
 
     def test_version_and_rfc2119(self):
-        self.assertIn("Exchange Contract v3.4.0", DOC)   # current version (title)
+        self.assertIn("Exchange Contract v4.0.0", DOC)   # current version (title)
         for published in ("v3.1.0", "v3.0.0", "v2.1.0", "v2.0.0"):   # the changelog keeps every published version
             self.assertIn(f"**{published}**", DOC)
 
     def test_city_repository_scope_a11(self):
         # A11 mirrors scripts/repo_scope.py: the accepted categories, the pin rule, the label.
         from scripts import repo_scope as rs
-        for token in ("### A11.", "`data_dirs`", "`provenance/`", "`.github/CODEOWNERS`", "`CITYGML_TOOLS_REF:`",
+        for token in ("### A11.", "`data_dirs`", "`provenance/`", "`.github/CODEOWNERS`", "the `tools` key of `4dcitygml.json`",
                       "`tools-v*`", "`tooling`", "`install/**`", "`tools/**`"):
             self.assertIn(token, DOC, token)
         for suffix in (".py", ".sh", ".command", ".ps1", ".bat", ".js"):
@@ -80,27 +80,23 @@ class TestContractDocMatchesCode(unittest.TestCase):
 
     def test_trailers_read_by_the_scope_gate_are_all_documented(self):
         # Every trailer the commit scope gate parses must appear in the contract, and vice versa (A2).
-        from scripts.building_identity import TRAILER_RE
-        pattern = TRAILER_RE.pattern
-        names = pattern[pattern.index("^(") + 2:pattern.index("):")].split("|")
+        from scripts.building_identity import TRAILER_KEYS as names
         for name in names:
             self.assertIn(f"`{name}:`", DOC, name)
         self.assertIn("`Scope-Municipality:`", DOC)
 
     def test_reinspection_request_interface(self):
-        # A8 mirrors pr-recheck.yml: marker, optional workflow marker, authorization.
-        for token in ("<!-- citygml-ci-retry-request -->",
-                      "<!-- citygml-retry-workflow:pr-comment.yml -->",
-                      "<!-- citygml-retry-workflow:review-report.yml -->",
-                      "`OWNER`, `MEMBER` or `COLLABORATOR`"):
+        # A8 mirrors pr-recheck.yml: marker and authorization (v4.0.0: no workflow options).
+        for token in ("<!-- citygml-ci-retry-request -->", "`OWNER`, `MEMBER` or `COLLABORATOR`"):
             self.assertIn(token, DOC, token)
+        a8 = DOC[DOC.index("### A8."):DOC.index("### A9.")]
+        self.assertNotIn("citygml-retry-workflow", a8)
 
     def test_labels_and_markers(self):
         for label in ("`texture-override`", "`identity-review`", "`tooling`"):
             self.assertIn(label, DOC)
-        self.assertIn("`city-review` was a label", DOC)
         for marker in ("citygml-automatic-inspection", "citygml-change-summary",
-                       "citygml-base-freshness", "citygml-auto-resubmission",
+                       "citygml-auto-resubmission",
                        "citygml-commit-scope", "citygml-reviewability-lint", "citygml-quality-lint"):
             self.assertIn(f"<!-- {marker} -->", DOC, marker)
 
@@ -118,6 +114,14 @@ class TestContractDocMatchesCode(unittest.TestCase):
         for placeholder in ("please fill in", "not filled in", "記入してください",
                             "未記入", "TODO", "TBD"):
             self.assertIn(placeholder, DOC)
+
+    def test_the_one_merge_a2_accepts_is_the_gates(self):
+        # T24: the merge GitHub's "Update branch" makes; the gate and A2 name the same test
+        gate = (REPO_ROOT / "scripts" / "commit_building_scope.py").read_text(encoding="utf-8")
+        for token in ('"--remerge-diff"', '"--is-ancestor"'):
+            self.assertIn(token, gate)
+        self.assertIn("`git show --remerge-diff`", DOC)
+        self.assertIn('GitHub\'s "Update branch"', DOC)
 
     def test_trailer_names(self):
         for trailer in ("Building:", "Building-Added:", "Building-Deleted:",
@@ -139,9 +143,9 @@ class TestContractDocMatchesCode(unittest.TestCase):
         self.assertIn("`classification`", DOC)  # and its gate
 
     def test_inspection_keys(self):
-        for key in ("reason", "classification", "commit-scope", "scope-reproducibility", "reproduction", "freshness",
+        for key in ("reason", "classification", "commit-scope", "scope-reproducibility", "reproduction",
                     "file-scope", "schema", "minimal-diff", "texture", "structure",
-                    "plausibility", "topology", "model"):
+                    "code-list", "plausibility", "topology", "model"):
             self.assertIn(f"`{key}`", DOC)
 
 
@@ -174,9 +178,7 @@ class TestContractTablesFollowTheCode(unittest.TestCase):
         self.assertEqual(listed, set(ACCEPTED_CHANGE_TYPES))
 
     def test_a2_trailers_the_gate_reads(self):
-        from scripts.building_identity import TRAILER_RE
-        pattern = TRAILER_RE.pattern
-        names = pattern[pattern.index("^(") + 2:pattern.index("):")].split("|")
+        from scripts.building_identity import TRAILER_KEYS as names
         listed = [t.rstrip(":") for t in ticks(between("The complete list of trailers the commit scope gate reads:",
                                                        "`Identity-Evidence:` is read"))]
         self.assertEqual(sorted(listed), sorted(names))
@@ -207,6 +209,11 @@ class TestContractTablesFollowTheCode(unittest.TestCase):
         self.assertEqual([ticks(line)[0] for line in table.splitlines() if line.startswith("| `")],
                          list(pr_markers.LABELS))
         self.assertEqual(repo_scope.TOOLING_LABEL, pr_markers.TOOLING_LABEL)
+        spec = importlib.util.spec_from_file_location(   # the tuple's owner: the contract master
+            "contract_master", REPO_ROOT / "tools" / "hub" / "operator_explanation.py")
+        master = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(master)
+        self.assertEqual(master.LABELS, pr_markers.LABELS)
         driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
         for label in (pr_markers.TEXTURE_OVERRIDE_LABEL, pr_markers.IDENTITY_REVIEW_LABEL):
             self.assertIn(f'index("{label}")', driver)
@@ -214,8 +221,8 @@ class TestContractTablesFollowTheCode(unittest.TestCase):
     def test_a10_markers_both_ways(self):
         import re
         from scripts import pr_markers
-        table = between("| Marker | Meaning |", "Analysis comments carry")
-        listed = set(re.findall(r"<!-- [a-z0-9-]+(?::[^>]*)? -->", table)) - {pr_markers.STATUS_ACTIVE, pr_markers.STATUS_RESOLVED}
+        table = between("| Marker | Meaning |", "Whether a PR is behind")
+        listed = set(re.findall(r"<!-- [a-z0-9-]+(?::[^>]*)? -->", table))
         self.assertEqual(listed, set(pr_markers.COMMENT_MARKERS))
 
 

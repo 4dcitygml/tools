@@ -9,7 +9,7 @@ had the same two faults: every posList of a polygon became a face of its own (a 
 as a filled face, with the outer ring's texture coordinates), and the texture coordinates of a
 polygon were the first <textureCoordinates> of its target, whichever ring they belonged to.
 Here a face is its exterior ring with its holes, and coordinates are looked up by ring id
-(CityGML: <app:textureCoordinates ring="#ringId">), as PLATEAU's own converter does.
+(CityGML: <app:textureCoordinates ring="#ringId">), as the national converters do.
 
 A face is {"id", "pts", "holes"?}: points as [lon, lat, z] without the closing point; "holes"
 only when the polygon has interior rings. Its texture is {"img", "uv", "holes"?}, the uv lists
@@ -17,7 +17,12 @@ in the same order as the rings. Shipped next to the hub as program/citygml_faces
 """
 from __future__ import annotations
 
-NS_GML = "http://www.opengis.net/gml"
+try:
+    from scripts.citygml_dialect import NS
+except ImportError:   # the hub bundle: the modules sit side by side
+    from citygml_dialect import NS
+
+NS_GML = NS["gml"]
 
 
 def _ring_points(pos_list, transform=None, z_scale: float = 1.0) -> "list[list[float]]":
@@ -70,29 +75,35 @@ def lod2_faces(building, ns: dict, transform=None, z_scale: float = 1.0, gid: st
     return faces
 
 
+def textures(root, ns: dict):
+    """Every target of every ParameterizedTexture that names an image: (image URI, target polygon
+    id, the target element). The one appearance walk (the texture check reads it too, U8)."""
+    app = ns["app"]
+    for tex in root.iter(f"{{{app}}}ParameterizedTexture"):
+        uri = tex.find(f"{{{app}}}imageURI")
+        img = (uri.text or "").strip() if uri is not None else ""
+        if img:
+            for target in tex.findall(f"{{{app}}}target"):
+                yield img, (target.get("uri") or "").lstrip("#"), target
+
+
 def texture_rings(root, ns: dict) -> "tuple[dict, dict]":
     """Every ParameterizedTexture's coordinates: by ring id {ring: {"img", "uv"}}, and by target
     polygon {polygon: {"img", "uv"}} for data whose rings carry no id (the first listed ring)."""
     app = ns["app"]
     by_ring, by_poly = {}, {}
-    for tex in root.iter(f"{{{app}}}ParameterizedTexture"):
-        uri = tex.find(f"{{{app}}}imageURI")
-        img = (uri.text or "").strip() if uri is not None else ""
-        if not img:
-            continue
-        for target in tex.findall(f"{{{app}}}target"):
-            pid = (target.get("uri") or "").lstrip("#")
-            for coords in target.iter(f"{{{app}}}textureCoordinates"):
-                try:
-                    vals = [float(x) for x in (coords.text or "").split()]
-                except ValueError:
-                    continue
-                uv = [[round(vals[i], 4), round(vals[i + 1], 4)] for i in range(0, len(vals) - 1, 2)]
-                ring = (coords.get("ring") or "").lstrip("#")
-                if ring:
-                    by_ring[ring] = {"img": img, "uv": uv}
-                if pid and pid not in by_poly:
-                    by_poly[pid] = {"img": img, "uv": uv}
+    for img, pid, target in textures(root, ns):
+        for coords in target.iter(f"{{{app}}}textureCoordinates"):
+            try:
+                vals = [float(x) for x in (coords.text or "").split()]
+            except ValueError:
+                continue
+            uv = [[round(vals[i], 4), round(vals[i + 1], 4)] for i in range(0, len(vals) - 1, 2)]
+            ring = (coords.get("ring") or "").lstrip("#")
+            if ring:
+                by_ring[ring] = {"img": img, "uv": uv}
+            if pid and pid not in by_poly:
+                by_poly[pid] = {"img": img, "uv": uv}
     return by_ring, by_poly
 
 

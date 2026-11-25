@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the municipality logo (logo in 4dcitygml.json → GET /city-logo).
 
-- Fail-closed checks of resolve_logo (tools/themes/theme_loader.py)
+- Fail-closed checks of the logo (the declaration's `logo` through runtime.city_logo into
+  tools/themes/theme_loader.py resolve_logo)
   (traversal, leading /, backslashes, extensions, outside root, size limit, absence)
 - /city-logo responses of hub / attribute editor (normal delivery; unset/missing is 404)
 - The headers of all 3 screens contain <img id="cityLogo"> (screens fail open and hide it)
@@ -21,6 +22,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+from tests.support import runtime  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,7 +63,7 @@ def _city_repo(logo_field=None, files: "dict[str, bytes] | None" = None) -> Path
 class TestResolveLogo(unittest.TestCase):
     def test_valid_png_resolves_with_fixed_content_type(self):
         d = _city_repo("logo.png", {"logo.png": PNG_1PX})
-        got = th.resolve_logo(d)
+        got = runtime.city_logo(d)
         self.assertIsNotNone(got)
         path, ctype = got
         self.assertEqual(path.read_bytes(), PNG_1PX)
@@ -72,32 +75,32 @@ class TestResolveLogo(unittest.TestCase):
                  "logo.webp": "image/webp"}
         for rel, want in cases.items():
             d = _city_repo(rel, {rel: PNG_1PX})
-            got = th.resolve_logo(d)
+            got = runtime.city_logo(d)
             self.assertIsNotNone(got, rel)
             self.assertEqual(got[1], want)
 
     def test_svg_rejected_even_if_file_exists(self):
         # SVG can execute scripts when opened directly, so it is structurally disallowed (by design)
         d = _city_repo("logo.svg", {"logo.svg": b"<svg xmlns='...'/>"})
-        self.assertIsNone(th.resolve_logo(d))
+        self.assertIsNone(runtime.city_logo(d))
 
     def test_unlisted_extensions_rejected(self):
         for rel in ("logo.gif", "logo.html", "logo", "logo.PNG.txt"):
             d = _city_repo(rel, {rel: PNG_1PX})
-            self.assertIsNone(th.resolve_logo(d), rel)
+            self.assertIsNone(runtime.city_logo(d), rel)
 
     def test_path_traversal_rejected(self):
         outside = Path(tempfile.mkdtemp()) / "evil.png"
         outside.write_bytes(PNG_1PX)
         for rel in ("../evil.png", "a/../../evil.png", "..", "a/..b../x.png"):
             d = _city_repo(rel)
-            self.assertIsNone(th.resolve_logo(d), rel)
+            self.assertIsNone(runtime.city_logo(d), rel)
 
     def test_absolute_and_backslash_paths_rejected(self):
         d = _city_repo("logo.png", {"logo.png": PNG_1PX})
         for rel in (str(d / "logo.png"), "/etc/logo.png", "a\\b.png", "\\\\host\\share.png"):
             dd = _city_repo(rel)
-            self.assertIsNone(th.resolve_logo(dd), rel)
+            self.assertIsNone(runtime.city_logo(dd), rel)
 
     def test_symlink_escaping_root_rejected(self):
         # The containment check after resolve also rejects exfiltration via symlinks
@@ -108,28 +111,28 @@ class TestResolveLogo(unittest.TestCase):
             os.symlink(outside, d / "logo.png")
         except OSError:
             self.skipTest("environment does not support symbolic links")
-        self.assertIsNone(th.resolve_logo(d))
+        self.assertIsNone(runtime.city_logo(d))
 
     def test_size_limit_1mib(self):
         big = b"\x89PNG" + b"\0" * (th.LOGO_MAX_BYTES + 1)
         d = _city_repo("logo.png", {"logo.png": big})
-        self.assertIsNone(th.resolve_logo(d))
+        self.assertIsNone(runtime.city_logo(d))
         just = b"\x89PNG" + b"\0" * (th.LOGO_MAX_BYTES - 4)
         d2 = _city_repo("logo.png", {"logo.png": just})
-        self.assertIsNotNone(th.resolve_logo(d2))
+        self.assertIsNotNone(runtime.city_logo(d2))
 
     def test_missing_pieces_return_none(self):
-        self.assertIsNone(th.resolve_logo(None))                     # clone not determined
-        self.assertIsNone(th.resolve_logo(Path(tempfile.mkdtemp())))  # no 4dcitygml.json
-        self.assertIsNone(th.resolve_logo(_city_repo(None)))          # no logo field
-        self.assertIsNone(th.resolve_logo(_city_repo("")))            # empty string
-        self.assertIsNone(th.resolve_logo(_city_repo(123)))           # wrong type
-        self.assertIsNone(th.resolve_logo(_city_repo("logo.png")))    # file missing
+        self.assertIsNone(runtime.city_logo(None))                     # clone not determined
+        self.assertIsNone(runtime.city_logo(Path(tempfile.mkdtemp())))  # no 4dcitygml.json
+        self.assertIsNone(runtime.city_logo(_city_repo(None)))          # no logo field
+        self.assertIsNone(runtime.city_logo(_city_repo("")))            # empty string
+        self.assertIsNone(runtime.city_logo(_city_repo(123)))           # wrong type
+        self.assertIsNone(runtime.city_logo(_city_repo("logo.png")))    # file missing
 
     def test_broken_city_json_returns_none(self):
         d = Path(tempfile.mkdtemp())
         (d / "4dcitygml.json").write_text("{not json", encoding="utf-8")
-        self.assertIsNone(th.resolve_logo(d))
+        self.assertIsNone(runtime.city_logo(d))
 
 
 def _respond(handler_cls, **attrs) -> dict:
@@ -202,7 +205,9 @@ class TestHeaderMarkup(unittest.TestCase):
         html = (REPO_ROOT / rel).read_text(encoding="utf-8")
         self.assertIn(self.IMG, html)
         self.assertLess(html.find('id="cityLogo"'), html.find("<h1"))
-        self.assertIn("#cityLogo { height: 28px; }", html)
+        # its size is the shared look's (#66), not each page's own
+        self.assertIn(":where(#cityLogo) { height: 28px; }", (REPO_ROOT / "tools" / "common.css").read_text(encoding="utf-8"))
+        self.assertNotIn("#cityLogo {", html)
 
     def test_hub_index(self):
         self._check("tools/hub/index.html")

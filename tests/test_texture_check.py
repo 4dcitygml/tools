@@ -133,5 +133,38 @@ class TestDanglingAndGC(unittest.TestCase):
             self.assertEqual([p.name for p in orph], ["img_orphan.jpg"])
 
 
+
+class TestAnyPrefix(unittest.TestCase):
+    """U8 / D-c5: the appearance walk used byte regexes with fixed gml: / app: prefixes, so data
+    with other prefixes got no dangling check and its re-texturing was invisible to the scope,
+    and an escaped URI (&amp;) read as a missing file. It is namespace-aware now (citygml_faces)."""
+
+    def other_prefixes(self, img: str, uv: str = "0 0 1 0 1 1 0 0") -> bytes:
+        raw = _model(_building("b1", "p1"), _texture(img, "p1", uv)).decode()
+        raw = raw.replace("xmlns:app=", "xmlns:a=").replace("xmlns:gml=", "xmlns:g=")
+        raw = raw.replace("<app:", "<a:").replace("</app:", "</a:").replace("<gml:", "<g:").replace("</gml:", "</g:")
+        return raw.replace("gml:id=", "g:id=").encode()
+
+    def test_other_prefixes_and_escaped_uris(self):
+        base = self.other_prefixes("tex/a&amp;b.jpg")
+        self.assertEqual(referenced_image_uris(base), {"tex/a&b.jpg"})
+        self.assertEqual(image_to_buildings(base), {"tex/a&b.jpg": {"b1"}})
+        self.assertEqual(appearance_changed_buildings(base, self.other_prefixes("tex/a&amp;b.jpg", "0 0 1 0 1 1 0 1")), ["b1"])
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "tex").mkdir()
+            (Path(tmp) / "tex" / "a&b.jpg").write_bytes(b"\xff\xd8\xff")
+            (Path(tmp) / "t.gml").write_bytes(base)
+            self.assertEqual(dangling_image_uris(Path(tmp) / "t.gml"), [])
+
+    def test_one_list_of_image_suffixes(self):
+        from scripts import gc_textures, texture_check
+        self.assertEqual(set(texture_check.IMAGE_SUFFIXES), {".jpg", ".jpeg", ".png", ".tif", ".tiff"})
+        self.assertIs(gc_textures.texture_images, texture_check.texture_images)   # one walk of the image folders (W2)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "x_appearance").mkdir()
+            for name in ("a.JPG", "b.tif", "c.txt"):
+                (Path(d) / "x_appearance" / name).write_bytes(b"x")
+            self.assertEqual([p.name for p in texture_check.texture_images(Path(d))], ["a.JPG", "b.tif"])
+
 if __name__ == "__main__":
     unittest.main()

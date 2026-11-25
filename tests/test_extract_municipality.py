@@ -6,8 +6,15 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.extract_municipality import extract
-from scripts.reconstruct_minimal import building_spans
+import dialects
+from scripts.extract_municipality import extract as _extract
+
+PLATEAU = dialects.dialect("plateau")
+
+
+def extract(raw, municipality):
+    return _extract(raw, municipality, PLATEAU)   # the fixtures are i-UR data (uro:city)
+from scripts.building_identity import building_spans
 
 
 def _member(gml_id: str, municipality: str | None, value: int) -> bytes:
@@ -65,7 +72,7 @@ class TestExtractMunicipality(unittest.TestCase):
 
     def test_invalid_target_code_fails(self):
         source = _gml(_member("keep", "13101", 1))
-        with self.assertRaisesRegex(ValueError, "5 digits"):
+        with self.assertRaisesRegex(ValueError, "of the form"):   # the pack's form (five digits for PLATEAU)
             extract(source, "1310")
 
     def test_new_dangling_appearance_target_fails(self):

@@ -159,7 +159,7 @@ class TestCiUsesTheTable(unittest.TestCase):
         summary = (REPO_ROOT / "scripts" / "inspection_summary.py").read_text(encoding="utf-8")
         self.assertIn("scripts/pr_classification.py", analysis)
         self.assertIn("pr_classification", summary)
-        self.assertIn("CLASSIFICATION_OUTCOME", analysis)
+        self.assertIn("gate classification", analysis)
         self.assertIn('"classification"', summary)
         for literal in ("PR_TITLE\" == *geometry*", "PR_BRANCH\" == tex/*"):
             self.assertNotIn(literal, analysis, "classification literal duplicated in the shell driver")

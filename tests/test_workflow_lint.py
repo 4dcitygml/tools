@@ -11,6 +11,8 @@ import re
 import unittest
 from pathlib import Path
 
+from tests import city_checkouts
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 TOOLS = Path(__file__).resolve().parent.parent
 # The city checkouts next to this one carry the same suffix (tools -> city-template; a development
@@ -20,7 +22,7 @@ SUFFIX = TOOLS.name.removeprefix("tools")
 CITY_REPOS = [p for p in [ROOT / f"city-template{SUFFIX}", *sorted(ROOT.glob(f"sample-*-station{SUFFIX}"))]
               if p.is_dir()]
 # The trusted side: workflows that run .github/scripts from the default branch with a write token.
-TRUSTED_WORKFLOWS = ("pr-comment.yml", "review-report.yml", "pr-base-freshness.yml", "pr-recheck.yml")
+TRUSTED_WORKFLOWS = ("pr-comment.yml", "review-report.yml", "pr-recheck.yml")   # v2.0.0 T5: no freshness workflow
 
 SHA_PIN = re.compile(r"^\s*-?\s*uses:\s*([^\s@#]+)@([0-9a-f]{40})\b")
 USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)")
@@ -126,12 +128,20 @@ class WorkflowLintTest(unittest.TestCase):
                     bad.append(f"{wf.parent.parent.parent.name}/{wf.name}: {line.strip()}")
         self.assertEqual(bad, [], "': ' inside a plain scalar:\n" + "\n".join(bad))
 
+    def test_the_issue_forms_keep_the_organisation_defaults(self) -> None:
+        # D-5-4: with templates of its own, tools did not inherit the organisation's config.yml
+        text = (TOOLS / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn("\nblank_issues_enabled: true\n", text)
+        self.assertEqual(re.findall(r"^\s+url: (\S+)$", text, re.M), ["https://github.com/4dcitygml/.github/security/advisories/new"])
+
     def test_every_tools_workflow_carries_the_copy_switch(self) -> None:
         # A development copy sets CITYGML_CI=off to skip every automatic run; the entry job of
         # each workflow carries the condition, and a manual run is always allowed.
         switch = "if: vars.CITYGML_CI != 'off' || github.event_name == 'workflow_dispatch'"
         for wf in sorted((TOOLS / ".github" / "workflows").glob("*.yml")):
             text = wf.read_text(encoding="utf-8")
+            if "\n  workflow_call:\n" in text and "\n  push:\n" not in text:
+                continue   # a called workflow (release-publish.yml) runs only when a switched one calls it
             self.assertIn(switch, text, wf.name)
             self.assertIn("workflow_dispatch:", text, wf.name)
 
@@ -163,7 +173,7 @@ class WorkflowLintTest(unittest.TestCase):
                 else:
                     missing.append(f"{repo.name}/{name}")
         if not CITY_REPOS:
-            self.skipTest("no city repository checked out next to tools")
+            city_checkouts.missing("no city repository checked out next to tools")
         self.assertEqual(missing, [], "trusted workflows missing")
         first = next(iter(blocks.values()))
         for line in ("ref: ${{ github.event.repository.default_branch }}", "persist-credentials: false",

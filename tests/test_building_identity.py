@@ -10,10 +10,12 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-from scripts.building_identity import (IdentityRule, building_id, building_spans, citymodel_close, member_markers,
-                                       municipality, municipality_values, replace_stable_id, rule_from_config, stable_id)
+from dialects.plateau.pack import municipality, municipality_values
+from scripts.building_identity import (IdentityRule, building_spans, citymodel_close, member_markers,
+                                       replace_stable_id, rule_from_config, stable_id)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PLATEAU_RULE = IdentityRule("uro:buildingID")
 
 PLATEAU = (b'<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0"><core:cityObjectMember>'
            b'<bldg:Building gml:id="g1"><uro:buildingIDAttribute><uro:BuildingIDAttribute>'
@@ -35,14 +37,17 @@ def _attr_module():
 
 class TestRule(unittest.TestCase):
     def test_config_to_rule(self):
-        self.assertEqual(rule_from_config(None), IdentityRule())
+        self.assertEqual(rule_from_config(None), IdentityRule("gml:id"))   # v2.0.0: no dialect by default
+        self.assertEqual(rule_from_config({"building_id": {}}), IdentityRule("gml:id"))
+        self.assertEqual(rule_from_config({"building_id": {"type": "uro:buildingID"}}), PLATEAU_RULE)
         self.assertEqual(rule_from_config({"building_id": {"type": "gml:id"}}), IdentityRule("gml:id"))
         self.assertEqual(rule_from_config({"building_id": {"type": "gen:BIN", "invalid_values": ["1000000"]}}),
                          IdentityRule("gen:BIN", frozenset({"1000000"})))
 
     def test_stable_id_per_dialect(self):
         spans = building_spans(PLATEAU)
-        self.assertEqual(stable_id(PLATEAU[slice(*spans["g1"])], "g1"), "13101-bldg-1")
+        self.assertEqual(stable_id(PLATEAU[slice(*spans["g1"])], "g1", PLATEAU_RULE), "13101-bldg-1")
+        self.assertEqual(stable_id(PLATEAU[slice(*spans["g1"])], "g1"), "g1")   # undeclared: the gml:id
         spans = building_spans(CITYGML10)
         munich, ny = IdentityRule("gml:id"), IdentityRule("gen:BIN", frozenset({"1000000"}))
         first, second = spans["DEBY_LOD2_59812"], spans["DEBY_LOD2_2"]
@@ -51,7 +56,7 @@ class TestRule(unittest.TestCase):
         # a placeholder BIN never identifies a building: the gml:id stands in
         self.assertEqual(stable_id(CITYGML10[slice(*second)], "DEBY_LOD2_2", ny), "DEBY_LOD2_2")
         # PLATEAU rule on data without uro:buildingID falls back to the gml:id
-        self.assertEqual(stable_id(CITYGML10[slice(*first)], "DEBY_LOD2_59812"), "DEBY_LOD2_59812")
+        self.assertEqual(stable_id(CITYGML10[slice(*first)], "DEBY_LOD2_59812", PLATEAU_RULE), "DEBY_LOD2_59812")
 
     def test_member_markers_follow_the_file(self):
         self.assertEqual(member_markers(PLATEAU), (b"<core:cityObjectMember>", b"</core:cityObjectMember>"))
@@ -61,9 +66,9 @@ class TestRule(unittest.TestCase):
         self.assertEqual(PLATEAU[citymodel_close(PLATEAU):], b"</core:CityModel>")
 
     def test_attribute_editor_carries_the_same_rule(self):
-        # The editor ships without scripts/, so it keeps its own copy: it must agree on every case.
+        # The editor finds the same members and IDs as the gates (its IDs: Repo.stable_id, D-3b3).
         attr = _attr_module()
-        for raw, cases in ((PLATEAU, [("g1", IdentityRule())]),
+        for raw, cases in ((PLATEAU, [("g1", PLATEAU_RULE), ("g1", IdentityRule())]),
                            (CITYGML10, [("DEBY_LOD2_59812", IdentityRule("gml:id")),
                                         ("DEBY_LOD2_59812", IdentityRule("gen:BIN")),
                                         ("DEBY_LOD2_2", IdentityRule("gen:BIN", frozenset({"1000000"}))),
@@ -71,7 +76,7 @@ class TestRule(unittest.TestCase):
             self.assertEqual(attr.building_spans(raw), building_spans(raw))
             for gml_id, rule in cases:
                 span = raw[slice(*building_spans(raw)[gml_id])]
-                self.assertEqual(attr.stable_building_id_from_span(span, gml_id, rule.type, rule.invalid_values),
+                self.assertEqual(attr.building_identity.stable_id(span, gml_id, rule),
                                  stable_id(span, gml_id, rule), (gml_id, rule))
 
 
@@ -80,9 +85,18 @@ class TestMemberValues(unittest.TestCase):
     extract_municipality (S19 A6, A11)."""
 
     def test_building_id(self):
-        self.assertEqual(building_id(PLATEAU), "13101-bldg-1")
-        self.assertEqual(building_id(b'<uro:buildingID codeSpace="x"> 13101-bldg-2 </uro:buildingID>'), "13101-bldg-2")
-        self.assertIsNone(building_id(CITYGML10))
+        rule = IdentityRule("uro:buildingID")
+        self.assertEqual(stable_id(PLATEAU, "g", rule), "13101-bldg-1")
+        self.assertEqual(stable_id(b'<uro:buildingID codeSpace="x"> 13101-bldg-2 </uro:buildingID>', "g", rule), "13101-bldg-2")
+        self.assertEqual(stable_id(CITYGML10, "g", rule), "g")   # none: the gml:id
+
+    def test_the_identity_leaf(self):
+        from scripts.building_identity import identity_leaf
+        span = (b'<gen:stringAttribute name="A"><gen:value>1</gen:value></gen:stringAttribute>'
+                b'<gen:stringAttribute name="BIN"><gen:value>2</gen:value></gen:stringAttribute>')
+        self.assertEqual(identity_leaf(PLATEAU, IdentityRule("uro:buildingID")), ("buildingID", 0))
+        self.assertEqual(identity_leaf(span, IdentityRule("gen:BIN")), ("value", 1))
+        self.assertIsNone(identity_leaf(span, IdentityRule("gml:id")))
 
     def test_a_member_naming_two_cities_has_no_municipality(self):
         one = b"<uro:city>13101</uro:city><uro:city>13101</uro:city>"
@@ -102,7 +116,7 @@ class TestReplaceStableId(unittest.TestCase):
                          span.replace(b">1036448<", b">1099999<"))
         self.assertEqual(replace_stable_id(span, "DEBY_LOD2_59812", "DEBY_X", IdentityRule("gml:id")),
                          span.replace(b'"DEBY_LOD2_59812"', b'"DEBY_X"'))
-        self.assertEqual(replace_stable_id(PLATEAU, "13101-bldg-1", "13101-bldg-9"),
+        self.assertEqual(replace_stable_id(PLATEAU, "13101-bldg-1", "13101-bldg-9", PLATEAU_RULE),
                          PLATEAU.replace(b">13101-bldg-1<", b">13101-bldg-9<"))
         self.assertEqual(replace_stable_id(span, "nope", "x", IdentityRule("gen:BIN")), span)
 
@@ -122,6 +136,48 @@ class TestTrailers(unittest.TestCase):
                   and re.search(r"Building\|Building-Added|Building-Added\|Building-Deleted", p.read_text(encoding="utf-8"))]
         self.assertEqual(copies, [])
 
+
+
+class TestTrailersAsGitReadsThem(unittest.TestCase):
+    """U9 / D-b1 (contract v4.0.0 A2): the trailers were matched anywhere in the message, so a
+    subject `Building: X fix` and the trailer `Building: X` gave two values and failed "exactly one".
+    They are read as git reads them: the final paragraph, never the subject, only when every line
+    of it is a trailer; keys regardless of case."""
+
+    MESSAGES = [
+        "Building: X fix\n\nBuilding: X",
+        "Building: X",
+        "subject\n\nbody line\nBuilding: X",
+        "subject\n\nBuilding: A\n\nmore text",
+        "subject\n\nbuilding: a\nCHANGE-TYPE: Lifecycle",
+        "subject\n\nBuilding: A\n  continued\nFoo: b",
+        "subject\n\nprose\n\nBuilding-Added: A\nBuilding-Deleted: B\nBuilding-Added: C\n\n",
+        "subject\r\n\r\nBuilding: A\r\n",
+        "subject\n\nBuilding : A\nScope-Municipality:13101",
+    ]
+
+    def test_the_subject_is_never_a_trailer(self):
+        from scripts.building_identity import trailers
+        self.assertEqual(trailers("Building: X fix\n\nBuilding: X"), {"Building": ["X"]})
+        self.assertEqual(trailers("subject\n\nbuilding: a\nCHANGE-TYPE: Lifecycle"),
+                         {"Building": ["a"], "Change-Type": ["Lifecycle"]})
+        self.assertEqual(trailers("subject\n\nBuilding: A\n\nmore text"), {})
+
+    def test_the_same_as_git_interpret_trailers(self):
+        # differential: the A2 keys git's own parser finds, for each message
+        import subprocess
+        from scripts.building_identity import TRAILER_KEYS, trailers
+        known = {k.lower(): k for k in TRAILER_KEYS}
+        for message in self.MESSAGES:
+            with self.subTest(message=message):
+                out = subprocess.run(["git", "interpret-trailers", "--parse"], input=message, text=True,
+                                     capture_output=True, check=True).stdout
+                theirs: dict = {}
+                for line in out.splitlines():
+                    key, _, value = line.partition(":")
+                    if key.strip().lower() in known:
+                        theirs.setdefault(known[key.strip().lower()], []).append(value.strip())
+                self.assertEqual(trailers(message), theirs)
 
 if __name__ == "__main__":
     unittest.main()

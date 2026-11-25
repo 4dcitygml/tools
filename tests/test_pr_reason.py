@@ -51,8 +51,8 @@ class TestPrReason(unittest.TestCase):
         self.assertEqual(run("{not json"), 2)        # it crashed: an error, not the proposer's text
 
     def test_hub_and_editor_use_it(self):
-        for path in ("tools/hub/app.py", "tools/attr_editor/app.py"):
-            self.assertIn("pr_reason.filled(", (REPO_ROOT / path).read_text(encoding="utf-8"), path)
+        for path, call in (("tools/hub/review.py", "pr_reason.acceptable("), ("tools/attr_editor/app.py", "pr_reason.filled(")):
+            self.assertIn(call, (REPO_ROOT / path).read_text(encoding="utf-8"), path)
 
 
 if __name__ == "__main__":

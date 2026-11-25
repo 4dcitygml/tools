@@ -64,31 +64,29 @@ itself, which is why the rules below allow no bypass.
 `manual-reset.yml`, `workflow_dispatch` with the typed confirmation `RESET`,
 guarded by `vars.PRACTICE_REPO`, using only `GITHUB_TOKEN`:
 
-1. Close open practice pull requests with a note.
-2. Create branch `reset/<date>` from `main` with one commit that replaces
+1. Create branch `reset/<date>` from `main` with one commit that replaces
    the city's data directories (`data_dirs` in `4dcitygml.json`) with their
    content in `baseline` and touches nothing else, carrying the trailers
    `Change-Type: practice-reset` and `Reset-To: <baseline commit>`. The
    `baseline` branch holds the pristine data; workflows, documents and
    configuration evolve on `main` and are never part of a reset, so `baseline`
    is re-cut only when the data itself changes.
-3. Open a pull request to `main` marked `<!-- citygml-practice-reset -->`,
-   whose description tells the person to add the label `practice-reset` (the
-   workflow creates the label if missing).
-4. A person adds the label, which runs the checks: a pull request opened by
-   `GITHUB_TOKEN` triggers no workflow by itself, and `pr-analysis.yml` also
-   runs on `labeled` and `edited`.
-5. The person merges it: the deliberate step. `main` returns to the baseline
-   content without any rewrite; history stays.
+2. Push the branch and print the compare link. The workflow opens no pull
+   request (v2.0.0, T9): the maintainer opens it from the link, so the normal
+   workflows start as for any pull request. No label, no waiting-run rule and
+   no "Allow GitHub Actions to create and approve pull requests" setting are
+   involved.
+3. The maintainer merges it: the deliberate step. `main` returns to the
+   baseline content without any rewrite; history stays. The open practice
+   pull requests are closed with a note after the merge, by the merge's push.
 
 Prerequisites: CI must accept `Change-Type: practice-reset` as an
 administrative change (commit scope gate, Exchange Contract A2; tools since
 2026-09-13) and exempt a reset-only pull request from the one-building rule
-(tools since 2026-09-30), otherwise the reset pull request fails `analyze`; and the
-repository setting "Allow GitHub Actions to create and approve pull requests"
-must be on, otherwise the workflow cannot open the pull request (the practice
-auto-merge needs the same setting for its approval). `vars.PRACTICE_REPO`
-must name the repository itself, or both workflows stay inert.
+(tools since 2026-09-30), otherwise the reset pull request fails `analyze`.
+The practice auto-merge (below) still needs "Allow GitHub Actions to create and
+approve pull requests" for its approval. `vars.PRACTICE_REPO` must name the
+repository itself, or both workflows stay inert.
 
 ### Decision (2026-09-30): what merges without a person in the practice repositories
 
@@ -186,7 +184,8 @@ deliberate step.
   pull request and merge it (the human step).
 - Order across repositories: tools first (city CI pins a tools commit), then
   city-template and the practice repositories, then the protection settings,
-  then the release. Moving the `install-v1` tag is a separate, explicit step.
+  then the release. The `install-v1` tag points at the one-line command's bootstrap and does
+  not move again (W8): every hub release carries the installers the bootstrap fetches.
 
 ### Commands
 

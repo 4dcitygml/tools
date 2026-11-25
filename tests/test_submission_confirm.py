@@ -58,7 +58,7 @@ class TestSubmissionInfo(unittest.TestCase):
     def test_tex_editor_inherits_the_confirmation(self):
         tex = load_app("tex_confirm", "tools/tex_editor/app.py")
         self.assertTrue(issubclass(tex.TexHandler, tex.attr.Handler))  # /api/submission is served by the base
-        self.assertIn("submission_info", attr.Handler.do_GET.__code__.co_names)
+        self.assertIn("submission_info", attr.Handler.route_get.__code__.co_names)
 
 
 class TestConfirmationScreens(unittest.TestCase):
@@ -67,8 +67,7 @@ class TestConfirmationScreens(unittest.TestCase):
     def test_attribute_editor_requires_review_then_send(self):
         h = (REPO_ROOT / "tools" / "attr_editor" / "index.html").read_text(encoding="utf-8")
         for token in ('id="btnReview"', 'id="submitConfirm"', "/api/submission", "editor.btn_review",
-                      "editor.btn_send_confirmed", "editor.confirm_account", "editor.confirm_identity",
-                      "editor.confirm_origin", "editor.confirm_upstream", "editor.confirm_blocked"):
+                      "editor.btn_send_confirmed", "submissionRows(s, [", "s.blocked"):
             self.assertIn(token, h, token)
         # the send button is hidden until the review shows the facts; the review needs the pre-check
         self.assertIn('id="btnSubmit" class="primary" disabled style="display:none"', h)
@@ -78,11 +77,19 @@ class TestConfirmationScreens(unittest.TestCase):
 
     def test_texture_editor_shows_the_facts_before_consent(self):
         h = (REPO_ROOT / "tools" / "tex_editor" / "index.html").read_text(encoding="utf-8")
-        for token in ('id="submitConfirm"', "/api/submission", "tex.btn_send_confirmed", "tex.confirm_account",
-                      "tex.confirm_identity", "tex.confirm_origin", "tex.confirm_upstream", "tex.confirm_blocked"):
+        for token in ('id="submitConfirm"', "/api/submission", "tex.btn_send_confirmed", "submissionRows(s, [", "s.blocked"):
             self.assertIn(token, h, token)
         self.assertIn("submitBlocked || !$('ccAgree').checked", h)
         self.assertLess(h.index('id="submitConfirm"'), h.index('id="btnSubmit"'))
+
+
+class TestTheRowsAreShared(unittest.TestCase):
+    def test_one_list_of_facts_for_both_editors(self):
+        # T0: both editors listed account, author, copy, city and proposal with their own keys
+        js = (REPO_ROOT / "tools" / "attr_editor" / "editor.js").read_text(encoding="utf-8")
+        for key in ("common.confirm_account", "common.confirm_identity", "common.confirm_origin",
+                    "common.confirm_upstream", "common.confirm_proposal"):
+            self.assertIn(key, js)
 
 
 if __name__ == "__main__":

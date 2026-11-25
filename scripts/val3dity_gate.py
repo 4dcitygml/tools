@@ -44,16 +44,18 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from lxml import etree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import md_report  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
 from scripts.citygml_constants import VAL3DITY_MARKER, VAL3DITY_PLANARITY_D2P_M  # noqa: E402
-from scripts.diff_citygml import _gml_id, _local, load_buildings  # noqa: E402
-from scripts.citygml_lint import _changed_ids  # noqa: E402
-from scripts.safe_xml import safe_fromstring  # noqa: E402
+from scripts import city_declaration  # noqa: E402
+from scripts.citygml_xml import gml_id as _gml_id, qname as _local  # noqa: E402
+from scripts.diff_citygml import buildings_at, changed_ids, load_buildings  # noqa: E402
+from scripts.safe_xml import fromstring, tostring  # noqa: E402
 
 CITYGML_TOOLS = os.environ.get("CITYGML_TOOLS", "citygml-tools")
 VAL3DITY_CMD = os.environ.get("VAL3DITY_CMD", "val3dity")
@@ -86,12 +88,12 @@ def _tools_available() -> Optional[str]:
 
 
 # --- Extract changed buildings (pruning at cityObjectMember granularity) -----
-def _subset_root(xml_bytes: bytes, ids: set) -> Optional[etree._Element]:
+def _subset_root(xml_bytes: bytes, ids: set) :
     """Return a CityModel keeping only the Buildings whose ids are in `ids` (None if none remain).
 
     Namespaces, Envelope, and srsName are kept as in the original (val3dity/citygml-tools need the coordinate system).
     """
-    root = safe_fromstring(xml_bytes)
+    root = fromstring(xml_bytes)
     kept = 0
     for member in list(root):
         if _local(member)[1] != "cityObjectMember":
@@ -109,15 +111,11 @@ def _subset_root(xml_bytes: bytes, ids: set) -> Optional[etree._Element]:
 
 
 def _city_crs(repo: Path) -> Optional[str]:
-    """The CRS the city's data is written in (4dcitygml.json `crs`), or None when it declares none."""
-    try:
-        value = json.loads((Path(repo) / "4dcitygml.json").read_text(encoding="utf-8")).get("crs")
-    except (OSError, ValueError, AttributeError):
-        value = None
-    return str(value) if value else None
+    """The CRS the city's data is written in (its declaration's `crs`), or None when it declares none."""
+    return city_declaration.read(repo).crs
 
 
-def _file_crs(root: etree._Element) -> Optional[str]:
+def _file_crs(root) -> Optional[str]:
     """The file's own CRS (its Envelope's srsName) when pyproj knows it, else None."""
     from pyproj import CRS
     for el in root.iter():
@@ -144,7 +142,7 @@ def _lat_first(crs: str) -> bool:
     return str(CRS(crs).axis_info[0].direction).lower().startswith("north")
 
 
-def _first_point(root: etree._Element) -> Optional[tuple]:
+def _first_point(root) -> Optional[tuple]:
     """A representative coordinate triple as written (Envelope corner or the first posList/pos)."""
     for tag in ("lowerCorner", "posList", "pos"):
         for el in root.iter():
@@ -155,7 +153,7 @@ def _first_point(root: etree._Element) -> Optional[tuple]:
     return None
 
 
-def _target_crs(src_crs: str, root: etree._Element) -> Optional[str]:
+def _target_crs(src_crs: str, root) -> Optional[str]:
     """The metric CRS val3dity should see: None when the data is already a metric projection
     (nothing to do), else the UTM zone of the data's location."""
     from pyproj import CRS, Transformer
@@ -180,7 +178,7 @@ def _utm_epsg(lon: float, lat: float) -> str:
     return f"EPSG:{info[0].code}"
 
 
-def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
+def _reproject(root, src_crs: str, dst_epsg: str) -> None:
     """Project posList etc. from the city's CRS to dst_epsg (meters, x y z; heights in feet become
     metres too), and name dst_epsg in every srsName."""
     from pyproj import Transformer
@@ -205,23 +203,32 @@ def _reproject(root: etree._Element, src_crs: str, dst_epsg: str) -> None:
 
 
 # --- Running val3dity -------------------------------------------------------
-def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: Optional[str] = None) -> Optional[dict]:
+def _source_crs(root, explicit: Optional[str] = None, declared: Optional[str] = None) -> Optional[str]:
+    """The CRS the data is written in: an explicit one (--crs), then the file's own srsName, then the
+    city's declared crs, the order the editors and the preview use (D-c8: the declaration came first)."""
+    return explicit or _file_crs(root) or declared
+
+
+def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: Optional[str] = None,
+                  declared: Optional[str] = None) -> Optional[dict]:
     """Extract the buildings in `ids` -> project to meters when needed -> CityJSON -> val3dity,
     returning {building_id: {"valid":bool,"codes":[...]}}.
 
-    None when there is nothing to extract or a tool fails (= undecidable, skip).
+    None when there is nothing to extract or a tool fails (= undecidable, skip). Each call has its
+    own folder under work, so a run that writes no report never reads another call's (D-c3).
     """
+    work = Path(tempfile.mkdtemp(dir=work))
     root = _subset_root(xml_bytes, ids)
     if root is None:
         return None
-    src_crs = src_crs or _file_crs(root)
+    src_crs = _source_crs(root, src_crs, declared)
     if src_crs is None:
         return None   # neither the city nor the file names its CRS: undecidable, not guessed
     target = _target_crs(src_crs, root)
     if target is not None:
         _reproject(root, src_crs, target)
     gml = work / "subset.gml"
-    gml.write_bytes(etree.tostring(root, xml_declaration=True, encoding="UTF-8"))
+    gml.write_bytes(tostring(root))
     # CityGML → CityJSON
     r = subprocess.run([CITYGML_TOOLS, "to-cityjson", f"--output={work}/", str(gml)],
                        capture_output=True)
@@ -244,14 +251,14 @@ def _validate_ids(xml_bytes: bytes, ids: set, work: Path, src_crs: Optional[str]
 
 
 # --- CI: base->head regression detection ------------------------------------
-def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
+def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list, crs: Optional[str] = None) -> dict:
     """Validate the changed buildings of each changed .gml and collect invalids (regressions) introduced by the PR."""
     from scripts.repo_git import blob
 
     regressions: list = []
     checked = 0
     skipped = 0
-    src_crs = _city_crs(repo)
+    declared = _city_crs(repo)
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         for rel in gml_files:
@@ -259,17 +266,20 @@ def gate_ci(repo: Path, base_sha: str, head_sha: str, gml_files: list) -> dict:
             if head_bytes is None:
                 continue
             base_bytes = blob(repo, base_sha, rel)
-            old_map = load_buildings(base_bytes) if base_bytes else {}
-            new_map = load_buildings(head_bytes)
-            changed = _changed_ids(old_map, new_map)
+            old_map = buildings_at(repo, base_sha, rel)
+            changed = changed_ids(old_map, buildings_at(repo, head_sha, rel))
             if not changed:
                 continue
-            head_v = _validate_ids(head_bytes, changed, work, src_crs)
+            head_v = _validate_ids(head_bytes, changed, work, crs, declared)
             if head_v is None:
                 skipped += 1
                 continue
-            base_v = _validate_ids(base_bytes, changed & set(old_map), work, src_crs) if base_bytes else {}
-            base_v = base_v or {}
+            # the base's state of the buildings it has; undecidable there -> the file is undecidable (D-c4)
+            in_base = changed & set(old_map)
+            base_v = _validate_ids(base_bytes, in_base, work, crs, declared) if in_base else {}
+            if base_v is None:
+                skipped += 1
+                continue
             checked += len(head_v)
             regressions.extend(find_regressions(head_v, base_v, rel))
     return {"regressions": regressions, "checked": checked, "skipped": skipped}
@@ -293,11 +303,11 @@ def find_regressions(head_v: dict, base_v: dict, rel: str) -> list:
 
 
 def render(result: dict) -> str:
+    """The advisory comment of new invalids; "" when there are none (a clean check posts nothing)."""
     regs = result["regressions"]
-    lines = [VAL3DITY_MARKER, "## 🧱 Topological consistency gate (official val3dity engine, diff-based)", ""]
     if not regs:
-        lines += ["✅ The buildings changed by this PR introduce no new topological inconsistencies in the official val3dity check.", ""]
-        return "\n".join(lines).rstrip() + "\n"
+        return ""
+    lines = [VAL3DITY_MARKER, "## 🧱 Topological consistency gate (official val3dity engine, diff-based)", ""]
     lines.append(f"**⚠️ This PR introduces new topological inconsistencies ({len(regs)} building(s)).**"
                  " These are not pre-existing data defects but invalids caused/added by the change.")
     lines.append("")
@@ -307,17 +317,17 @@ def render(result: dict) -> str:
     lines += ["", "<sub>Uses the same error-code system as official val3dity (100-405)."
               f" Planarity tolerance is {VAL3DITY_PLANARITY_D2P_M} m."
               " Pre-existing defects of the source data are excluded by the diff-based approach.</sub>"]
-    return "\n".join(lines).rstrip() + "\n"
+    return md_report.fit("\n".join(lines).rstrip() + "\n")
 
 
-def _local_files(paths: list, work: Path, src_crs: Optional[str] = None) -> dict:
+def _local_files(paths: list, work: Path, src_crs: Optional[str] = None, declared: Optional[str] = None) -> dict:
     """Local: validate all buildings of each file (baseline health)."""
     total = invalid = 0
     per_file = []
     for p in paths:
         b = Path(p).read_bytes()
         ids = set(load_buildings(b))
-        v = _validate_ids(b, ids, work, src_crs)
+        v = _validate_ids(b, ids, work, src_crs, declared)
         if v is None:
             per_file.append((p, None, None)); continue
         inv = [(k, x["codes"]) for k, x in v.items() if not x["valid"]]
@@ -334,7 +344,7 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--head-sha", default=None)
     p.add_argument("--file-list", type=Path, default=None)
     p.add_argument("--enforce", action="store_true", help="Exit 1 if regressions found (default: advisory)")
-    p.add_argument("--crs", default=None, help="CRS of the data (default: `crs` in <repo>/4dcitygml.json, else the srsName of each file)")
+    p.add_argument("--crs", default=None, help="CRS of the data (default: the srsName of each file, else `crs` in <repo>/4dcitygml.json)")
     args = p.parse_args(argv)
 
     missing = _tools_available()
@@ -347,15 +357,14 @@ def main(argv: Optional[list] = None) -> int:
     if args.file_list is not None:
         if not (args.base_sha and args.head_sha):
             p.error("--base-sha and --head-sha required when using --file-list.")
-        gml_files = [ln.strip() for ln in args.file_list.read_text(encoding="utf-8").splitlines()
-                     if ln.strip().endswith(".gml")]
-        result = gate_ci(args.repo, args.base_sha, args.head_sha, gml_files)
+        gml_files = changed_list(args.file_list)
+        result = gate_ci(args.repo, args.base_sha, args.head_sha, gml_files, args.crs)   # D-c8: --crs counts in CI too
         sys.stdout.write(render(result))
         return 1 if (args.enforce and result["regressions"]) else 0
 
     if args.files:
         with tempfile.TemporaryDirectory() as td:
-            res = _local_files(args.files, Path(td), args.crs or _city_crs(args.repo))
+            res = _local_files(args.files, Path(td), args.crs, _city_crs(args.repo))
         for path, n, inv in res["per_file"]:
             if n is None:
                 print(f"{path}: Skipped (extraction/tool unavailable)"); continue

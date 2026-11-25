@@ -1,0 +1,26 @@
+/* Copyright (c) 2026 4dcitygml */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* What the attribute and the texture editor look like in common (#66): the full-window layout, the
+   header band's layout, the map and 3D panes, the change bar, the loading veil and the send dialog.
+   attr_editor/app.py puts it into both editors' screens after tools/common.css; each page keeps
+   only its own differences. */
+html, body { height: 100%; overflow: hidden; }
+#header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px; padding: 0 14px; }
+#app { display: grid; grid-template-columns: 420px 1fr; grid-template-rows: 44px 1fr; height: 100vh; }
+#header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+#headerInfo { font-size: 12px; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+#map { width: 100%; height: 100%; }
+#pane3d { position: relative; background: #000; border-top: 1px solid var(--border); }
+#viewerFrame { width: 100%; height: 100%; border: 0; }
+#right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#changeBar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--border); background: var(--card); }
+#changeCount b { color: #b8860b; }
+#loading { position: absolute; inset: 0; z-index: 2000; display: none; align-items: center; justify-content: center; background: rgba(255,255,255,.6); font-weight: 600; }
+#modalBack { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 3000; }
+#modal { background: #fff; border-radius: 10px; width: min(680px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 22px; }
+#modal h2 { margin: 0 0 4px; font-size: 16px; }
+#modal .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+#modal textarea { width: 100%; height: 90px; font: inherit; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
+#modalBtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+#modalResult { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+#modalResult a { color: var(--accent); font-weight: 600; }

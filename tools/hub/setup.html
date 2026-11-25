@@ -4,20 +4,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title data-i18n="hub.setup_doc_title">Initial setup — Building Data Editing Tools</title>
 <style>
-  :root {
-    color-scheme: light dark;
-    --bg:#eef1f5; --card:#fff; --border:#dde1e6; --text:#1c2733; --muted:#6b7785;
-    --ok:#1f883d; --okbg:#eaf6ec; --okborder:#a9dfbb; --link:#0969da; --figbg:#f6f8fa; --err:#b32020;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#9aa5b1;
-      --ok:#3fb950; --okbg:#12261a; --okborder:#2ea04326; --link:#58a6ff; --figbg:#0d1117; --err:#ff7b72; }
-  }
-  * { box-sizing:border-box; }
+  :root { color-scheme: light dark; --okbg:#eaf6ec; --okborder:#a9dfbb; --figbg:#f6f8fa; --err:#b32020; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --muted:#9aa5b1;
+      --ok:#3fb950; --okbg:#12261a; --okborder:#2ea04326; --accent:#58a6ff; --figbg:#0d1117; --err:#ff7b72; } }
   html { height:100%; }
-  body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-size:16px;
-    font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
-    display:flex; align-items:flex-start; justify-content:center; padding:12px 16px; }
+  body { min-height:100%; font-size:16px; display:flex; align-items:flex-start; justify-content:center; padding:12px 16px; }
   main { background:var(--card); border:1px solid var(--border); border-radius:16px;
     width:100%; max-width:600px; padding:24px 30px 20px; margin:auto 0; }
   .prog { display:flex; align-items:center; gap:8px; margin-bottom:14px; min-height:8px; }
@@ -47,24 +38,21 @@
     animation:slide 1.6s ease-in-out infinite; }
   @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
   details { margin-top:14px; font-size:14px; line-height:1.8; color:var(--muted); }
-  details summary { cursor:pointer; color:var(--link); font-size:14px; }
+  details summary { cursor:pointer; color:var(--accent); font-size:14px; }
   details .in { padding:10px 2px 0; }
   input { font:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--border);
     border-radius:8px; width:100%; margin-top:6px; background:var(--card); color:var(--text); }
   code { background:var(--figbg); border:1px solid var(--border); padding:1px 6px;
     border-radius:4px; font-size:13px; }
   .nav { display:flex; align-items:center; gap:12px; margin-top:18px; }
-  button { font:inherit; font-weight:700; cursor:pointer; border-radius:10px; border:none;
-    background:var(--ok); color:#fff; padding:11px 24px; font-size:16px; }
-  button:disabled { background:#b7bdc4; cursor:default; }
+  button { font-weight:700; border-radius:10px; border:none; background:var(--ok); color:#fff; padding:11px 24px; font-size:16px; }
+  button:disabled { background:#b7bdc4; opacity:1; }
   button.ghost { background:transparent; color:var(--muted); font-weight:500;
     border:1px solid var(--border); padding:10px 16px; font-size:14px; }
   .hint { font-size:13px; color:var(--muted); margin-left:auto; text-align:right; }
-  a { color:var(--link); }
   .spin { display:inline-block; width:14px; height:14px; border:2px solid var(--border);
     border-top-color:var(--ok); border-radius:50%; animation:spin .8s linear infinite;
     vertical-align:-2px; margin-right:6px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
   .choices button { display: block; width: 100%; margin: 8px 0; text-align: left; }
   table.kv { border-collapse: collapse; margin: 10px 0; }
   .kv th { text-align: left; padding: 4px 12px 4px 0; font-weight: 600; white-space: nowrap; vertical-align: top; }
@@ -76,16 +64,9 @@
   <div class="nav" id="nav"></div>
 <script>
 'use strict';
-const $ = id => document.getElementById(id);
-// Fallback so the English originals work even without an injected language pack (no i18n module)
-const t = window.t || ((k, d, p) => {
-  let s = d;
-  if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]);
-  return s;
-});
 // Values the hub hands over (see runtime.page): MODE is "setup" (no clone yet) or
 // "account" (the clone exists, only the account is missing).
-const { UPSTREAM, DEFAULT_DEST, MODE } = window.CITYGML;
+const { UPSTREAM, DEFAULT_DEST, MODE, START } = window.CITYGML;
 const STEPS = [t('hub.setup_step_connect', 'Connect'),
   t('hub.setup_step_fork', 'Create a copy'),
   t('hub.setup_step_clone', 'Import')];
@@ -94,17 +75,8 @@ let st = null;        // state coming from the server
 let busy = false;     // a button action is running
 let dest = DEFAULT_DEST;
 let returnTabTitle = false; // do not change the return-tab title even while the GitHub tab is being used
-let pollError = '';
 
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? undefined : {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)});
-  return r.json();
-}
 
 // Which screen we are on (0=connect / 1=copy / 2=import / 3=done)
 function stepOf(s) {
@@ -116,8 +88,8 @@ function stepOf(s) {
   return 2;
 }
 
-function renderProg(i) {
-  $('prog').innerHTML = (i >= 3 || MODE === 'account') ? '' :
+function progress(i) {
+  return (i >= 3 || MODE === 'account') ? '' :
     STEPS.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('') +
     `<span>${i + 1} / ${STEPS.length}</span>`;
 }
@@ -131,7 +103,7 @@ function screenConnect(s) {
           "This tool's GitHub connection settings are not configured yet. Please contact the distributor.")}</p>
         <details open><summary>${t('hub.setup_noclient_diy_summary', 'If you configure it yourself')}</summary><div class="in">
           ${t('hub.setup_noclient_diy_body',
-            'Place <code>preset.json</code> next to the launcher file (in the Program folder) and write <code>{"oauthClientId": "…"}</code>. On a machine already signed in with the GitHub CLI (<code>gh</code>), you can continue as is.')}
+            'Place <code>preset.json</code> in the program folder, next to <code>hub.py</code>, and write <code>{"oauthClientId": "…"}</code>. On a machine already signed in with the GitHub CLI (<code>gh</code>), you can continue as is.')}
         </div></details>`,
       nav: `<button onclick="recheck()">${t('hub.setup_recheck', 'Check again')}</button>`,
     };
@@ -148,6 +120,8 @@ function screenConnect(s) {
           <li>${t('hub.setup_device_step3',
             'When finished, <b>close the GitHub tab</b>. Return to the "← Return here" tab on the left.')}</li>
         </ol>
+        <p>${t('hub.setup_device_link', 'No GitHub tab opened? Open {link} yourself.',
+          {link: `<a href="${esc(s.verifyUrl)}" target="_blank" rel="noopener">${esc(s.verifyUrl)}</a>`})}</p>
         <div class="safe"><span class="spin"></span>${t('hub.setup_device_return',
           '<b>This screen is where you return.</b> When you finish on GitHub, it advances automatically.')}</div>
         ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
@@ -167,16 +141,13 @@ function screenConnect(s) {
   if (s.machine && s.machine.login && !saved.has(s.machine.login.toLowerCase())) {
     choices.push(`<button onclick="doMachine()">${t('hub.account_use_machine',
       "Use this computer's GitHub sign-in (@{login})", {login: esc(s.machine.login)})}</button>`);
-  } else if (s.machineChecking) {
-    choices.push(`<span class="hint"><span class="spin"></span>${t('hub.account_machine_checking',
-      "Checking whether this computer has a GitHub CLI sign-in …")}</span>`);
   }
   for (const a of (s.accounts || [])) {
     choices.push(`<button onclick="doUse('${esc(a)}')">${t('hub.account_use_saved',
       'Use the account connected before (@{login})', {login: esc(a)})}</button>`);
   }
-  choices.push(`<button class="ghost" id="go" onclick="doConnect()">${t('hub.account_use_new',
-    'Connect another GitHub account (8-digit code)')}</button>`);
+  choices.push(busy ? `<button disabled><span class="spin"></span>${t('hub.setup_preparing', 'Preparing…')}</button>`
+    : `<button onclick="doConnect()">${t('hub.account_use_new', 'Connect another GitHub account (8-digit code)')}</button>`);
   const unreachable = (s.bound && !s.login)
     ? `<div class="err">${t('hub.account_unreachable',
         'This city already uses @{login}, but GitHub could not be reached to confirm it (offline?). With the connection back, this screen continues by itself; you can also choose again below.', {login: esc(s.bound)})}</div>`
@@ -189,7 +160,8 @@ function screenConnect(s) {
       <div class="choices">${choices.join('')}</div>
       <div class="safe">${scope}</div>
       <div class="safe">${t('hub.setup_connect_note',
-        'If you do not have an account, you can <b>create one for free</b> from the page that opens (just an email address and a password). After finishing on GitHub, <b>return to this "Initial setup" tab</b>.')}</div>
+        'No GitHub account yet? {link} (an e-mail address and a password), then come back to this tab and press "Connect another GitHub account".',
+        {link: `<a href="https://github.com/signup" target="_blank" rel="noopener">${t('hub.setup_signup', 'Create one for free on GitHub')}</a>`})}</div>
       ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
     nav: `<span class="hint">${t('hub.account_hint', 'Press one of the choices above.')}</span>`,
   };
@@ -216,6 +188,16 @@ function screenLegacy(s) {
         'Remove what the earlier version wrote into Git (only that; your own Git identity and sign-ins stay).')}</label>` : ''}
       ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}`,
     nav: `<button onclick="doLegacy()">${t('hub.legacy_continue', 'Continue')}</button>`,
+  };
+}
+
+// ---- No city: the hub was started without the launcher (5-14: the launcher chooses the city) ----
+function screenNoCity() {
+  return {
+    html: `<h1>${t('hub.setup_nocity_title', 'No city was given')}</h1>
+      <p class="lead">${t('hub.setup_nocity_lead',
+        "Start the tools with the one-line command in your city's README: it names the city (without one, a practice city in your language).")}</p>`,
+    nav: '',
   };
 }
 
@@ -262,21 +244,21 @@ function screenClone(s) {
     return {
       html: `<h1>${t('hub.setup_git_missing_title', 'A component needed for the import was not found')}</h1>
         <p class="lead">${t('hub.setup_git_missing_lead',
-          'Close the browser and the terminal for now, check the guide in "READ-ME-FIRST.html" on installing the component, and then open the same launcher file again.')}</p>
+          'Git is missing. On macOS, run <code>xcode-select --install</code> in Terminal and follow the dialog. Then start the tools again: {command}', {command: `<code>${esc(START)}</code>`})}</p>
         <div class="err">${t('hub.setup_git_missing_win',
           'If this screen appears on the Windows edition, the distributed files are incomplete; please contact the distributor.')}</div>`,
       nav: `<span class="hint">${t('hub.setup_git_missing_hint', 'After preparing, setup resumes where you left off')}</span>`,
     };
   }
   if (c.running) {
+    const p = c.progress;   // what git has received so far (its own count)
     return {
       html: `<h1>${t('hub.setup_cloning_title', 'Importing the data')}</h1>
-        <p class="lead">${t('hub.setup_cloning_lead',
-          'The building data is large, so this takes <b>minutes to tens of minutes</b>. Please keep this screen open and wait.')}</p>
-        <div class="bar"><i></i></div>
+        <p class="lead">${p ? t('hub.setup_cloning_received', 'Received so far: <b>{received}</b> ({percent}%).', p)
+          : t('hub.setup_cloning_lead', 'Asking GitHub for the data …')}</p>
+        <div class="bar">${p ? `<i style="width:${p.percent}%;animation:none"></i>` : '<i></i>'}</div>
         <div class="log">${(c.log || []).map(esc).join('<br>')}</div>
-        <div class="safe">${t('hub.setup_cloning_note',
-          'The progress text may not change for several minutes. This is not abnormal. Keep your internet connection and wait <b>without closing this screen or the terminal</b>.')}</div>`,
+        <div class="safe">${t('common.keep_terminal_open', 'Keep this window open: closing it stops the tools.')}</div>`,
       nav: `<span class="hint">${t('hub.setup_cloning_hint', 'When it finishes, this advances to "Ready to go"')}</span>`,
     };
   }
@@ -296,8 +278,7 @@ function screenClone(s) {
       ${retry ? `<div class="err">${t('hub.setup_clone_error',
         '<b>The previous import could not be completed.</b><br>{error}<br> The partial data is kept, not deleted, and the import safely restarts in an empty location.',
         {error: esc(c.error)})}</div>` : ''}
-      <div class="safe">${t('hub.setup_clone_keep_open',
-        'While importing, keep your internet connection and do not close the browser or the terminal.')}</div>
+      <div class="safe">${t('common.keep_terminal_open', 'Keep this window open: closing it stops the tools.')}</div>
       ${lastLog}
       <details><summary>${t('hub.setup_change_dest_summary', 'Change the save location')}</summary><div class="in">
         <input id="dest" value="${esc(dest)}">
@@ -313,9 +294,10 @@ function screenDone() {
       <p class="lead">${t('hub.setup_done_lead', 'Well done. Your working copy and the building data import are complete.')}</p>
       <div class="safe">${t('hub.setup_done_next',
         '<b>On the next screen, first press "Launch" on the Attribute Editor.</b><br> The editing screen opens in a new tab. The Texture Editor is for fixing facade photos of buildings.')}</div>
-      <div class="safe">${t('hub.setup_done_reuse',
-        '<b>From next time, just open the same launcher file</b> to use the tools without this preparation.')}</div>
-      <div class="safe" id="shortcutBox"><button type="button" onclick="makeShortcut()">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</button>
+      <div class="safe" id="shortcutBox">${t('hub.setup_done_reuse',
+        '<b>Next time</b>, start the tools with a desktop icon, or with this command in Terminal (PowerShell on Windows); no preparation is needed again:')}
+        <code>${esc(START)}</code>
+        <p><button type="button" onclick="makeShortcut()">${t('hub.shortcut_make', 'Create a desktop icon for this city')}</button></p>
         <div id="shortcutResult"></div></div>`,
     nav: `<button onclick="location.href='/?welcome=1'">${t('hub.setup_btn_start', 'Start')}</button>`,
   };
@@ -332,12 +314,19 @@ function render() {
   // Account mode: to the dashboard once the account has its copy — or when GitHub could not
   // be asked (offline): the dashboard works offline, the copy is checked again at send time.
   if (MODE === 'account' && st && st.login && (st.fork || st.forkChecked === false)) { location.replace('/'); return; }
-  renderProg(i);
   const legacyPending = st && st.legacy && !st.legacyReviewed && !st.login && !st.waiting;
-  const v = (legacyPending ? screenLegacy : [screenConnect, screenFork, screenClone, screenDone][i])(st || {});
-  $('screen').innerHTML = v.html + certificateReportPanel(st) + (pollError
-    ? `<div class="err">${esc(pollError)}</div>` : '');
-  $('nav').innerHTML = v.nav;
+  const v = (MODE === 'setup' && !UPSTREAM) ? screenNoCity()
+    : (legacyPending ? screenLegacy : [screenConnect, screenFork, screenClone, screenDone][i])(st || {});
+  show({html: v.html + certificateReportPanel(st), nav: v.nav}, progress(i));
+}
+
+// The screen is written only where it changed: the 2-second poll used to replace every button,
+// so a click that fell between press and release was lost (#58)
+const shown = {};
+function show(v, prog) {
+  for (const [id, html] of [['prog', prog], ['screen', v.html], ['nav', v.nav]]) {
+    if (shown[id] !== html) { $(id).innerHTML = html; shown[id] = html; }
+  }
 }
 
 function certificateReportPanel(s) {
@@ -359,34 +348,33 @@ async function copyCertificateReport(button) {
 }
 
 // ---- Actions ----
+// A button's call to the hub: held (busy) while it runs; the answer's state is shown, its error
+// in `field`. No answer at all means the hub stopped, which the stop banner (common.js) says.
+async function act(path, body, field = 'error') {
+  busy = true; render();
+  let r = null;
+  try {
+    r = await api(path, body);
+    st = {...(r.status || st), [field]: null};
+  } catch (e) {
+    if (e.data) st = {...(e.data.status || st), [field]: e.message,
+      ...('certificateReport' in e.data ? {certificateReport: e.data.certificateReport} : {})};
+  }
+  busy = false; render();
+  return r;
+}
 async function doConnect() {
-  const b = $('go'); if (b) { b.disabled = true;
-    b.innerHTML = '<span class="spin"></span>' + t('hub.setup_preparing', 'Preparing…'); }
-  const r = await api('/api/auth/start', {});
-  if (r.ok === false) { st = {...st, error: r.error, certificateReport: r.certificateReport || null}; render(); return; }
-  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, error: null, certificateReport: null};
+  const r = await act('/api/auth/start', {});
+  if (!r) return;
+  st = {...st, waiting: true, userCode: r.userCode, verifyUrl: r.verifyUrl, certificateReport: null};
   render();
   await poll();
 }
-async function choose(path, body) {
-  busy = true; render();
-  try {
-    const r = await api(path, body || {});
-    busy = false;
-    st = {...(r.status || st), error: r.ok === false ? r.error : null};
-    render();
-  } catch (e) {
-    busy = false;
-    st = {...st, error: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')};
-    render();
-  }
-}
-async function doUse(login) { await choose('/api/auth/use', {login}); }
-async function doMachine() { await choose('/api/auth/machine', {}); }
+async function doUse(login) { await act('/api/auth/use', {login}); }
+async function doMachine() { await act('/api/auth/machine', {}); }
 async function doLegacy() {
   const cb = $('legacyRemove');
-  await choose('/api/auth/legacy', {remove: !!(cb && cb.checked)});
+  await act('/api/auth/legacy', {remove: !!(cb && cb.checked)});
 }
 function copyCode() {
   const t = $('uc'); if (!t) return;
@@ -401,41 +389,15 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') returnTabTitle = false;
   render();
 });
-async function doFork() {
-  busy = true; render();
-  try {
-    const r = await api('/api/setup/fork', {});
-    busy = false;
-    st = {...(r.status || st), forkError: r.ok === false ? r.error : null};
-    render();
-  } catch (e) {
-    busy = false;
-    st = {...st, forkError: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')};
-    render();
-  }
-}
-async function makeShortcut() {
-  const out = $('shortcutResult'); if (out) out.textContent = '…';
-  try {
-    const r = await api('/api/shortcut', {});
-    if (out) out.textContent = r.ok === false ? r.error
-      : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', {name: r.name});
-  } catch (e) {
-    if (out) out.textContent = t('hub.shortcut_failed', 'Could not create the icon: {reason}', {reason: String(e)});
-  }
-}
+async function doFork() { await act('/api/setup/fork', {}, 'forkError'); }
 
 async function doClone() {
   const el = $('dest'); if (el && el.value.trim()) dest = el.value.trim();
   try {
-    const r = await api('/api/setup/clone', {dest});
-    if (r.ok === false) { st = {...st, clone: {...(st.clone || {}), error: r.error}}; render(); return; }
+    await api('/api/setup/clone', {dest});
     await poll();
   } catch (e) {
-    st = {...st, clone: {...(st.clone || {}), error: t('hub.setup_conn_lost',
-      'The connection to the tool was lost. Open the same launcher file again.')}};
-    render();
+    if (e.data) { st = {...st, clone: {...(st.clone || {}), error: e.message}}; render(); }
   }
 }
 async function recheck() { await poll(); }
@@ -445,25 +407,15 @@ let timer = null;
 async function poll() {
   try {
     const s = await api('/api/setup/status');
-    if (s.ok === false) throw new Error(s.error || t('hub.setup_status_unknown', 'Could not check the status'));
     const before = stepOf(st);
     st = {...s, forkError: st && st.forkError};
-    pollError = '';
     if (stepOf(st) !== before) busy = false;
     render();
     if (st.active && MODE !== 'account') { clearTimeout(timer); timer = null; return; }
   } catch (e) {
-    pollError = t('hub.setup_poll_error',
-      'Checking the status is temporarily delayed. Check your internet connection and wait on this screen.');
-    if (st) {
-      render();
-    } else {
-      $('prog').innerHTML = '';
-      $('screen').innerHTML = `<h1>${t('hub.setup_checking_title', 'Checking the connection status')}</h1>
-        <p class="lead">${t('hub.setup_checking_lead', 'Please wait without closing the screen. It checks again automatically.')}</p>
-        <div class="err">${esc(pollError)}</div>`;
-      $('nav').innerHTML = `<span class="hint"><span class="spin"></span>${t('hub.setup_rechecking', 'Checking again')}</span>`;
-    }
+    // no answer from the hub: the stop banner says so; the screen keeps what it showed
+    if (!st) show({html: `<h1>${t('hub.setup_checking_title', 'Checking the connection status')}</h1>`,
+      nav: `<span class="hint"><span class="spin"></span>${t('hub.setup_rechecking', 'Checking again')}</span>`}, '');
   }
   clearTimeout(timer);
   timer = setTimeout(poll, 2000);
