@@ -1,4 +1,9 @@
 {
   "about": "The city repositories the contract tests read in CI (tests.yml, ci/city_checkouts.sh), each at the commit tools was last tested against. A change on both sides moves these refs in its own tools PR, after the city PRs are merged. Data folders are not checked out.",
-  "repositories": {}
+  "repositories": {
+    "city-template": {"repository": "4dcitygml/city-template", "ref": "46bb6c157a103cb93c6e4030f6de786b8f8ee4ed"},
+    "sample-tokyo-station": {"repository": "4dcitygml/sample-tokyo-station", "ref": "d56149a8330e57eb751b41bc07034bc233915f02"},
+    "sample-munich-station": {"repository": "4dcitygml/sample-munich-station", "ref": "622ba7ccd4b59829dd6bba60c0d522785bd32f80"},
+    "sample-newyork-station": {"repository": "4dcitygml/sample-newyork-station", "ref": "35311fee38befeae1aa954f0f748c4498b6a82ea"}
+  }
 }
