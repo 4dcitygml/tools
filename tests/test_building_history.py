@@ -54,6 +54,30 @@ class BuildingHistoryTest(unittest.TestCase):
             self.assertEqual([e["event"] for e in other["events"]], ["first appearance", "changed"])
             self.assertTrue((out / "index.html").is_file() and (out / "index.json").is_file())
 
+    def test_one_engine_follows_moves_and_names_the_kind(self) -> None:
+        # D-b5: the log was limited to the files at rev, so a building's commits before a layout move
+        # were lost; D-b6: Change-Type was not lower-cased as the gate does, and a manifest-backed
+        # commit without one read as "proposal"; U10: history() and the index were two engines
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            repo = GitRepo(t)
+            repo.commit_text(_gml_members([("13101-bldg-1", "13101", 3)]), "Baseline\n\nChange-Type: source-baseline\n")
+            repo.commit_text(_gml_members([("13101-bldg-1", "13101", 4)]), "Storeys\n\nBuilding: 13101-bldg-1\n")
+            m = json.loads(json.dumps(EXAMPLE))
+            (t / "provenance/source-update").mkdir(parents=True)
+            data = (json.dumps(m) + "\n").encode(); (t / "provenance/source-update/x.json").write_bytes(data)
+            repo.run("add", "provenance")
+            repo.commit_text(_gml_members([("13101-bldg-1", "13101", 6)]),
+                             "Update\n\nBuilding: 13101-bldg-1\n"
+                             f"Provenance-Manifest: {manifest_ref('provenance/source-update/x.json', data)}\n")
+            (t / "mesh").mkdir()
+            repo.run("mv", "tile.gml", "mesh/tile.gml")
+            repo.run("commit", "-q", "-m", "Move to the mesh folder\n\nChange-Type: Layout\n")
+            rows = history(t, "13101-bldg-1")
+        self.assertEqual([(r["kind"], r["event"]) for r in rows],
+                         [("source-baseline", "first appearance"), ("proposal", "changed"), (m["kind"], "changed"),
+                          ("layout", "moved (layout)")])
+
 
 def _citygml10(storeys: dict) -> str:
     """A CityGML 1.0 tile (default-namespace members, no uro:): buildings named by gml:id with a BIN."""

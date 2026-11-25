@@ -45,7 +45,7 @@ class TestExportedStateAndErrors(unittest.TestCase):
         self._home.__enter__()
         self.acc = accounts
         self._patches = [
-            patch.object(hub, "oauth_client_id", lambda: "test-client-id"),
+            patch.object(hub.session, "oauth_client_id", lambda: "test-client-id"),
             patch.object(runtime, "github_user_status",
                          lambda token: (200, {"login": "tester", "id": 1}) if token else (0, None)),
             patch.object(runtime, "post_form", lambda url, f, timeout=15: {"error": "expired_token"}),
@@ -179,7 +179,9 @@ class TestTokenFilesAreOwnerOnly(unittest.TestCase):
             accounts.save_account("tester", SENTINEL, 1)
             for path in (accounts.account_path("tester"), accounts.credentials_path("tester")):
                 self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-                self.assertIn(SENTINEL, path.read_text(encoding="utf-8"))   # the only two places
+            # V2: the token's one copy is the credential store; the account file has none
+            self.assertIn(SENTINEL, accounts.credentials_path("tester").read_text(encoding="utf-8"))
+            self.assertNotIn(SENTINEL, accounts.account_path("tester").read_text(encoding="utf-8"))
             self.assertEqual(stat.S_IMODE(os.stat(runtime.auth_dir()).st_mode), 0o700)
 
 

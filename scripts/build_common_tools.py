@@ -7,7 +7,6 @@ Release mode requires a clean Git checkout at the requested tag. Local mode
 labels the archive as an unpublished preview and never invents a commit SHA.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -18,24 +17,27 @@ import zipfile
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts import repo_git  # noqa: E402
+import dialects  # noqa: E402
+from scripts import release_tags, repo_git  # noqa: E402
+from scripts.provenance_manifest import sha256_hex  # noqa: E402
 
 
 def git(root, *args):
     return repo_git.git(root, *args, strip=True)
 
-DIRECTORIES = ('scripts', 'schemas', 'semantics', 'ci', 'docs', 'tools')
-FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'requirements.txt')
+DIRECTORIES = ('scripts', 'schemas', 'dialects', 'ci', 'docs', 'tools')
+FILES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'requirements.txt', 'requirements-ci.txt', '.python-version')
 SKIP = {'__pycache__', 'dist', 'build', 'node_modules', 'venv'}
-REQUIRED = {'scripts/lod0_semantic_manifest.py', 'scripts/commit_building_scope.py',
+REQUIRED = {'scripts/commit_building_scope.py',
             'scripts/fetch_materials.py', 'schemas/master.xsd',
             'schemas/provenance/bulk-manifest.schema.json', 'ci/pr_analysis_main.sh',
-            'docs/lod0-semantic-correction.md', *FILES}
+            'docs/lod0-semantic-correction.md', *FILES,
+            # every dialect pack's bulk reproduction tools (the CI runs them by path)
+            *(f'dialects/{pack.name}/{tool}.py' for pack in dialects.packs() for _kind, tool, _check in pack.bulk_kinds)}
 PREFIX = 'citygml-tools'
 
 
-def digest(raw):
-    return hashlib.sha256(raw).hexdigest()
+digest = sha256_hex   # the manifests' one digest (W3)
 
 
 def source_files(root):
@@ -69,7 +71,7 @@ def build(root, output, tag=None):
     if root == output or root in output.parents:
         raise ValueError('Archive output must be outside the source checkout')
     if tag:
-        if not re.fullmatch(r'tools-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag):
+        if not release_tags.version_key(tag, 'tools'):
             raise ValueError('Expected an existing tools-v<semver> release tag')
         commit = git(root, 'rev-parse', 'HEAD')
         if git(root, 'rev-parse', f'refs/tags/{tag}^{{commit}}') != commit or git(root, 'status', '--porcelain'):
@@ -111,7 +113,7 @@ def verify(path):
             raise ValueError('Unsupported distribution manifest')
         if manifest['mode'] == 'local-preview' and (manifest['release_tag'] is not None or manifest['source_commit'] is not None):
             raise ValueError('Local preview cannot claim a release identity')
-        if manifest['mode'] == 'release' and (not re.fullmatch(r'[0-9a-f]{40}', manifest['source_commit'] or '') or not re.fullmatch(r'(?:tools|hub)-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', manifest['release_tag'] or '')):
+        if manifest['mode'] == 'release' and (not re.fullmatch(r'[0-9a-f]{40}', manifest['source_commit'] or '') or not release_tags.parse(manifest['release_tag'])):
             raise ValueError('Missing release identity')
         expected = {f'{PREFIX}/{name}' for name in manifest['files']} | {PREFIX + '/distribution.json'}
         if set(names) != expected or not REQUIRED <= manifest['files'].keys():

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""install/citygml.sh: the one-line installer / per-user launcher (macOS).
+"""install/release/citygml.sh: the installer / per-user launcher (macOS), and install/citygml.sh,
+the one-line command's bootstrap that fetches it from the latest hub release.
 
 Runs the real script with the test hooks (no network): a fake releases payload and
 a local asset stand in for the GitHub API and the download; CITYGML_NO_EXEC prints
@@ -19,7 +20,8 @@ import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "install" / "citygml.sh"
+SCRIPT = REPO_ROOT / "install" / "release" / "citygml.sh"
+BOOTSTRAP = REPO_ROOT / "install" / "citygml.sh"
 
 
 def make_asset(path: Path, marker: str = "hub") -> str:
@@ -29,15 +31,12 @@ def make_asset(path: Path, marker: str = "hub") -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def releases_json(path: Path, entries):
-    """entries: [(tag, sha, prerelease)]"""
-    rels = []
-    for tag, sha, pre in entries:
-        ver = tag.removeprefix("hub-")
-        rels.append({"tag_name": tag, "draft": False, "prerelease": pre, "html_url": f"https://example/{tag}",
-                     "assets": [{"name": f"citygml-hub-{ver}-macos.zip", "browser_download_url": f"https://example/{ver}.zip",
-                                 "digest": f"sha256:{sha}"}]})
-    path.write_text(json.dumps(rels), encoding="utf-8")
+def latest_json(path: Path, tag: str, sha: str, **extra):
+    """GitHub's latest release (GET /releases/latest): one object."""
+    ver = tag.removeprefix("hub-")
+    path.write_text(json.dumps({"tag_name": tag, "draft": False, "prerelease": False, "html_url": f"https://example/{tag}",
+                                "assets": [{"name": f"citygml-hub-{ver}-macos.zip", "browser_download_url": f"https://example/{ver}.zip",
+                                            "digest": f"sha256:{sha}"}], **extra}), encoding="utf-8")
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS launcher")
@@ -49,7 +48,7 @@ class TestLauncher(unittest.TestCase):
         self.asset = self.tmp / "asset.zip"
         self.sha = make_asset(self.asset)
         self.rel = self.tmp / "releases.json"
-        releases_json(self.rel, [("hub-v1.2.0", self.sha, False), ("hub-v1.10.0", "00", True), ("hub-v1.3.0", self.sha, False)])
+        latest_json(self.rel, "hub-v1.3.0", self.sha)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -75,16 +74,16 @@ class TestLauncher(unittest.TestCase):
         (folder / "hub.py").write_text(f"print('{marker}')")
         return folder
 
-    def test_first_run_installs_newest_published_release_and_hands_over(self):
+    def test_first_run_installs_the_latest_release_and_hands_over(self):
         r = self.run_script("4dcitygml/sample-munich-station")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue((self.tools / "citygml-hub" / "hub-v1.3.0" / "program" / "hub.py").is_file())   # 1.10.0 is a prerelease
+        self.assertTrue((self.tools / "citygml-hub" / "hub-v1.3.0" / "program" / "hub.py").is_file())
         self.assertIn("EXEC hub-v1.3.0 4dcitygml/sample-munich-station", r.stdout)
         self.assertTrue((self.tools / "citygml.sh").is_file())                                        # self-copied for the icon
         self.assertEqual(oct((self.tools / "citygml.sh").stat().st_mode & 0o777), "0o755")
 
     def test_digest_mismatch_installs_nothing(self):
-        releases_json(self.rel, [("hub-v1.3.0", "deadbeef", False)])
+        latest_json(self.rel, "hub-v1.3.0", "deadbeef")
         r = self.run_script("o/r")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("SHA-256", r.stderr)
@@ -140,7 +139,7 @@ class TestLauncher(unittest.TestCase):
 
     def test_one_line_command_run_again_installs_the_newer_release(self):
         self._installed("hub-v1.2.0", "cur")
-        releases_json(self.rel, [("hub-v1.2.0", self.sha, False), ("hub-v1.4.0", self.sha, False)])
+        latest_json(self.rel, "hub-v1.4.0", self.sha)
         r = self.run_one_line("o/r")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("EXEC hub-v1.4.0 o/r", r.stdout)
@@ -172,7 +171,7 @@ class TestLauncher(unittest.TestCase):
         # the desktop icon runs the copy in the tools folder: what is installed starts, the hub
         # announces newer versions itself
         self._installed("hub-v1.2.0", "cur")
-        releases_json(self.rel, [("hub-v1.2.0", self.sha, False), ("hub-v1.4.0", self.sha, False)])
+        latest_json(self.rel, "hub-v1.4.0", self.sha)
         r = self.run_script("o/r")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("EXEC hub-v1.2.0 o/r", r.stdout)
@@ -182,20 +181,49 @@ class TestLauncher(unittest.TestCase):
         # Installed launchers (copies of this script) keep working: with nothing set, the
         # script names the production repository exactly as before; CITYGML_TOOLS_REPO
         # redirects both the self-update URL and the releases API (development copies).
-        defs = 'eval "$(sed -n "/^INSTALL_TAG=/,/^RELEASES_API=/p" "$0")"; echo "$SELF_URL"; echo "$RELEASES_API"'
+        defs = 'eval "$(sed -n "/^TOOLS_REPO=/,/^RELEASES_API=/p" "$0")"; echo "$SELF_URL"; echo "$RELEASES_API"'
         clean = {k: v for k, v in os.environ.items()
-                 if k not in ("CITYGML_TOOLS_REPO", "CITYGML_RELEASES_API", "CITYGML_INSTALL_TAG")}
+                 if k not in ("CITYGML_TOOLS_REPO", "CITYGML_RELEASES_API", "CITYGML_INSTALLER_URL")}
         out = subprocess.run(["bash", "-c", defs, str(SCRIPT)], capture_output=True, text=True, env=clean).stdout.split()
-        self.assertEqual(out, ["https://raw.githubusercontent.com/4dcitygml/tools/install-v1/install/citygml.sh",
-                               "https://api.github.com/repos/4dcitygml/tools/releases?per_page=30"])
+        self.assertEqual(out, ["https://github.com/4dcitygml/tools/releases/latest/download/citygml.sh",
+                               "https://api.github.com/repos/4dcitygml/tools/releases/latest"])
         out = subprocess.run(["bash", "-c", defs, str(SCRIPT)], capture_output=True, text=True,
                              env=dict(clean, CITYGML_TOOLS_REPO="o/r")).stdout.split()
-        self.assertEqual(out, ["https://raw.githubusercontent.com/o/r/install-v1/install/citygml.sh",
-                               "https://api.github.com/repos/o/r/releases?per_page=30"])
+        self.assertEqual(out, ["https://github.com/o/r/releases/latest/download/citygml.sh",
+                               "https://api.github.com/repos/o/r/releases/latest"])
         ps1 = (SCRIPT.parent / "citygml.ps1").read_text(encoding="utf-8")
         self.assertIn('$toolsRepo = if ($env:CITYGML_TOOLS_REPO) { $env:CITYGML_TOOLS_REPO } else { "4dcitygml/tools" }', ps1)
-        self.assertIn('raw.githubusercontent.com/$toolsRepo/$installTag/install/citygml.ps1', ps1)
-        self.assertIn('api.github.com/repos/$toolsRepo/releases?per_page=30', ps1)
+        self.assertIn('github.com/$toolsRepo/releases/latest/download/citygml.ps1', ps1)
+        self.assertIn('api.github.com/repos/$toolsRepo/releases/latest', ps1)
+
+    def test_a_latest_release_that_is_no_hub_release_is_refused(self):
+        for tag, extra in (("tools-v1.3.0", {}), ("hub-v1.3.0", {"draft": True})):
+            latest_json(self.rel, tag, self.sha, **extra)
+            r = self.run_script("o/r")
+            self.assertNotEqual(r.returncode, 0, tag)
+            self.assertNotIn("EXEC", r.stdout)
+
+    # ---- the bootstrap at install-v1 (W8): it fetches the latest release's installer and runs it ----
+
+    def run_bootstrap(self, *args, **env_over):
+        env = dict(os.environ, CITYGML_TOOLS_DIR=str(self.tools), CITYGML_RELEASES_JSON=str(self.rel),
+                   CITYGML_ASSET_FILE=str(self.asset), CITYGML_NO_EXEC="1", LANG="en_US.UTF-8",
+                   CITYGML_INSTALLER_URL=SCRIPT.as_uri())
+        env.update(env_over)
+        return subprocess.run(["bash", "-c", BOOTSTRAP.read_text(encoding="utf-8"), "--", *args],
+                              capture_output=True, text=True, env=env)
+
+    def test_the_bootstrap_runs_the_installer_as_the_one_line_command(self):
+        self._installed("hub-v1.2.0", "cur")
+        r = self.run_bootstrap("o/r")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Updated the editing tools: hub-v1.3.0 installed next to hub-v1.2.0", r.stdout)   # it updates
+        self.assertIn("EXEC hub-v1.3.0 o/r", r.stdout)
+
+    def test_the_bootstrap_names_a_failed_download(self):
+        r = self.run_bootstrap("o/r", CITYGML_INSTALLER_URL=(self.tmp / "missing.sh").as_uri())
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Could not download the installer", r.stderr)
 
     def test_default_city_follows_the_language(self):
         for lang, city in (("ja_JP.UTF-8", "sample-tokyo-station"), ("de_DE.UTF-8", "sample-munich-station"), ("en_US.UTF-8", "sample-newyork-station")):
@@ -216,11 +244,10 @@ class TestLauncher(unittest.TestCase):
         self.assertEqual(r.stdout.strip().splitlines()[-1], "hub-v1.3.0")
 
     def test_missing_digest_is_refused(self):
-        rels = json.loads(self.rel.read_text(encoding="utf-8"))
-        for r in rels:
-            for a in r["assets"]:
-                a.pop("digest", None)
-        self.rel.write_text(json.dumps(rels), encoding="utf-8")
+        rel = json.loads(self.rel.read_text(encoding="utf-8"))
+        for a in rel["assets"]:
+            a.pop("digest", None)
+        self.rel.write_text(json.dumps(rel), encoding="utf-8")
         r = self.run_script("o/r")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("digest", r.stderr)
@@ -232,7 +259,8 @@ class TestLauncher(unittest.TestCase):
         self.assertIn("owner/repo", r.stderr)
 
     def test_shell_syntax(self):
-        self.assertEqual(subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True).returncode, 0)
+        for script in (SCRIPT, BOOTSTRAP):
+            self.assertEqual(subprocess.run(["bash", "-n", str(script)], capture_output=True).returncode, 0, script)
 
 
 if __name__ == "__main__":

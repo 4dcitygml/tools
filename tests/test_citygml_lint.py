@@ -15,7 +15,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts import citygml_lint  # noqa: E402
 from scripts.citygml_lint import (  # noqa: E402
-    _changed_ids,
     check_building,
     geom_index_from_map,
     render_markdown,
@@ -72,6 +71,18 @@ class TestStructural(unittest.TestCase):
         errs, _ = codes(lint_bytes(wrap(bldg("b", "0 0 0 0 1 0 1 1 0 1 0 0"))))
         self.assertIn("ring_not_closed", errs)
 
+    def test_a_ring_of_gml_pos_is_checked_too(self):
+        # D-c7: ring_points read only gml:posList; a ring written as a gml:pos sequence was not checked
+        def pos_ring(points):
+            pos = "".join(f"<gml:pos>{p}</gml:pos>" for p in points)
+            return (f'<bldg:Building gml:id="b"><bldg:lod0FootPrint><gml:MultiSurface><gml:surfaceMember>'
+                    f"<gml:Polygon><gml:exterior><gml:LinearRing>{pos}</gml:LinearRing></gml:exterior></gml:Polygon>"
+                    f"</gml:surfaceMember></gml:MultiSurface></bldg:lod0FootPrint></bldg:Building>")
+        open_ring = ["0 0 0", "0 1 0", "1 1 0", "1 0 0"]
+        self.assertIn("ring_not_closed", codes(lint_bytes(wrap(pos_ring(open_ring))))[0])
+        closed = lint_bytes(wrap(pos_ring(open_ring + ["0 0 0"])))
+        self.assertEqual(closed["n_errors"], 0, closed)
+
     def test_coord_count(self):
         errs, _ = codes(lint_bytes(wrap(bldg("b", "0 0 0 0 1 0 1 1"))))
         self.assertIn("coord_count", errs)
@@ -112,7 +123,8 @@ class TestEngine(unittest.TestCase):
     def test_changed_ids(self):
         old = {"a": ({}, "h1"), "b": ({"x": "1"}, "h2")}
         new = {"a": ({}, "h1"), "b": ({"x": "2"}, "h2"), "c": ({}, "h3")}
-        self.assertEqual(_changed_ids(old, new), {"b", "c"})
+        from scripts.diff_citygml import changed_ids
+        self.assertEqual(changed_ids(old, new), {"b", "c"})
 
     def test_markdown_marker(self):
         res = lint_bytes(wrap(bldg("b", "0 0 0 0 1 0 1 1 0 1 0 0")))

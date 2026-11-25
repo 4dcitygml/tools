@@ -66,7 +66,8 @@ class TestCloneLock(unittest.TestCase):
         attr_src = (REPO_ROOT / "tools/attr_editor/app.py").read_text(encoding="utf-8")
         self.assertNotIn("_git_lock", attr_src)
         send = attr_src[attr_src.index("    def send_proposal("):attr_src.index("    def create_pr(")]
-        self.assertIn("with git_sync.clone_lock(self.root):", send)
+        # the lock first, then the one-account pin (D-3c6, B04)
+        self.assertIn("with git_sync.clone_lock(self.root), self._one_account():", send)
         sync = (REPO_ROOT / "tools/git_sync.py").read_text(encoding="utf-8")
         body = sync[sync.index("def sync_main("):]
         self.assertIn("with clone_lock(root):", body[:body.index('run("merge", "--ff-only"')])

@@ -4,20 +4,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title data-i18n="hub.settings_doc_title">Settings — Building Data Editing Tools</title>
 <style>
-  body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; margin: 0; background: #f6f8fa; color: #24292f; }
+  html, body { font-size: 16px; }   /* a reading page: the browser's size, not the tools' 13px */
   main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
   h1 { font-size: 20px; margin: 0 0 6px; }
-  h2 { font-size: 15px; margin: 22px 0 8px; border-bottom: 1px solid #d0d7de; padding-bottom: 4px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
   table.kv { border-collapse: collapse; width: 100%; }
   .kv th { text-align: left; padding: 6px 12px 6px 0; font-weight: 600; white-space: nowrap; vertical-align: top; width: 34%; }
   .kv td { padding: 6px 0; word-break: break-all; }
-  code { background: #eaeef2; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-  button { padding: 6px 12px; border-radius: 6px; border: 1px solid #d0d7de; background: #fff; cursor: pointer; font-size: 13px; margin: 2px 4px 2px 0; }
-  button.danger { color: #cf222e; border-color: #cf222e; }
-  .muted { color: #57606a; font-size: 12px; }
-  .note { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 10px 14px; line-height: 1.7; font-size: 13px; }
-  a { color: #0969da; }
-  #msg { margin: 8px 0; color: #1a7f37; }
+  button { margin: 2px 4px 2px 0; font-size: 13px; }
+  button.danger { border-color: var(--danger); }
+  .muted { font-size: 12px; }
+  .note { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; line-height: 1.7; font-size: 13px; }
+  #msg { margin: 8px 0; color: var(--ok); }
 </style></head><body><main>
 <p><a href="/" data-i18n="hub.settings_back">← Back to the dashboard</a></p>
 <h1 data-i18n="hub.settings_title">Settings</h1>
@@ -26,13 +24,6 @@
 <div id="body"></div>
 <script>
 'use strict';
-const $ = id => document.getElementById(id);
-const t = window.t || ((k, d, p) => { let s = d; if (p) for (const key in p) s = s.split('{' + key + '}').join(p[key]); return s; });
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? undefined : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-  return r.json();
-}
 function row(k, v) { return `<tr><th>${k}</th><td>${v}</td></tr>`; }
 async function load() {
   const s = await api('/api/settings');
@@ -85,20 +76,13 @@ async function disconnect() {
 }
 async function deleteAccount(login) {
   if (!confirm(t('hub.settings_delete_account_confirm', 'Delete the saved connection of @{login} from this computer?', {login}))) return;
-  const r = await api('/api/accounts/delete', {login});
-  $('msg').textContent = r.ok === false ? (r.error || '') : t('hub.settings_deleted', 'Deleted.');
+  try { await api('/api/accounts/delete', {login}); $('msg').textContent = t('hub.settings_deleted', 'Deleted.'); }
+  catch (e) { $('msg').textContent = e.message; }
   load();
 }
 async function forgetCity() {
   if (!confirm(t('hub.settings_forget_confirm', 'Forget this city on this computer? The data folder is kept.'))) return;
   await api('/api/settings/forget', {}); location.href = '/';
-}
-async function makeShortcut() {
-  const out = $('shortcutResult'); out.textContent = '…';
-  try {
-    const r = await api('/api/shortcut', {});
-    out.textContent = r.ok === false ? r.error : t('hub.shortcut_done', 'Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.', {name: r.name});
-  } catch (e) { out.textContent = t('hub.shortcut_failed', 'Could not create the icon: {reason}', {reason: String(e)}); }
 }
 load();
 </script></main></body></html>

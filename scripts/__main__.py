@@ -6,10 +6,12 @@
     python3 -m scripts --list                 # every tool, grouped by purpose
     python3 -m scripts <tool> [arguments]     # the same as python3 scripts/<tool>.py [arguments]
     python3 -m scripts --markdown             # the operator-tools page (docs/operator-tools.md)
+    python3 -m scripts --manifest-tool KIND   # the tool that reproduces a bulk manifest (the city's)
 
 Run it from the root of a tools checkout. Every scripts/<tool>.py path keeps working: city CI,
-the Exchange Contract (Part C) and the hub bundle call them by path. A tool's line in the
-list is the first sentence of its docstring.
+the Exchange Contract (Part C) and the hub bundle call them by path. A dialect pack's tools live
+in its folder (dialects/<pack>/<tool>.py) and are listed and run here the same way. A tool's
+line in the list is the first sentence of its docstring.
 """
 from __future__ import annotations
 
@@ -19,37 +21,69 @@ import sys
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
+ROOT = SCRIPTS.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import dialects  # noqa: E402
 
 # Maintainer, 2026-09-30: every tool is kept; they are organized by purpose. A new runnable
 # module must be placed here (tests/test_operator_tools.py checks it).
 GROUPS: "dict[str, tuple[str, ...]]" = {
-    "Data preparation": (
-        "setup_city_data", "extract_area", "extract_municipality", "split_4th_mesh", "split_utm_tile",
-        "merge_to_3rd_mesh", "strip_lod2", "retone_textures", "gc_textures", "make_demo_change",
-        "analyze_yearly_citygml_mesh", "plan_yearly_citygml_transition",
+    "Data preparation": ( "extract_area", "extract_municipality", "split_utm_tile", "strip_lod2", "retone_textures", "gc_textures", "make_demo_change",
     ),
-    "Maintenance and quality": (
-        "source_update_manifest", "carry_forward_manifest", "identity_manifest", "lifecycle_manifest",
-        "lod0_semantic_manifest", "codelist_crosswalk", "carried_codespace_report", "semantic_registry",
-        "plateau_codelists", "data_stats", "building_history", "fetch_materials",
+    "Maintenance and quality": ( "identity_manifest", "lifecycle_manifest", "data_stats", "building_history", "fetch_materials", "city_declaration",
     ),
     "Conversion and development": (
-        "convert_citygml2_to3_iur4", "generate_uvmap", "diff_citygml", "preview_local",
-        "build_bundle", "verify_bundle", "build_common_tools", "release_guard",
+        "export_citygml3", "generate_uvmap", "diff_citygml", "preview_local",
+        "build_bundle", "verify_bundle", "build_common_tools", "release_guard", "release_tags",
     ),
     "CI gates (run by the city workflows)": (
         "pr_classification", "pr_reason", "commit_building_scope", "repo_scope", "validate_citygml",
         "reconstruct_minimal", "reviewability_lint", "texture_check", "citygml_lint", "plausibility_lint",
         "topology_scope", "val3dity_gate", "extract_building_preview", "ci_change_summary",
-        "suggest_commit", "pr_comment_metadata", "gate_result", "inspection_summary",
+        "suggest_commit", "pr_comment_metadata", "gate_result", "md_report", "inspection_summary", "pr_event",
     ),
 }
+
+
+IDENTITY_MANIFEST_TOOL = "identity_manifest"   # the identity kinds' manifests work for every city (S11)
+
+
+def groups() -> "dict[str, list[str]]":
+    """Every tool by group: the generic ones above, then each dialect pack's (Pack.tools)."""
+    out = {group: list(tools) for group, tools in GROUPS.items()}
+    for pack in dialects.packs():
+        for group, tool in pack.tools:
+            out.setdefault(group, []).append(tool)
+    return out
+
+
+def module_of(tool: str) -> "str | None":
+    """The module that runs a tool: scripts.<tool>, or dialects.<pack>.<tool> for a pack's."""
+    if any(tool in tools for tools in GROUPS.values()):
+        return f"scripts.{tool}"
+    return next((f"dialects.{p.name}.{tool}" for p in dialects.packs() if any(t == tool for _g, t in p.tools)), None)
+
+
+def path_of(tool: str) -> Path:
+    return ROOT / (module_of(tool) or f"scripts.{tool}").replace(".", "/")
+
+
+def manifest_tool(kind: str) -> "str | None":
+    """The tool that reproduces a bulk manifest of this kind, for the city in the working directory
+    (its declared pack's bulk_kinds; the identity kinds are generic)."""
+    from scripts import building_identity, city_declaration
+    if kind in building_identity.IDENTITY_KINDS:
+        return IDENTITY_MANIFEST_TOOL
+    pack = city_declaration.read(Path.cwd()).pack
+    return next((tool for k, tool, _check in pack.bulk_kinds if k == kind), None)
 
 
 def summary(tool: str) -> str:
     """The first sentence of the tool's docstring (its first paragraph may wrap over several
     lines), read without importing the tool."""
-    tree = ast.parse((SCRIPTS / f"{tool}.py").read_text(encoding="utf-8"))
+    tree = ast.parse(path_of(tool).with_suffix(".py").read_text(encoding="utf-8"))
     paragraph = " ".join((ast.get_docstring(tree) or "").strip().split("\n\n")[0].split())
     end = paragraph.find(". ")
     return paragraph[:end + 1] if end >= 0 else paragraph
@@ -57,7 +91,7 @@ def summary(tool: str) -> str:
 
 def listing() -> str:
     lines = []
-    for group, tools in GROUPS.items():
+    for group, tools in groups().items():
         lines.append(group)
         width = max(len(t) for t in tools)
         lines += [f"  {t.ljust(width)}  {summary(t)}" for t in tools]
@@ -77,7 +111,7 @@ def markdown() -> str:
         "or, as before, `python3 scripts/<tool>.py [arguments]`; `--help` shows its arguments.",
         "",
     ]
-    for group, tools in GROUPS.items():
+    for group, tools in groups().items():
         lines += [f"## {group}", "", "| Tool | What it does |", "|---|---|"]
         lines += [f"| `{t}` | {summary(t).replace('|', '/')} |" for t in tools]
         lines.append("")
@@ -94,12 +128,20 @@ def main(argv: "list[str]") -> int:
     if argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
+    if argv[0] == "--manifest-tool":   # the reproduction tool of a manifest kind, as a path (the CI)
+        tool = manifest_tool(argv[1]) if len(argv) > 1 else None
+        if tool is None:
+            print(f"No reproduction tool for manifest kind {argv[1:] or ''}", file=sys.stderr)
+            return 2
+        print(path_of(tool).with_suffix(".py"))
+        return 0
     tool = argv[0]
-    if tool not in {t for tools in GROUPS.values() for t in tools}:
+    module = module_of(tool)
+    if module is None:
         print(f"Unknown tool: {tool}. `python3 -m scripts --list` shows every tool.", file=sys.stderr)
         return 2
-    sys.argv = [str(SCRIPTS / f"{tool}.py"), *argv[1:]]
-    runpy.run_module(f"scripts.{tool}", run_name="__main__", alter_sys=True)
+    sys.argv = [str(path_of(tool).with_suffix(".py")), *argv[1:]]
+    runpy.run_module(module, run_name="__main__", alter_sys=True)
     return 0
 
 

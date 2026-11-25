@@ -25,7 +25,7 @@ class TestDocumentedChannels(unittest.TestCase):
         for token in ("`CITYGML_UPSTREAM=<owner/repo>`", "`CITYGML_HUB_TAG=<hub-vX.Y.Z>`", "`--repo <path>`",
                       "`--port <n>`", "`--no-browser`", "`CITYGML_LANG`"):
             self.assertIn(token, DOC, token)
-        launcher = (REPO_ROOT / "install" / "citygml.sh").read_text(encoding="utf-8")
+        launcher = (REPO_ROOT / "install" / "release" / "citygml.sh").read_text(encoding="utf-8")
         for var in ("CITYGML_UPSTREAM", "CITYGML_HUB_TAG"):
             self.assertIn(var, launcher)
         source = (REPO_ROOT / "tools" / "runtime.py").read_text(encoding="utf-8")
@@ -47,26 +47,26 @@ class TestDocumentedChannels(unittest.TestCase):
             self.assertEqual(runtime.tools_dir(), home / "Documents" / "citygml-tools")
             self.assertEqual(runtime.hubs_dir(), home / "Documents" / "citygml-tools" / "citygml-hub")
         for name, marker in (("citygml.sh", "-macos.zip"), ("citygml.ps1", "-windows-full.zip")):
-            self.assertIn(marker, (REPO_ROOT / "install" / name).read_text(encoding="utf-8"), name)
+            self.assertIn(marker, (REPO_ROOT / "install" / "release" / name).read_text(encoding="utf-8"), name)
 
     def test_runtime_symbols_exist(self):
         for name in ("city_key", "clone_city", "requested_city", "remember_clone", "saved_clone_for", "free_port",
                      "running_hub_tag", "hubs_dir", "version_tuple", "launcher_path", "fetch_latest_hub",
                      "read_config", "update_config", "git_exe", "git_args", "github_api", "upstream_url",
-                     "min_hub", "below_min_hub", "require_min_hub"):
+                     "min_hub", "below_min_hub", "require_min_hub", "latest_hub_release", "releases_api", "UpdateManager"):
             self.assertTrue(callable(getattr(runtime, name, None)), name)
-        for name in ("running_hub_for", "latest_hub_release", "releases_api", "create_city_shortcut"):
+        for name in ("running_hub_for", "create_city_shortcut"):
             self.assertTrue(callable(getattr(hub, name, None)), name)
 
     def test_shared_modules_and_launchers_exist(self):
         for rel in ("tools/git_sync.py", "tools/shortcuts.py", "scripts/pr_classification.py", "scripts/pr_markers.py", "scripts/building_identity.py",
-                    "install/citygml.sh", "install/citygml.ps1"):
+                    "install/citygml.sh", "install/citygml.ps1", "install/release/citygml.sh", "install/release/citygml.ps1"):
             self.assertTrue((REPO_ROOT / rel).is_file(), rel)
             self.assertIn(Path(rel).name, DOC, rel)
 
     def test_launcher_uses_the_documented_channel(self):
-        sh = (REPO_ROOT / "install" / "citygml.sh").read_text(encoding="utf-8")
-        ps = (REPO_ROOT / "install" / "citygml.ps1").read_text(encoding="utf-8")
+        sh = (REPO_ROOT / "install" / "release" / "citygml.sh").read_text(encoding="utf-8")
+        ps = (REPO_ROOT / "install" / "release" / "citygml.ps1").read_text(encoding="utf-8")
         for var in ("CITYGML_UPSTREAM", "CITYGML_HUB_TAG"):
             self.assertIn(var, sh); self.assertIn(var, ps)
             self.assertIn(f"`{var}=", DOC)
@@ -105,7 +105,7 @@ class TestSharedSettingsFile(unittest.TestCase):
 
     def test_documented_example_round_trips(self):
         example = json.loads(DOC[DOC.index("```json") + 7:DOC.index("```", DOC.index("```json") + 7)]
-                             .replace("/…/", "/tmp/").replace("2026-09-06T…", "2026-09-06T00:00:00+0900"))
+                             .replace("/…/", "/tmp/").replace("2026-09-06T…", "2026-09-06T00:00:00+0000"))
         self.assertEqual(set(example), {"repo", "lang", "cities", "legacyReviewed"})
         self.assertEqual(set(next(iter(example["cities"].values()))), {"repo", "last_used", "login"})
 
@@ -121,7 +121,7 @@ class TestStatusShape(unittest.TestCase):
             (root / "4dcitygml.json").write_text(json.dumps({"repo": "o/r", "data_dirs": ["d"]}))
             (root / "d").mkdir(); (root / "d" / "a.gml").write_text("<x/>")
             with patch.dict(os.environ, {"CITYGML_HUB_TAG": "hub-v1.2.0"}):
-                status = hub.Hub(root).status()
+                status = hub.Hub(root, hub.SESSION).status()
         for key in ("repo", "branch", "nwo", "hubTag", "sync", "runtime"):
             self.assertIn(key, status)
         self.assertEqual(Path(status["repo"]).resolve(), root.resolve())

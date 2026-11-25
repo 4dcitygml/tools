@@ -172,8 +172,8 @@ class TestVerifiedHTTPS(unittest.TestCase):
 
     def test_hub_button_obtains_code_over_verified_tls_without_saved_account(self):
         mgr = hub.Session().account
-        with patch.object(hub, "DEVICE_CODE_URL", self.url), \
-                patch.object(hub, "oauth_client_id", return_value="test-client"), \
+        with patch.object(hub.session, "DEVICE_CODE_URL", self.url), \
+                patch.object(hub.session, "oauth_client_id", return_value="test-client"), \
                 patch.object(mgr, "_poll"):
             result = mgr.start()
         self.assertEqual(result["userCode"], "TEST-CODE")
@@ -181,8 +181,8 @@ class TestVerifiedHTTPS(unittest.TestCase):
 
     def test_hub_reports_certificate_failure_instead_of_offline(self):
         mgr = hub.Session().account
-        with patch.object(hub, "DEVICE_CODE_URL", self.url.replace("localhost", "127.0.0.1")), \
-                patch.object(hub, "oauth_client_id", return_value="test-client"):
+        with patch.object(hub.session, "DEVICE_CODE_URL", self.url.replace("localhost", "127.0.0.1")), \
+                patch.object(hub.session, "oauth_client_id", return_value="test-client"):
             with self.assertRaisesRegex(RuntimeError, "HTTPS certificate"):
                 mgr.start()
         self.assertFalse(mgr.waiting)
@@ -190,13 +190,13 @@ class TestVerifiedHTTPS(unittest.TestCase):
     def test_certificate_failure_during_poll_stops_without_waiting_for_expiry(self):
         mgr = hub.Session().account
         mgr.waiting = True
-        with patch.object(hub, "ACCESS_TOKEN_URL", self.url.replace("localhost", "127.0.0.1")):
+        with patch.object(hub.session, "ACCESS_TOKEN_URL", self.url.replace("localhost", "127.0.0.1")):
             mgr._poll("test-client", "test-device", 0, 2)
         self.assertFalse(mgr.waiting)
         self.assertIn("HTTPS certificate", mgr.error)
 
     def test_other_connection_failure_keeps_the_offline_message(self):
-        with patch.object(hub, "oauth_client_id", return_value="test-client"), \
+        with patch.object(hub.session, "oauth_client_id", return_value="test-client"), \
                 patch.object(runtime, "post_form", side_effect=urllib.error.URLError("test-offline")):
             with self.assertRaisesRegex(RuntimeError, "could not be reached"):
                 hub.Session().account.start()
@@ -250,7 +250,7 @@ class TestPublicCertificateReport(unittest.TestCase):
         self.assertIn('tool_ca_load: ok\n', report)
 
     def test_only_certificate_failures_generate_report_and_retry_clears_it(self):
-        with TempHome(), patch.object(hub, 'oauth_client_id', return_value='test-client'):
+        with TempHome(), patch.object(hub.session, 'oauth_client_id', return_value='test-client'):
             mgr = hub.Session().account
             failure = urllib.error.URLError(ssl.SSLCertVerificationError('PRIVATE-SENTINEL'))
             with patch.object(runtime, 'post_form', side_effect=failure), \

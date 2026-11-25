@@ -3,7 +3,7 @@
 
 # Semantic attribute registry
 
-`semantics/registry.json` gives every building attribute an **edition-independent
+`dialects/plateau/semantics/registry.json` gives every building attribute an **edition-independent
 key** (`building.usage`, `detail.surveyYear`, `risk.river.rank`, …) and records
 the concrete path of that attribute in each i-UR edition (`iur-2.0`, `iur-3.0`,
 `iur-3.1`, `iur-3.2`). It is the piece that lets the repository's accumulated
@@ -27,7 +27,7 @@ the key resolves to whatever path the current edition uses.
   schema has `rank`; both resolve to `risk.river.rank`.
 
 Paths use element local names without prefixes, exactly as
-`scripts/analyze_yearly_citygml_mesh.extract_attributes` produces them;
+`scripts/building_compare.extract_attributes` produces them;
 `[@name]` stands for a generic attribute's name. Every attribute carries the
 attribute family used by the yearly planner (`storeys`, `source_quality`, …),
 and `building.id` is marked `role: stable_id` (it is never carried forward as
@@ -36,9 +36,9 @@ a value change; identity is settled by `identity-baseline`).
 ## Using it
 
 ```bash
-python3 scripts/semantic_registry.py crosswalk iur-3.0 iur-3.1     # what changed between editions
-python3 scripts/semantic_registry.py lookup iur-2.0 /buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/rankOrg
-python3 scripts/semantic_registry.py edition FILE.gml               # which edition a file is
+python3 dialects/plateau/semantic_registry.py crosswalk iur-3.0 iur-3.1     # what changed between editions
+python3 dialects/plateau/semantic_registry.py lookup iur-2.0 /buildingDisasterRiskAttribute/BuildingRiverFloodingRiskAttribute/rankOrg
+python3 dialects/plateau/semantic_registry.py edition FILE.gml               # which edition a file is
 ```
 
 From Python: `key_for(path, edition)`, `path_for(key, edition)`,
@@ -60,8 +60,8 @@ from 2020 to 2025 plus the schema-level building-detail attributes; i-UR 4.0
 
 ## Code-list crosswalks
 
-`semantics/codelists/<from>__<to>.json` maps the codes of every coded
-attribute between two editions. `scripts/codelist_crosswalk.py generate`
+`dialects/plateau/semantics/codelists/<from>__<to>.json` maps the codes of every coded
+attribute between two editions. `dialects/plateau/codelist_crosswalk.py generate`
 derives each edition's code list file from the attribute's path (PLATEAU
 packages name them inconsistently: `BuildingDataQualityAttribute_*` in
 i-UR 3.0 data, `DataQualityAttribute_*` from 3.1) and matches codes by label:

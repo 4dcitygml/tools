@@ -2,9 +2,9 @@
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
 """scripts/repo_scope.py (Exchange Contract A11): a city repository accepts data,
-documents and configuration; code is rejected with guidance; workflow files may
-change only their verified CITYGML_TOOLS_REF pin; maintainers can override with the
-`tooling` label."""
+documents and configuration; code is rejected with guidance; the CI tools pin is the
+declaration's `tools` key, verified against the tools-v tags; workflow files change only
+under the maintainer label `tooling`."""
 from __future__ import annotations
 
 import json
@@ -22,12 +22,26 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import repo_scope as rs  # noqa: E402
 
 GIT = shutil.which("git")
-TOOLS_SHA_OK = "a" * 40
-TOOLS_SHA_BAD = "b" * 40
 
 
 def git(*args, cwd):
     return subprocess.run([GIT, *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def tools_repository(path: Path) -> "tuple[str, str, str]":
+    """A tools repository as git lists its tags (T11): an annotated tools-v tag, a lightweight one,
+    and a hub-v tag that is no tools release. -> (annotated commit, lightweight commit, hub commit)."""
+    git("init", "-q", cwd=path)
+    git("config", "user.email", "t@example.com", cwd=path)
+    git("config", "user.name", "t", cwd=path)
+    shas = []
+    for name in ("one", "two", "three"):
+        git("commit", "-q", "--allow-empty", "-m", name, cwd=path)
+        shas.append(git("rev-parse", "HEAD", cwd=path))
+    git("tag", "-a", "tools-v1.2.0", shas[0], "-m", "release", cwd=path)
+    git("tag", "tools-v1.2.1", shas[1], cwd=path)
+    git("tag", "-a", "hub-v1.2.0", shas[2], "-m", "hub", cwd=path)
+    return shas[0], shas[1], shas[2]
 
 
 @unittest.skipUnless(GIT, "git not available")
@@ -50,15 +64,20 @@ class TestRepoScope(unittest.TestCase):
         git("commit", "-qm", "base", cwd=self.repo)
         self.base = git("rev-parse", "HEAD", cwd=self.repo)
         self._tmp2 = tempfile.TemporaryDirectory()
-        self.tags = Path(self._tmp2.name) / "tags.json"
-        self.tags.write_text(json.dumps([{"name": "tools-v1.2.0", "commit": {"sha": TOOLS_SHA_OK}},
-                                         {"name": "hub-v1.2.0", "commit": {"sha": TOOLS_SHA_BAD}}]))
-        os.environ["CITYGML_TOOLS_TAGS_JSON"] = str(self.tags)
+        self.ok, self.light, self.bad = tools_repository(Path(self._tmp2.name))
+        os.environ["CITYGML_TOOLS_GIT_URL"] = self._tmp2.name
 
     def tearDown(self):
-        os.environ.pop("CITYGML_TOOLS_TAGS_JSON", None)
+        os.environ.pop("CITYGML_TOOLS_GIT_URL", None)
         self._tmp.cleanup()
         self._tmp2.cleanup()
+
+    def test_tools_tags_come_from_git(self):
+        # T11: git ls-remote lists every tag (the API's /tags read one page of 100); an annotated
+        # tag counts by its commit, a hub-v tag is no tools release, an unreadable remote is None
+        self.assertEqual(rs.tools_tags("4dcitygml/tools"), {self.ok: "tools-v1.2.0", self.light: "tools-v1.2.1"})
+        os.environ["CITYGML_TOOLS_GIT_URL"] = str(Path(self._tmp2.name) / "missing")
+        self.assertIsNone(rs.tools_tags("4dcitygml/tools"))
 
     def _commit(self, changes: dict, message="change"):
         for rel, text in changes.items():
@@ -74,7 +93,7 @@ class TestRepoScope(unittest.TestCase):
 
     def _rows(self, head, labels=()):
         files = rs.changed_files(self.repo, self.base, head)
-        cfg = rs.city_config(self.repo)
+        cfg = rs.city_declaration.read(self.repo)
         removed = rs.deleted_files(self.repo, self.base, head)
         return {r["path"]: r for r in rs.classify(self.repo, self.base, head, files, cfg, set(labels), removed=removed)}
 
@@ -97,21 +116,93 @@ class TestRepoScope(unittest.TestCase):
             self.assertEqual(rows[path]["category"], "rejected")
         self.assertIn("executable code", rows["docs/run.sh"]["note"])
 
-    def test_plateau_layout_counts_as_data(self):
+    def test_no_layout_is_guessed(self):
+        # v2.0.0 (1-2): data is what the city declares; PLATEAU's */udx/ layout is no default any
+        # more (before, a udx/ folder outside the declared data_dirs counted as data)
         head = self._commit({"13101_x/udx/bldg/a.gml": "<z/>"})
-        self.assertEqual(self._rows(head)["13101_x/udx/bldg/a.gml"]["category"], "data")
+        self.assertEqual(self._rows(head)["13101_x/udx/bldg/a.gml"]["category"], "rejected")
+        self.assertTrue(rs.is_data("13101_x/udx/bldg/a.gml", []))      # a city that declares none: *.gml
+        self.assertFalse(rs.is_data("13101_x/udx/bldg/a.jpg", []))     # ... and nothing else
 
-    def test_pin_only_workflow_change_verified_against_tools_tags(self):
-        head = self._commit({".github/workflows/pr-analysis.yml":
-                             "name: x\nenv:\n  CITYGML_TOOLS_REF: " + TOOLS_SHA_OK + "   # tools-v1.2.0\njobs: {}\n"})
-        row = self._rows(head)[".github/workflows/pr-analysis.yml"]
-        self.assertTrue(row["ok"]); self.assertEqual(row["category"], "pin"); self.assertIn("tools-v", row["note"])
+    def test_edition_artifacts_are_the_schema_category_where_the_pack_has_them(self):
+        # U11 / D-b2: the commit gate's schema-update accepted codelists/ and schemas/, which this
+        # gate rejected (unless inside data_dirs): one owner now, the pack naming the folders
+        files = {"codelists/Building_usage.xml": "<c/>", "schemas/iur.xsd": "<s/>"}
+        rows = self._rows(self._commit(files))
+        self.assertEqual({r["category"] for r in rows.values()}, {"rejected"})     # plain CityGML: none
+        rows = self._rows(self._commit({**files, **self.declare(dialect="plateau")}))
+        self.assertEqual((rows["codelists/Building_usage.xml"]["category"], rows["schemas/iur.xsd"]["category"]),
+                         ("schema", "schema"))
+        self.assertTrue(all(r["ok"] for r in rows.values()), rows)
 
-    def test_pin_to_unknown_commit_is_rejected(self):
+    def test_a_type_change_is_a_change(self):
+        # D-b7: --diff-filter=ACMRD left out a file turned into a symbolic link (type change T),
+        # so the gate never saw it; every change is listed now
+        target = self.repo / "lod2_citygml" / "a.gml"
+        target.unlink()
+        target.symlink_to("../install/start-mac.command")
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-qm", "link", cwd=self.repo)
+        head = git("rev-parse", "HEAD", cwd=self.repo)
+        self.assertIn("lod2_citygml/a.gml", self._rows(head))
+
+    def declare(self, **keys) -> dict:
+        return {"4dcitygml.json":
+                json.dumps({"repo": "o/r", "data_dirs": ["lod2_citygml"], "logo": "logo.png", **keys})}
+
+    def test_the_pin_is_the_declarations_tools_key(self):
+        # F2: the CI tools pin is `tools` in 4dcitygml.json, checked against the tools-v tags; the tag
+        # is resolved when shown, never stored
+        head = self._commit(self.declare(tools=self.ok))
+        row = self._rows(head)["4dcitygml.json"]
+        self.assertEqual((row["ok"], row["category"]), (True, "pin"))
+        self.assertIn("(tools-v1.2.0)", row["note"])
+        lightweight = self._commit(self.declare(tools=self.light))
+        self.assertIn("(tools-v1.2.1)", rs.classify(self.repo, head, lightweight, ["4dcitygml.json"],
+                                                     rs.city_declaration.read(self.repo), set())[0]["note"])
+
+    def test_a_changed_declaration_must_conform_to_its_schema(self):
+        # what the PR writes must be right; what was there before is tolerated; the readers still ignore unknown keys
+        head = self._commit(self.declare(colour="red"))                 # changed and invalid: names the key
+        row = self._rows(head)["4dcitygml.json"]
+        self.assertFalse(row["ok"])
+        self.assertIn("unexpected property colour", row["note"])
+        self.assertEqual(rs.city_declaration.read(self.repo).data_dirs, ["lod2_citygml"])   # the reader ignores it
+        fixed = self._commit(self.declare(min_hub="hub-v2.0.0-rc.1"))   # changed and valid (a prerelease pin conforms)
+        self.assertTrue(self._rows(fixed)["4dcitygml.json"]["ok"])
+        self.base = head                                                # the base already had `colour`:
+        tolerated = self._commit(self.declare(colour="red", lang="ja"))   # a PR that changes another key
+        self.assertTrue(self._rows(tolerated)["4dcitygml.json"]["ok"])
+        worse = self._commit(self.declare(colour="red", crs="somewhere"))   # a new violation still fails
+        self.assertIn("$.crs", self._rows(worse)["4dcitygml.json"]["note"])
+        broken = self._commit({"4dcitygml.json": "{not json"})
+        self.assertIn("not valid JSON", self._rows(broken)["4dcitygml.json"]["note"])
+
+    def test_the_example_is_not_judged(self):
+        head = self._commit({"4dcitygml.json.example": json.dumps({"repo": "<owner>/<name>", "id": "<code>"})})
+        self.assertTrue(self._rows(head)["4dcitygml.json.example"]["ok"])
+
+    def test_a_pin_that_is_no_release_or_missing_is_refused(self):
+        head = self._commit(self.declare(tools=self.bad))                 # a hub-v tag is no tools release
+        row = self._rows(head)["4dcitygml.json"]
+        self.assertEqual((row["ok"], row["category"]), (False, "pin"))
+        pinned = self._commit(self.declare(tools=self.ok))
+        removed = self._commit(self.declare())
+        row = rs.classify(self.repo, pinned, removed, ["4dcitygml.json"], rs.city_declaration.read(self.repo), set())[0]
+        self.assertEqual((row["ok"], row["category"]), (False, "pin"))
+        self.assertIn("must name the tools commit", row["note"])
+        # a declaration change that leaves the pin as it is: configuration
+        again = self._commit(self.declare(lang="de"))
+        self.assertEqual(rs.classify(self.repo, removed, again, ["4dcitygml.json"],
+                                     rs.city_declaration.read(self.repo), set())[0]["category"], "config")
+
+    def test_a_workflow_pin_line_is_no_pin_any_more(self):
+        # before F2 a workflow whose only change was its CITYGML_TOOLS_REF line was the pin
         head = self._commit({".github/workflows/pr-analysis.yml":
-                             "name: x\nenv:\n  CITYGML_TOOLS_REF: " + TOOLS_SHA_BAD + "\njobs: {}\n"})
+                             "name: x\nenv:\n  CITYGML_TOOLS_REF: " + self.ok + "   # tools-v1.2.0\njobs: {}\n"})
         row = self._rows(head)[".github/workflows/pr-analysis.yml"]
-        self.assertFalse(row["ok"]); self.assertEqual(row["category"], "pin")
+        self.assertEqual((row["ok"], row["category"]), (False, "rejected"))
+        self.assertIn("`tools` key of 4dcitygml.json", row["note"])
 
     def test_other_workflow_edits_need_the_tooling_label(self):
         head = self._commit({".github/workflows/pr-analysis.yml": "name: y\nenv:\n  CITYGML_TOOLS_REF: " + "0" * 40 + "\njobs: {}\n",

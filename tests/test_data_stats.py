@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import dialects  # noqa: E402
 from scripts.data_stats import (  # noqa: E402
     code_distribution,
     collect,
@@ -24,6 +25,8 @@ from scripts.data_stats import (  # noqa: E402
     save_baseline,
     summarize,
 )
+
+PLATEAU = dialects.dialect("plateau")   # the fixtures are i-UR data (+-9999 and its code lists)
 
 
 def bldg(bid, height=None, usage=None):
@@ -47,14 +50,14 @@ def wrap(*bodies):
 class TestNumeric(unittest.TestCase):
     def test_sentinel_excluded_from_stats(self):
         raw = wrap(bldg("a", height=10), bldg("b", height=20), bldg("c", height=-9999))
-        num, _ = collect(raw, ("measuredHeight",), None)
+        num, _ = collect(raw, ("measuredHeight",), None, PLATEAU)
         self.assertEqual(num["measuredHeight"]["total"], 3)
         self.assertEqual(num["measuredHeight"]["sentinel"], 1)  # -9999 is a sentinel
         self.assertEqual(sorted(num["measuredHeight"]["values"]), [10.0, 20.0])
 
     def test_summary_rates_and_aggregates(self):
         raw = wrap(bldg("a", height=10), bldg("b", height=20), bldg("c", height=-9999))
-        s = summarize(*collect(raw, ("measuredHeight",), None))
+        s = summarize(*collect(raw, ("measuredHeight",), None, PLATEAU))
         m = s["numeric"]["measuredHeight"]
         self.assertEqual(m["valid"], 2)
         self.assertEqual(m["unknown_rate"], round(1 / 3, 4))
@@ -106,7 +109,7 @@ class TestProfile(unittest.TestCase):
             (cl / "Test_geometrySrcDesc.xml").write_text(_QAXIS, encoding="utf-8")
             gml = Path(d) / "a.gml"
             gml.write_bytes(_wrap_coded(_bldg_coded("a", "01"), _bldg_coded("b", "99")))
-            prof = quality_profile([gml], cl)
+            prof = quality_profile([gml], cl, PLATEAU)
             axis = prof["geometrySrcDescLod2"]  # keyed by element name (axis x LOD)
             self.assertEqual(axis["total"], 2)
             self.assertEqual(axis["lod"], 2)
@@ -173,6 +176,26 @@ class TestDrift(unittest.TestCase):
         # Unknown rate +4pp and count +5% are within default thresholds (5pp/10%)
         base, cur = _stats(unknown_rate=0.10, total=100), _stats(unknown_rate=0.14, total=105)
         self.assertEqual([f for f in compare_stats(base, cur) if f["metric"] in ("unknown_rate", "total")], [])
+
+    def test_a_carried_list_is_judged_by_its_own_edition(self):
+        # D-4b4: a codeSpace was judged by its file name, so a list carried under
+        # codelists/<edition>/ was read as the current edition's list of that name
+        import tempfile
+        from scripts.data_stats import stats_for_files
+        entry = '<gml:dictionaryEntry><gml:Definition><gml:description>{}</gml:description><gml:name>{}</gml:name></gml:Definition></gml:dictionaryEntry>'
+        with tempfile.TemporaryDirectory() as d:
+            lists = Path(d) / "codelists"
+            (lists / "iur-3.0").mkdir(parents=True)
+            (lists / "Building_usage.xml").write_text('<gml:Dictionary xmlns:gml="http://www.opengis.net/gml">'
+                                                      + entry.format("Shop", "461") + "</gml:Dictionary>", encoding="utf-8")
+            (lists / "iur-3.0" / "Building_usage.xml").write_text('<gml:Dictionary xmlns:gml="http://www.opengis.net/gml">'
+                                                                  + entry.format("不明", "461") + "</gml:Dictionary>", encoding="utf-8")
+            tile = Path(d) / "udx" / "bldg" / "t.gml"
+            tile.parent.mkdir(parents=True)
+            tile.write_bytes(wrap('<bldg:Building gml:id="a"><bldg:usage codeSpace="../../codelists/iur-3.0/Building_usage.xml">'
+                                  '461</bldg:usage></bldg:Building>'))
+            coded = stats_for_files([tile], (), lists, PLATEAU)["categorical"]
+        self.assertEqual(coded["iur-3.0/Building_usage.xml"]["unknown"], 1)   # unknown in its own edition
 
     def test_unknown_rate_increase_is_warn(self):
         findings = compare_stats(_stats(unknown_rate=0.10), _stats(unknown_rate=0.20))

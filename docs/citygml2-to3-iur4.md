@@ -2,6 +2,8 @@
 
 `convert_citygml2_to3_iur4.py` is an initial converter to generate CityGML 3.0 + i-UR 4.0 + i4d-UR derived GML without modifying the CityGML 2.0 + i-UR 3 source.
 
+Every city is exported by `scripts/export_citygml3.py` (REQ-dialect-packs section 7): the core 2.0 / 1.0 to 3.0 conversion is the pinned citygml-tools' `upgrade`, the inputs are the city's declaration (`data_dirs`, its pack), and every output is validated by citygml-tools against the CityGML 3.0 schemas and the pack's. A city without a pack gets the upgrade alone: generic attributes and appearances pass through, and a namespace other than CityGML, GML, xAL or XLink is refused. A pack with an ADE converts it in its hook (`Pack.citygml3`); for PLATEAU that is this converter, `dialects/plateau/convert_citygml2_to3_iur4.py`, and its provisional i4d-UR schema and code list (`dialects/plateau/i4dur/1.0/`) are copied beside the output.
+
 ## Current scope
 
 Only handles the following building ADEs used in the Tokyo Station sample.
@@ -17,13 +19,13 @@ Unsupported elements, multiple old data quality attributes, and mismatched `gml:
 First, verify that the source is within the current supported range.
 
 ```bash
-python scripts/convert_citygml2_to3_iur4.py inspect path/to/source.gml
+python dialects/plateau/convert_citygml2_to3_iur4.py inspect path/to/source.gml
 ```
 
 Next, specify a fixed version of citygml-tools to perform the conversion. Place the output in a separate directory from the source.
 
 ```bash
-python scripts/convert_citygml2_to3_iur4.py convert \
+python dialects/plateau/convert_citygml2_to3_iur4.py convert \
   path/to/source.gml path/to/generated/source.gml \
   --citygml-tools path/to/citygml-tools
 ```
@@ -35,7 +37,7 @@ If `citygml-tools` generates different IDs for Appearances without IDs on each r
 If you already have a file with only the CityGML core converted to 3.0, you can try ADE restoration only.
 
 ```bash
-python scripts/convert_citygml2_to3_iur4.py restore-ade \
+python dialects/plateau/convert_citygml2_to3_iur4.py restore-ade \
   path/to/source.gml path/to/core-3.gml path/to/output.gml
 ```
 
@@ -58,4 +60,4 @@ This initial version alone does not complete the CityGML 3.0 distribution packag
 
 The current default namespace `https://4dcitygml.github.io/schemas/i4dur/1.0` is provisional and recorded as such in the manifest. The generated output will not be formally distributed until the publication location is confirmed and finalized.
 
-This repository carries a manual workflow, `export-citygml3.yml` (moved from the Tokyo Station sample on 2026-09-30). It takes a city repository, a ref of it and a dataset directory; the converter is this repository at the commit the run is dispatched on, and `provenance.txt` in the artifact names both commits. By default nothing runs; only the PoC with explicitly stated `accept_provisional_i4dur` is generated, converted twice with byte-identical results required, as a 7-day artifact. No commits or pushes are made to the source. Before formal deployment, dispatch from a release tag and remove the provisional approval input.
+This repository carries a manual workflow, `export-citygml3.yml` (moved from the Tokyo Station sample on 2026-09-30). It takes a city repository and a ref of it; the data folders come from the city's declaration, and the converter is this repository at the commit the run is dispatched on, so `provenance.txt` in the artifact names both commits. The export runs twice and the two results must be byte-identical; the result is a 7-day artifact, and nothing is committed or pushed to the source. A pack whose output uses a provisional namespace (PLATEAU's i4d-UR) needs the explicit `accept_provisional` input; before formal deployment, dispatch from a release tag and remove that input.

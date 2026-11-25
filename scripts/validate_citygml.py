@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""CityGML / PLATEAU validity check (validate / feature list C).
+"""CityGML validity check (validate / feature list C).
 
 Two-stage validation:
-1. well-formed check (lxml; catches unclosed tags etc. Fast and reliable)
-2. XSD schema validation (**xmlschema**. CityGML 2.0 and 1.0 + GML 3.1.1 + i-UR 2.0/3.0/3.1/3.2)
+1. well-formed check (catches unclosed tags etc. Fast and reliable)
+2. XSD schema validation (**xmlschema**. CityGML 2.0 and 1.0 + GML 3.1.1 + the bundled ADE schemas)
 
 Why we use xmlschema as the XSD engine:
-- libxml2 (lxml) XSD validation has a known limitation of **false-rejecting** i-UR ADE data
+- libxml2 (lxml) XSD validation has a known limitation of **false-rejecting** ADE data
   (a bug that skips numerous optional elements and cannot transition to the final substitutionGroup ADE hook.
   Manifested when buildings have only lod1, etc. Confirmed in actual data validation).
 - xmlschema (pure Python) correctly validates the same data and detects real errors such as type violations.
 
 Schemas are bundled with the repository and resolved offline (network-independent):
-- `schemas/` (mirror of `schemas.opengis.net`/`www.w3.org`/`docs.oasis-open.org`/`www.geospatial.jp`)
-- `schemas/master.xsd` imports all namespaces (CityGML 2.0 and 1.0 modules, i-UR 2.0/3.0/3.1/3.2). http(s) references are mapped to local by uri_mapper.
+- `schemas/<host>/` (a mirror per schema host: one folder each, named by the host)
+- `schemas/master.xsd` imports all namespaces (CityGML 2.0 and 1.0 modules, the ADEs'). http(s) references are mapped to local by uri_mapper.
 
-Quality checks by PLATEAU-Builder (C-1~3) are not included (Windows/Java dependent, post-hoc).
+A profile's own quality checker (a desktop tool, post-hoc) is not included.
 
 Usage:
     python scripts/validate_citygml.py FILE.gml [FILE2.gml ...]
@@ -34,24 +34,18 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
 
-from lxml import etree
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.safe_xml import safe_parse  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
+from scripts import safe_xml  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_CACHE = REPO_ROOT / "schemas"
 MASTER = SCHEMA_CACHE / "master.xsd"
-# Schema distribution hosts mirrored locally (i-UR is at www.geospatial.jp)
-_MIRRORED_HOSTS = {
-    "schemas.opengis.net",
-    "www.w3.org",
-    "docs.oasis-open.org",
-    "www.geospatial.jp",
-}
+# The schema hosts mirrored locally: one folder per host under schemas/ (the mirror says which)
+_MIRRORED_HOSTS = frozenset(p.name for p in SCHEMA_CACHE.iterdir() if p.is_dir() and "." in p.name) if SCHEMA_CACHE.is_dir() else frozenset()
 
 
 def _uri_mapper(url: str) -> str:
@@ -88,10 +82,10 @@ def load_schema():
 
 def validate_file(path: Path) -> tuple[bool, list[str]]:
     """Validate one file and return (ok, error list). Well-formedness failures are also reported."""
-    # 1) well-formed check (lxml; fast and reliable)
+    # 1) well-formed check (the standard library; a DOCTYPE is refused, U13)
     try:
-        safe_parse(str(path))
-    except etree.XMLSyntaxError as e:
+        safe_xml.parse(path)
+    except safe_xml.ParseError as e:
         return False, [f"not well-formed: {e}"]
     # 2) XSD validation (xmlschema)
     schema = load_schema()
@@ -114,11 +108,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     files = list(args.files)
     if args.file_list is not None:
-        files += [
-            Path(line.strip())
-            for line in args.file_list.read_text(encoding="utf-8").splitlines()
-            if line.strip().endswith(".gml")
-        ]
+        files += [Path(p) for p in changed_list(args.file_list)]
     if not files:
         p.error("Specify the .gml files to validate (arguments or --file-list).")
 

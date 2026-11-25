@@ -15,8 +15,10 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
+from tests import city_checkouts
 from tests.support import TempHome, runtime
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +34,7 @@ def _load(app_rel: str, name: str):
 attr = _load("tools/attr_editor/app.py", "attr_city_res")
 hub = _load("tools/hub/app.py", "hub_city_res")
 
-DEFAULT = "4dcitygml/sample-munich-station"   # the default practice city (runtime.DEFAULT_CITY_URL)
+DEFAULT = "4dcitygml/sample-munich-station"   # a practice city, as the launcher names it
 
 
 class Base(unittest.TestCase):
@@ -94,17 +96,22 @@ class TestPriority(Base):
                             upstream_remote], check=True)
         return d
 
-    def test_default_without_context(self):
-        self.assertEqual(runtime.upstream_nwo(), DEFAULT)
-        self.assertEqual(runtime.upstream_nwo(None), DEFAULT)
+    def test_no_city_without_context(self):
+        # 5-14: the launcher chooses the practice city (CITYGML_UPSTREAM); the hub has no default of its own
+        self.assertIsNone(runtime.upstream_nwo())
+        with mock.patch.dict(os.environ, {"CITYGML_UPSTREAM": DEFAULT}):
+            self.assertEqual(runtime.upstream_nwo(None), DEFAULT)
 
     def test_city_json_wins_over_default(self):
         d = self._repo_with("stadt-muenchen/13100-muenchen", None)
         self.assertEqual(runtime.upstream_nwo(d), "stadt-muenchen/13100-muenchen")
 
-    def test_git_remote_upstream_used_when_no_city_json(self):
+    def test_a_clone_without_a_city_has_none(self):
+        # V1 / D-3c1: the `upstream` remote and the practice city were fallbacks for a clone, so a
+        # clone without 4dcitygml.json was synced (reset) to the practice city; it has no city now
         d = self._repo_with(None, "git@github.com:city-of-x/13101-cityname.git")
-        self.assertEqual(runtime.upstream_nwo(d), "city-of-x/13101-cityname")
+        self.assertIsNone(runtime.upstream_nwo(d))
+        self.assertIsNone(runtime.city_of(d))
 
     def test_city_json_wins_over_remote(self):
         d = self._repo_with("a/b", "https://github.com/c/d.git")
@@ -116,14 +123,11 @@ class TestPriority(Base):
         self.assertEqual(runtime.upstream_nwo(d), "a/b")
         self.assertEqual(runtime.upstream_nwo(), "env-owner/env-repo")   # no clone yet: the start script's city
 
-    def test_broken_city_json_falls_back(self):
+    def test_a_broken_or_foreign_declaration_names_no_city(self):
         d = Path(tempfile.mkdtemp())
         (d / "4dcitygml.json").write_text("{not json", encoding="utf-8")
-        self.assertEqual(runtime.upstream_nwo(d), DEFAULT)
-
-    def test_invalid_repo_value_falls_back(self):
-        d = self._repo_with("https://evil.example/o/r", None)
-        self.assertEqual(runtime.upstream_nwo(d), DEFAULT)
+        self.assertIsNone(runtime.upstream_nwo(d))                       # was the practice city
+        self.assertIsNone(runtime.upstream_nwo(self._repo_with("https://evil.example/o/r", None)))
 
 
 class TestDemoCityJsons(unittest.TestCase):
@@ -144,7 +148,7 @@ class TestDemoCityJsons(unittest.TestCase):
         for folder in ("sample-tokyo-station", "sample-munich-station", "sample-newyork-station"):
             d = base / folder
             if not (d / "4dcitygml.json").is_file() or folder not in refs:
-                self.skipTest(f"environment does not have {folder}/4dcitygml.json, or ci/city-refs.json does not name it yet")
+                city_checkouts.missing(f"environment does not have {folder}/4dcitygml.json, or ci/city-refs.json does not name it")
             self.assertEqual(runtime.upstream_nwo(d).lower(), refs[folder]["repository"].lower())
 
 
@@ -163,8 +167,8 @@ class TestStableBuildingId(unittest.TestCase):
             b'</gen:stringAttribute></bldg:Building>'
         )
         self.assertEqual(
-            attr.stable_building_id_from_span(
-                span, "gml_fallback", "gen:BIN", {"1000000"}
+            attr.building_identity.stable_id(
+                span, "gml_fallback", attr.building_identity.IdentityRule("gen:BIN", frozenset({"1000000"}))
             ),
             "gml_fallback",
         )
@@ -176,8 +180,8 @@ class TestStableBuildingId(unittest.TestCase):
             b'</gen:stringAttribute></bldg:Building>'
         )
         self.assertEqual(
-            attr.stable_building_id_from_span(
-                span, "gml_fallback", "gen:BIN", {"1000000"}
+            attr.building_identity.stable_id(
+                span, "gml_fallback", attr.building_identity.IdentityRule("gen:BIN", frozenset({"1000000"}))
             ),
             "1085630",
         )

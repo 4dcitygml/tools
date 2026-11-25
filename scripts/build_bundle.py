@@ -22,16 +22,21 @@ launcher keeps its execute bit. Standard library only.
 from __future__ import annotations
 
 import argparse
-import re
+import os
 import sys
 import zipfile
 from pathlib import Path
+
+try:
+    from scripts import release_tags
+except ImportError:   # run from scripts/ (the workflow, verify_bundle under the bundled Python)
+    import release_tags
 
 ROOT = "citygml-hub"
 LIB = f"{ROOT}/program"
 FLAVORS = {"macos": "macos", "windows": "windows-full"}
 BUNDLE_DIRS = ("PortableGit", "PythonPortable")        # Windows flavor only
-PACK_SUFFIXES = {".py", ".html", ".json"}
+PACK_SUFFIXES = {".py", ".html", ".json", ".js", ".css"}
 # Team tools inside the editor folders that run from a tools checkout, not from the hub:
 # tone_battle needs scripts/retone_textures.py and Pillow, which the bundle does not carry (D9).
 CHECKOUT_ONLY = {"tools/tex_editor/tone_battle.py"}
@@ -45,9 +50,9 @@ def repo_root_default() -> Path:
 
 
 def version_from_tag(tag: str) -> str:
-    """hub-v1.3.0 → v1.3.0 (a pre-release suffix such as hub-v1.4.0-rc1 is kept, as the
-    release workflow's validate-release job admits it); anything else (a PR build) → dev."""
-    return tag.removeprefix("hub-") if re.fullmatch(r"hub-v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?", tag or "") else "dev"
+    """hub-v1.3.0 → v1.3.0 (a prerelease suffix such as hub-v1.4.0-rc1 is kept: the one tag
+    grammar, scripts/release_tags.py); anything else (a PR build) → dev."""
+    return tag.removeprefix("hub-") if release_tags.version_key(tag, "hub") else "dev"
 
 
 def artifact_name(flavor: str, version: str) -> str:
@@ -62,17 +67,22 @@ def manifest(repo_root: Path, flavor: str) -> "list[tuple[Path, str, int]]":
     entries += [(p, f"{LIB}/{p.name}", PLAIN) for p in sorted(hub.glob("*.html"))]   # every screen of the hub
     entries.append((hub / "preset.json", f"{LIB}/preset.json", PLAIN))
     entries.append((hub / "operator_explanation.py", f"{LIB}/operator_explanation.py", PLAIN))   # the report contract (A10)
-    if flavor == "windows":
-        entries.append((hub / "packaging" / "start-windows.bat", f"{LIB}/start-windows.bat", PLAIN))
+    entries.append((hub / "review.py", f"{LIB}/review.py", PLAIN))   # the review screen (S13)
+    entries.append((hub / "session.py", f"{LIB}/session.py", PLAIN))   # the account side and the process state (S13)
     # the shared modules (the A5 classification table, the A10 marker table and the building
     # identity rule are shared with CI)
-    for name in ("pr_classification.py", "pr_markers.py", "pr_reason.py", "building_identity.py", "citygml_dialect.py", "citygml_faces.py"):
+    for name in ("pr_classification.py", "pr_markers.py", "pr_reason.py", "building_identity.py", "citygml_dialect.py", "citygml_faces.py",
+                 "codelists.py", "safe_xml.py", "citygml_xml.py", "city_declaration.py", "release_tags.py"):
         entries.append((repo_root / "scripts" / name, f"{LIB}/{name}", PLAIN))
-    for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py"):
+    # the dialect packs' interface and answers (the declaration reader asks them for the identity
+    # and CRS defaults, the editors for their data layout); a pack's operator tools stay out
+    entries += [(p, f"{LIB}/{p.relative_to(repo_root).as_posix()}", PLAIN)
+                for p in [repo_root / "dialects" / "__init__.py", *sorted((repo_root / "dialects").glob("*/pack.py"))]]
+    for name in ("runtime.py", "accounts.py", "git_sync.py", "shortcuts.py", "common.js", "common.css"):
         entries.append((repo_root / "tools" / name, f"{LIB}/{name}", PLAIN))
     # the per-user launchers the installer copies into place (citygml.sh keeps its execute bit)
-    entries.append((repo_root / "install" / "citygml.sh", f"{LIB}/citygml.sh", EXEC))
-    entries.append((repo_root / "install" / "citygml.ps1", f"{LIB}/citygml.ps1", PLAIN))
+    entries.append((repo_root / "install" / "release" / "citygml.sh", f"{LIB}/citygml.sh", EXEC))
+    entries.append((repo_root / "install" / "release" / "citygml.ps1", f"{LIB}/citygml.ps1", PLAIN))
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         entries.append((repo_root / name, f"{LIB}/{name}", PLAIN))
     # the editors, the language pack and the theme pack travel with the hub
@@ -97,18 +107,12 @@ def supported_languages(repo_root: "Path | None" = None) -> "tuple[str, ...]":
 
 
 def required(flavor: str) -> "list[str]":
-    """Archive names a distribution zip must contain (checked after assembly and by tests)."""
-    names = [f"{LIB}/hub.py", f"{LIB}/index.html", f"{LIB}/review.html", f"{LIB}/setup.html", f"{LIB}/settings.html",
-             f"{LIB}/preset.json", f"{LIB}/operator_explanation.py", f"{LIB}/runtime.py", f"{LIB}/accounts.py", f"{LIB}/git_sync.py",
-             f"{LIB}/shortcuts.py", f"{LIB}/pr_classification.py", f"{LIB}/pr_markers.py", f"{LIB}/pr_reason.py", f"{LIB}/building_identity.py", f"{LIB}/citygml_dialect.py", f"{LIB}/citygml_faces.py", f"{LIB}/citygml.sh", f"{LIB}/citygml.ps1",
-             f"{LIB}/LICENSE", f"{LIB}/NOTICE", f"{LIB}/THIRD_PARTY_NOTICES.md",
-             f"{LIB}/attr_editor/app.py", f"{LIB}/attr_editor/index.html",
-             f"{LIB}/attr_editor/viewer.html", f"{LIB}/tex_editor/app.py", f"{LIB}/tex_editor/index.html",
-             f"{LIB}/i18n/i18n_loader.py", f"{LIB}/themes/theme_loader.py"]
-    names += [f"{LIB}/i18n/catalogs/{app}/{lang}.json" for app in ("hub", "attr_editor", "tex_editor")
-              for lang in supported_languages()]
+    """Archive names a distribution zip must contain (checked after assembly and by tests): what
+    the source tree gives (manifest(), V8: the list was written out a second time here) and, for
+    Windows, the bundled Python and Git."""
+    names = [arc for _, arc, _ in manifest(repo_root_default(), flavor)]
     if flavor == "windows":
-        names += [f"{LIB}/start-windows.bat", f"{LIB}/PythonPortable/python.exe", f"{LIB}/PythonPortable/LICENSE.txt",
+        names += [f"{LIB}/PythonPortable/python.exe", f"{LIB}/PythonPortable/LICENSE.txt",
                   f"{LIB}/PortableGit/cmd/git.exe", f"{LIB}/PortableGit/LICENSE.txt"]
     return names
 
@@ -160,6 +164,9 @@ def main(argv=None) -> int:
     out = Path(args.out) if args.out else repo_root / "tools" / "hub" / "dist"
     artifact = build(repo_root, args.flavor, version_from_tag(args.tag), out, args.portable)
     print(f"{artifact} ({artifact.stat().st_size / (1024 * 1024):.2f} MiB)")
+    if os.environ.get("GITHUB_OUTPUT"):   # the workflow's steps take the asset from here, not from a name of their own
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"asset={artifact.name}\npath={artifact.resolve()}\n")
     return 0
 
 

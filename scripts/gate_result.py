@@ -13,22 +13,29 @@ a missing input) - and this module turns it into the row of the inspection summa
 
 `fail`, `error` and `pending` block the merge under STRICT_GATE; `warn` does not. The table
 ROWS is the one place that says which rows exist, in which order, and which of them block
-(maintainer decision, 2026-09-30). The driver writes out/gates/<key>.json through the CLI;
+(maintainer decision, 2026-09-30). The driver writes <run folder>/gates/<key>.json through the CLI;
 the inspection summary reads only those files. They stay in the runner's temporary folder: the
 analysis artifact the trusted side receives carries only the summary's inspection.json.
 
-    python3 scripts/gate_result.py write --key schema --exit-code 1 [--summary TEXT] [--out "$RUNNER_TEMP"]
+    python3 scripts/gate_result.py write --key schema --exit-code 1 [--summary TEXT] [--out "$CITYGML_RUN"]
     python3 scripts/gate_result.py write --key model --not-applicable
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 BLOCKING, ADVISORY = "blocking", "advisory"
+
+
+def run_folder(env=os.environ) -> Path:
+    """The analysis run's own folder (U3): CITYGML_RUN, which the driver makes as
+    $RUNNER_TEMP/citygml and hands to the later steps."""
+    return Path(env.get("CITYGML_RUN") or Path(env.get("RUNNER_TEMP", "/tmp")) / "citygml")
 
 
 @dataclass(frozen=True)
@@ -45,12 +52,12 @@ ROWS: tuple[Row, ...] = (
     Row("commit-scope", "ci.check_commit_scope", "One change = one building", BLOCKING),
     Row("scope-reproducibility", "ci.check_scope_reproducibility", "Ward extraction reproducibility", BLOCKING),
     Row("reproduction", "ci.check_reproduction", "Bulk conversion reproduction", BLOCKING),
-    Row("freshness", "ci.check_freshness", "Consistency with the latest version", BLOCKING),
     Row("file-scope", "ci.check_file_scope", "Changed file scope", BLOCKING),
     Row("schema", "ci.check_schema", "CityGML format", BLOCKING),
     Row("minimal-diff", "ci.check_minimal_diff", "Minimal diff", ADVISORY),
     Row("texture", "ci.check_texture", "Texture consistency", BLOCKING),
     Row("structure", "ci.check_structure", "Geometric structure", BLOCKING),
+    Row("code-list", "ci.check_code_list", "Code list conformance", BLOCKING),
     Row("plausibility", "ci.check_plausibility", "Attribute value plausibility", ADVISORY),
     Row("topology", "ci.check_topology", "Topological consistency", ADVISORY),
     Row("model", "ci.check_model", "3D view", ADVISORY),
@@ -139,7 +146,8 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--summary", default="")
     w.add_argument("--warnings", type=int, default=0, help="warnings of a clean run: the row shows warn")
     w.add_argument("--counts-json", type=Path, help="a lint's {errors, warnings}: the warnings count is read from it")
-    w.add_argument("--out", type=Path, default=Path("out"))
+    # the run's own folder, never out/ (the uploaded artifact): D-a5; read when the command runs
+    w.add_argument("--out", type=Path, default=None, help="default: $CITYGML_RUN, else $RUNNER_TEMP/citygml")
     args = parser.parse_args(argv)
     warnings = args.warnings
     if args.counts_json is not None:
@@ -149,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             pass    # no counts: the exit code alone decides
     entry = result(args.key, None if args.not_applicable else args.exit_code, not args.not_applicable,
                    args.summary, warnings)
-    write(args.out, entry)
+    write(args.out or run_folder(), entry)
     print(f"{args.key}: {entry['status']}")
     return 0
 

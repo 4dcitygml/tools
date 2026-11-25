@@ -63,7 +63,7 @@ class TestAccountFiles(_Tmp):
         self.acc.save_account("tester", "tok-1", 42)
         # bytes, not text: a text-mode read would hide a CR LF written on Windows
         self.assertEqual(self.acc.credentials_path("tester").read_bytes(),
-                         b"https://x-access-token:tok-1@github.com\n")
+                         accounts.store_line("tok-1").encode())
         args = runtime.git_args(net=True, store=self.acc.store_for("tester"))
         self.assertEqual(args[1:3], ["-c", "credential.helper="])
         self.assertTrue(args[4].startswith("credential.https://github.com.helper=store --file="))
@@ -89,8 +89,8 @@ class TestCredentialStoreLineEndings(_Tmp):
     store ignored the line and a push failed with "could not read Username ... terminal
     prompts disabled"). Verified below against git itself, the way a push asks for it."""
 
-    CRLF = b"https://x-access-token:tok-1@github.com\r\n"
-    LF = b"https://x-access-token:tok-1@github.com\n"
+    LF = accounts.store_line("tok-1").encode()
+    CRLF = LF.replace(b"\n", b"\r\n")
 
     def _fill(self, store) -> subprocess.CompletedProcess:
         """What git would get for github.com with this store, through runtime.git_args."""
@@ -136,13 +136,32 @@ class TestCredentialStoreLineEndings(_Tmp):
             self.assertEqual(self.acc.store_for("tester"), self.acc.credentials_path("tester"))
         write.assert_not_called()
 
-    def test_store_for_without_a_token_returns_the_store_as_it_is(self):
-        # a store whose account file is gone: nothing to rewrite from, git fails plainly
+    def test_a_crlf_store_is_repaired_from_its_own_token(self):
+        # V2: the store is the token's one copy, so it is repaired from itself (it needed the
+        # account file's copy before; without one the store stayed broken)
         path = self.acc.credentials_path("tester")
         path.parent.mkdir(parents=True)
         path.write_bytes(self.CRLF)
         self.assertEqual(self.acc.store_for("tester"), path)
-        self.assertEqual(path.read_bytes(), self.CRLF)
+        self.assertEqual(path.read_bytes(), self.LF)
+
+
+class TestOneTokenCopy(_Tmp):
+    """V2: the token was stored twice (the account file and the credential store); the store is
+    its one copy, and an earlier version's account file is migrated once."""
+
+    def test_the_store_is_the_copy_and_old_files_are_migrated(self):
+        import json
+        self.acc.save_account("tester", "tok-1", 42)
+        self.assertNotIn("token", json.loads(self.acc.account_path("tester").read_text(encoding="utf-8")))
+        self.assertEqual(self.acc.token_for("tester"), "tok-1")
+        old = {"login": "old", "id": 7, "name": "", "savedAt": "x", "token": "tok-old"}   # hub-v1.5.0's form
+        self.acc.account_path("old").write_text(json.dumps(old), encoding="utf-8")
+        self.assertEqual(self.acc.migrate_tokens(), 1)
+        self.assertEqual(self.acc.migrate_tokens(), 0)                                   # once
+        self.assertNotIn("token", json.loads(self.acc.account_path("old").read_text(encoding="utf-8")))
+        self.assertEqual(self.acc.token_for("old"), "tok-old")
+        self.assertEqual(self.acc.credentials_path("old").read_bytes(), accounts.store_line("tok-old").encode())
 
 
 class TestIdentity(_Tmp):
@@ -215,7 +234,7 @@ class TestLegacy(_Tmp):
             subprocess.run([git, "config", "--global", "credential.https://github.com.helper",
                             f"store --file={runtime.legacy_credentials_path()}"], check=True)
             subprocess.run([git, "config", "--global", "user.name", "Someone"], check=True)
-            runtime.legacy_credentials_path().write_text("https://someone:secret@github.com\n")
+            runtime.legacy_credentials_path().write_text(accounts.store_line("secret"))
             traces = self.acc.legacy_traces()
             self.assertTrue(traces["globalHelper"] and traces["plainStore"] and traces["any"])
             self.assertEqual(traces["machineIdentity"]["name"], "Someone")
@@ -231,7 +250,7 @@ class TestLegacy(_Tmp):
             subprocess.run([git, "config", "--global", "--add", "credential.https://github.com.helper",
                             f"store --file={runtime.legacy_credentials_path()}"], check=True)
             subprocess.run([git, "config", "--global", "--add", "credential.https://github.com.helper", "osxkeychain"], check=True)
-            runtime.legacy_credentials_path().write_text("https://someone:secret@github.com\n")
+            runtime.legacy_credentials_path().write_text(accounts.store_line("secret"))
             self.assertTrue(self.acc.legacy_traces()["globalHelper"])      # seen although it is not the last value
             self.assertEqual(sorted(self.acc.remove_legacy_traces()), ["globalHelper", "plainStore"])
             values = subprocess.run([git, "config", "--global", "--get-all", "credential.https://github.com.helper"],

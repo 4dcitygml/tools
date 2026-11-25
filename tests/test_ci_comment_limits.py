@@ -49,12 +49,19 @@ class PreviewUrlCapTest(unittest.TestCase):
         } for i in range(n)]
 
     def test_texture_stripping_still_returns_a_url(self) -> None:
-        url = preview._finalize_url(self._pairs(3), "https://x.example/v")
+        url = preview.preview_url(self._pairs(3), "https://x.example/v")
         self.assertTrue(url.startswith("https://x.example/v/#"))
         self.assertLessEqual(len(url), preview.MAX_URL_LEN)
 
+    def test_the_comment_carries_the_marker_and_the_link(self) -> None:
+        # U3: written by the extractor, not echoed by the driver; same text as before
+        from scripts import pr_markers
+        text = preview.preview_comment("https://x.example/v/#abc")
+        self.assertTrue(text.startswith(pr_markers.PREVIEW + "\n## "))
+        self.assertIn("**[\u25b6 Open in the Cesium viewer](https://x.example/v/#abc)**", text)
+
     def test_oversized_payload_yields_no_url(self) -> None:
-        url = preview._finalize_url(self._pairs(400), "https://x.example/v")
+        url = preview.preview_url(self._pairs(400), "https://x.example/v")
         self.assertEqual(url, "")
 
 

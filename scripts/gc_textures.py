@@ -13,7 +13,7 @@ orphaned on re-texturing. This tool detects **images unreferenced by any .gml** 
   texture_check R3 in CI.
 
 Usage:
-    python scripts/gc_textures.py --dir 13101_chiyoda-ku_pref_2023_citygml_1_op/udx/bldg
+    python scripts/gc_textures.py --dir <the buildings folder>
     python scripts/gc_textures.py --dir <DIR> --delete      # actual deletion
 """
 from __future__ import annotations
@@ -26,9 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.texture_check import referenced_image_uris  # noqa: E402
+from scripts.texture_check import referenced_image_uris, texture_images  # noqa: E402
 
-_IMG_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 
 def referenced_files(bldg_dir: Path) -> set[Path]:
@@ -43,12 +42,7 @@ def referenced_files(bldg_dir: Path) -> set[Path]:
 
 def all_image_files(bldg_dir: Path) -> set[Path]:
     """Set of absolute paths of all image files in *_appearance/ under bldg_dir."""
-    files: set[Path] = set()
-    for app in bldg_dir.glob("*_appearance"):
-        for f in app.iterdir():
-            if f.is_file() and f.suffix.lower() in _IMG_SUFFIXES:
-                files.add(f.resolve())
-    return files
+    return {f.resolve() for f in texture_images(bldg_dir)}
 
 
 def orphans(bldg_dir: Path) -> list[Path]:

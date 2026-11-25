@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
-from scripts import lod0_semantic_manifest as L
+from dialects.plateau import lod0_semantic_manifest as L
 from scripts.commit_building_scope import inspect_range
 from tests.test_commit_building_scope import GitRepo
 
@@ -63,7 +63,8 @@ class TransformTest(unittest.TestCase):
         with self.assertRaises(ValueError): L.transform(fixture().replace(b'</b:Building>', b'<b:lod0RoofEdge/></b:Building>'), '40220')
 
     def test_dtd_is_rejected(self):
-        with self.assertRaises(ValueError): L.transform(fixture().replace(b'<core:CityModel', b'<!DOCTYPE core:CityModel []><core:CityModel', 1), '40220')
+        # refused by the parser itself now (safe_xml refuses any DOCTYPE in the lxml readers too)
+        with self.assertRaises((ValueError, L.safe_xml.ParseError)): L.transform(fixture().replace(b'<core:CityModel', b'<!DOCTYPE core:CityModel []><core:CityModel', 1), '40220')
 
     def test_building_part_and_referenced_geometry_are_rejected(self):
         for raw in [fixture().replace(b'</b:Building>', b'<b:BuildingPart/></b:Building>'),

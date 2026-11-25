@@ -1,0 +1,68 @@
+# Copyright (c) 2026 4dcitygml
+# SPDX-License-Identifier: Apache-2.0
+# The one publishing job of both release series (release-tools.yml, release-hub.yml call it).
+# It runs in the `production` environment, so it waits for the deployment approval
+# (docs/production-protection.md); the builds and smoke tests before it run unattended and
+# nothing reaches users before that approval. The notes are the annotated tag's message
+# (scripts/release_guard.py writes it); a suffixed tag is a prerelease and never "latest"
+# (scripts/release_tags.py); GitHub publishes every asset's SHA-256 digest itself.
+name: publish a release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      series:
+        required: true
+        type: string
+      title:
+        description: 'the title before the version (4dcitygml tools, citygml-hub)'
+        required: true
+        type: string
+      artifacts:
+        description: 'download-artifact pattern of the files to attach'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ${{ inputs.artifacts }}
+          path: dist
+          merge-multiple: true
+      - name: Create the release for a pushed tag (or add to the one a manual run names)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          SERIES: ${{ inputs.series }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          set -euo pipefail
+          facts="$(python3 scripts/release_tags.py check "$SERIES" "$TAG")"
+          get() { sed -n "s/^$1=//p" <<<"$facts"; }
+          version="$(get version)"; prerelease="$(get prerelease)"; latest="$(get latest)"
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*
+          else
+            # A manual run names an existing Release; only a pushed tag creates one.
+            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $TAG does not exist"; exit 1; }
+            flags=(--verify-tag --notes-from-tag --title "$TITLE $version" "--latest=$latest")
+            [[ "$prerelease" == true ]] && flags+=(--prerelease)
+            gh release create "$TAG" "${flags[@]}" dist/*
+          fi

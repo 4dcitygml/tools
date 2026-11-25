@@ -49,12 +49,14 @@
       ],
       "properties": {
         "mesh": {
+          "description": "The tile the manifest covers, as the city's dialect pack names its tiles (a mesh code, a 1 km tile, ...).",
           "type": "string",
-          "pattern": "^[0-9]{8,9}$"
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
         },
         "municipality": {
+          "description": "The municipality the manifest covers, in the form of the city's dialect pack (Pack.municipality_code).",
           "type": "string",
-          "pattern": "^[0-9]{5}$"
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
         },
         "edition_from": {
           "type": "string"
@@ -80,7 +82,9 @@
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "A plain file name inside the materials folder (no folder, no ..).",
+            "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
           },
           "uri": {
             "type": "string",
@@ -108,7 +112,9 @@
               ],
               "properties": {
                 "path": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The member's path inside the archive: relative, no .. component, no backslash or drive.",
+                  "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\\\:]+$"
                 },
                 "sha256": {
                   "$ref": "#/$defs/sha256"
@@ -347,6 +353,27 @@
           "items": {
             "$ref": "#/$defs/buildingId"
           }
+        },
+        "identity": {
+          "type": "object",
+          "required": [
+            "type",
+            "invalid_values"
+          ],
+          "additionalProperties": false,
+          "description": "The identity rule the building IDs are read with (the city's building_id at generation; D-b4).",
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "invalid_values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },
@@ -354,8 +381,7 @@
       "type": "object",
       "required": [
         "seed",
-        "size",
-        "ids"
+        "size"
       ],
       "properties": {
         "seed": {
@@ -384,7 +410,8 @@
         "notes": {
           "type": "string"
         }
-      }
+      },
+      "description": "The review sample: its ids, or (a semantic correction) the first `size` evidence targets."
     },
     "generated_at": {
       "type": "string",
@@ -398,7 +425,8 @@
     },
     "buildingId": {
       "type": "string",
-      "pattern": "^[0-9]{5}-bldg-[0-9]+$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "A stable building ID under the city's rule (gml:id, a generic attribute, or a pack's leaf)"
     }
   }
 }

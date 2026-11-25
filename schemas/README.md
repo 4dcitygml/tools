@@ -10,6 +10,9 @@ validate CityGML/PLATEAU **without network access**.
 
 - `schemas.opengis.net/` — the **CityGML 2.0** and **CityGML 1.0** modules + **GML 3.1.1** (distributed by OGC; 1.0 for international data such as the Munich and New York practice cities)
 - `www.w3.org/` — xlink / SMIL 2.0 (W3C)
+- `city/4dcitygml.schema.json` — our own: the shape of a city's declaration `4dcitygml.json`
+  (JSON Schema 2020-12, checked by the schema subset in `scripts/provenance_manifest.py`;
+  read by `scripts/city_declaration.py`). `provenance/` holds the bulk-manifest schema.
 - `docs.oasis-open.org/` — xAL 2.0 (OASIS)
 - `master.xsd` — the validation root that imports all the namespaces above plus the
   bundled i-UR (2.0/3.0/3.1/3.2). `http(s)://` references inside the schemas are resolved

@@ -18,7 +18,8 @@ _spec.loader.exec_module(pr_markers)
 LITERAL = re.compile(r"<!--\s*(?:citygml|plateau|val3dity|cesium|status|cp|sec)[^>]*?-->")
 SCANNED = [*sorted((REPO_ROOT / "ci").glob("*.sh")),
            *sorted(p for p in (REPO_ROOT / "scripts").glob("*.py") if p.name != "pr_markers.py"),
-           REPO_ROOT / "tools" / "hub" / "app.py", REPO_ROOT / "docs" / "exchange-contract.md"]
+           REPO_ROOT / "tools" / "hub" / "app.py", REPO_ROOT / "tools" / "hub" / "review.py", REPO_ROOT / "tools" / "hub" / "session.py",
+           REPO_ROOT / "docs" / "exchange-contract.md"]
 PLACEHOLDERS = {"<!-- status:... -->", "<!--sec:key-->", "<!--cp:key-->"}   # prose that names the form, not a marker
 
 
@@ -55,13 +56,8 @@ class TestMarkersAreTheTable(unittest.TestCase):
         self.assertEqual(pr_markers.REVIEW_REPORT, contract.REPORT_MARKER)
 
     def test_forms(self):
-        self.assertEqual(pr_markers.status("active"), pr_markers.STATUS_ACTIVE)
         self.assertEqual(pr_markers.checkpoint("schema"), "<!--cp:schema-->")
         self.assertEqual(pr_markers.CHECKPOINT_RE.search("| x <!-- cp:file-scope --> |").group(1), "file-scope")
-        comments = [{"body": f"{pr_markers.BASE_FRESHNESS}\n{pr_markers.STATUS_RESOLVED}"}]
-        self.assertFalse(pr_markers.has_active(comments, pr_markers.BASE_FRESHNESS))
-        comments.append({"body": f"{pr_markers.AUTO_RESUBMISSION}\n{pr_markers.STATUS_ACTIVE}\ntext"})
-        self.assertTrue(pr_markers.has_active(comments, pr_markers.AUTO_RESUBMISSION))
 
 
 if __name__ == "__main__":

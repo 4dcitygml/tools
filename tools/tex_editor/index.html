@@ -8,27 +8,10 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-  :root {
-    --bg: #f5f6f8; --card: #fff; --border: #dde1e6; --text: #1c2733;
-    --muted: #6b7785; --accent: #0969da; --edit: #fff3bf; --danger: #c92a2a;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif;
-               font-size: 13px; color: var(--text); background: var(--bg); overflow: hidden; }
-  #app { display: grid; grid-template-columns: 420px 1fr; grid-template-rows: 44px 1fr; height: 100vh; }
-  #header { grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
-            padding: 0 14px; background: #24292f; color: #fff; }
-  #header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
-  #cityLogo { height: 28px; }  /* Municipality logo (/city-logo; stays hidden if absent) */
-  #headerInfo { font-size: 12px; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis;
-                white-space: nowrap; flex: 1; }
+  :root { --edit: #fff3bf; }
   #left { display: grid; grid-template-rows: 45% 55%; border-right: 1px solid var(--border); min-width: 0; }
-  #map { width: 100%; height: 100%; }
-  #pane3d { position: relative; background: #000; border-top: 1px solid var(--border); }
-  #viewerFrame { width: 100%; height: 100%; border: 0; }
   #pane3dEmpty { position: absolute; inset: 0; display: flex; align-items: center;
                  justify-content: center; color: #8b949e; font-size: 12px; text-align: center; }
-  #right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   #texHead { padding: 8px 14px 6px; border-bottom: 1px solid var(--border); background: var(--card);
              display: flex; align-items: baseline; gap: 10px; }
   #texTitle { font-size: 15px; font-weight: 600; }
@@ -87,37 +70,12 @@
                 cursor: crosshair; display: block; }
   .warpHint { font-size: 11px; color: var(--muted); margin: 6px 0; }
   #editorBtns { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-  button { font: inherit; border-radius: 6px; border: 1px solid var(--border);
-           background: #f6f8fa; padding: 6px 14px; cursor: pointer; }
-  button:disabled { opacity: .45; cursor: default; }
-  button.primary { background: #1f883d; border-color: #1f883d; color: #fff; font-weight: 600; }
-  button.danger { color: var(--danger); }
   button.comparing { background: #b45309; border-color: #b45309; color: #fff; }
   /* Change bar */
-  #changeBar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
-               border-top: 1px solid var(--border); background: var(--card); }
-  #changeCount b { color: #b8860b; }
   .meshLabel { background: rgba(255,255,255,.85); border: 1px solid #888; border-radius: 3px;
                padding: 1px 4px; font-size: 11px; font-family: ui-monospace, monospace; }
-  #loading { position: absolute; inset: 0; z-index: 2000; display: none; align-items: center;
-             justify-content: center; background: rgba(255,255,255,.6); font-weight: 600; }
   /* Modal */
-  #modalBack { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
-               align-items: center; justify-content: center; z-index: 3000; }
-  #modal { background: #fff; border-radius: 10px; width: min(680px, 92vw); max-height: 88vh;
-           overflow: auto; padding: 18px 22px; }
-  #modal h2 { margin: 0 0 4px; font-size: 16px; }
-  #modal .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
-  #modal textarea { width: 100%; height: 90px; font: inherit; padding: 6px;
-                    border: 1px solid var(--border); border-radius: 6px; }
-  #modalBtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
-  #modalResult { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
-  #modalResult a { color: var(--accent); font-weight: 600; }
   #modalFaces { font-size: 12px; margin-bottom: 10px; }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc;
-             border-top-color: var(--accent); border-radius: 50%;
-             animation: spin .8s linear infinite; vertical-align: -2px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -254,7 +212,7 @@
     <textarea id="prReason" data-i18n-placeholder="tex.reason_placeholder" placeholder="e.g. Updated with facade photos taken on site in 2026-07 (appearance after renovation)"></textarea>
     <label style="display:block; margin-top:10px; font-size:12px; line-height:1.6;">
       <input type="checkbox" id="ccAgree" style="vertical-align:-2px">
-      <span data-i18n="tex.cc0_text">The photos I used are my own work and I provide them as CC0 1.0 (public domain dedication; I will not assert moral rights). I confirm that no faces, license plates, etc. are visible, and I have read the </span>
+      <span data-i18n="tex.cc0_text">The photos I used are my own work (in a practice repository, they may instead come from its docs/practice-photos/ folder), and I provide them as CC0 1.0 (public domain dedication; I will not assert moral rights in my own photos). I confirm that no faces, license plates, etc. are visible, and I have read the </span>
       <a id="policyLink" href="#"
          target="_blank" rel="noopener" data-i18n="tex.cc0_policy_link">data contribution policy</a><span data-i18n="tex.cc0_text_after">.</span>
     </label>
@@ -269,7 +227,6 @@
 
 <script>
 'use strict';
-const $ = id => document.getElementById(id);
 
 // ---- State ----
 let tiles = [];
@@ -280,10 +237,10 @@ let walls = [];                  // walls from /api/faces (normal-direction clus
 let faceByPid = new Map();
 let selectedFace = null;         // target of single-face editing (roofs etc.)
 let selectedWall = null;         // target of wall editing
-let atlases = new Map();         // img -> {image: HTMLImage, work: canvas|null, faces:Set(pid)}
-let changedFaces = new Set();    // changed pids
-let newAtlas = null;             // new-assignment mode (#119): {img, width, height} (untextured buildings only)
-let virtualNew = false;          // whether new-assignment mode is active (used to disable auto tone correction etc.)
+let atlases = new Map();         // img -> {image: HTMLImage, work: canvas|null}
+let changedFaces = new Set();    // changed pids (the one record of them; an atlas's are atlasFaces(img))
+let newAtlas = null;             // new-assignment mode (#119): {img, width, height} (untextured buildings only;
+                                 // set = the mode is on: no automatic tone correction etc.)
 let footprintLayers = new Map();
 let photo = null;                // uploaded photo Image
 let corners = [];                // 4 corners on the photo [ [x,y]×4 ] (photo pixel coordinates)
@@ -291,42 +248,17 @@ let dragIdx = -1;
 let comparisonKey = '';
 let comparisonCameraDriver = null;
 let comparisonCameraTimer = null;
-const flatToneAdjustments = new Map();
-const flatToneCommitted = new Map();
-const flatToneTargets = new Map();
-const flatToneBases = new Map();
+const flatTones = new Map();      // `${comparison}|${label}|${side}` -> {pids, shown, committed} (slider values)
+const flatToneBases = new Map();  // pid -> the face's box before a submitted tone
 
-const CITY_MAP = window.CITY_MAP || {};
-const map = L.map('map').setView(CITY_MAP.center || [20, 0], CITY_MAP.zoom || 2);
-if (CITY_MAP.tiles !== 'gsi') {
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  }).addTo(map);
-} else {
-  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
-    { maxZoom: 18, attribution: t('tex.gsi_attribution', 'GSI Tiles') }).addTo(map);
-}
+const map = editorMap();   // editor.js
 
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-  if (j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
-  return j;
-}
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ---- Initialization / map (same shape as the attribute editor) ----
 async function init() {
   const res = await api('/api/tiles');
   tiles = res.tiles;
-  const layer = L.layerGroup().addTo(map);
-  for (const t of tiles) {
-    if (!t.bounds) continue;
-    const rect = L.rectangle([[t.bounds[0], t.bounds[1]], [t.bounds[2], t.bounds[3]]],
-      { color: '#0969da', weight: 1, fillOpacity: 0.04 }).addTo(layer);
-    rect.bindTooltip(`${t.code}`, { sticky: true });
-    rect.on('click', () => loadTile(t.code));
-  }
+  drawTiles(tile => `${tile.code}`);
   const q = new URLSearchParams(location.search);
   const toneLabel = q.get('label');
   if (toneLabel) {
@@ -335,16 +267,7 @@ async function init() {
       t('tex.h1_tone_label', '｜{label}', { label: toneLabel });
     document.querySelector('#header').style.background = '#1a3a5c';  // also change the color to avoid mixing up tabs
   }
-  if (q.get('tile')) {
-    await loadTile(q.get('tile'));
-    if (q.get('bid') && currentTile) {
-      const b = currentTile.buildings.find(x => x.gid === q.get('bid'));
-      if (b) selectBuilding(b, true);
-    }
-  } else if (tiles.length) {
-    const bs = tiles.map(t => t.bounds).filter(Boolean);
-    if (bs.length) map.fitBounds(bs.map(b => [[b[0], b[1]], [b[2], b[3]]]).flat());
-  }
+  await openFromUrl();
 }
 
 async function loadTile(code) {
@@ -354,18 +277,7 @@ async function loadTile(code) {
     const res = await api(`/api/tile/${code}`);
     currentTile = res.tile;
     clearSelection();
-    footprintLayers.forEach(l => map.removeLayer(l));
-    footprintLayers.clear();
-    for (const b of currentTile.buildings) {
-      if (!b.footprint || b.footprint.length < 3) continue;
-      const poly = L.polygon(b.footprint,
-        { color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35 }).addTo(map);
-      poly.on('click', () => selectBuilding(b));
-      poly.bindTooltip(b.buildingID || b.gid, { sticky: true });
-      footprintLayers.set(b.gid, poly);
-    }
-    const b0 = currentTile.bounds;
-    if (b0) map.fitBounds([[b0[0], b0[1]], [b0[2], b0[3]]]);
+    drawFootprints();
     $('headerInfo').textContent = t('tex.header_tile_info', 'Tile {code} ({n} buildings)',
       { code: currentTile.code, n: currentTile.buildings.length });
     updateUrl();
@@ -385,7 +297,7 @@ function clearSelection() {
   selected = null; faces = []; walls = []; faceByPid.clear();
   selectedFace = null; selectedWall = null;
   atlases.clear(); changedFaces.clear(); photo = null;
-  newAtlas = null; virtualNew = false;
+  newAtlas = null;
   $('newAssignNote').style.display = 'none';
   if (typeof camReset === 'function') camReset();
   $('camLaunch').style.display = 'none';
@@ -403,10 +315,7 @@ async function selectBuilding(b, keep) {
   if (!selected || selected.gid !== b.gid) {
     atlases.clear(); changedFaces.clear(); resetComparison();
   }
-  footprintLayers.forEach((poly, gid) => poly.setStyle(
-    gid === b.gid
-      ? { color: '#d97706', weight: 2.5, fillColor: '#fbbf24', fillOpacity: 0.55 }
-      : { color: '#555', weight: 1, fillColor: '#4fc3f7', fillOpacity: 0.35 }));
+  highlightFootprint(b.gid);
   selected = b;
   $('texTitle').textContent = b.buildingID || b.gid;
   $('texSub').textContent = b.gid;
@@ -423,8 +332,7 @@ async function selectBuilding(b, keep) {
     const res = await api(`/api/faces/${currentTile.code}/${encodeURIComponent(b.gid)}`);
     faces = res.faces;
     newAtlas = res.newAtlas || null;
-    virtualNew = !!newAtlas;
-    $('newAssignNote').style.display = virtualNew ? 'block' : 'none';
+    $('newAssignNote').style.display = newAtlas ? 'block' : 'none';
     walls = (res.walls || []).slice().sort((a, b2) =>
       (b2.s1 - b2.s0) * (b2.h1 - b2.h0) - (a.s1 - a.s0) * (a.h1 - a.h0));
     faceByPid = new Map(faces.map(f => [f.pid, f]));
@@ -440,14 +348,6 @@ async function selectBuilding(b, keep) {
   } finally {
     $('loading').style.display = 'none';
   }
-}
-
-function updateUrl() {
-  const q = new URLSearchParams();
-  if (currentTile) q.set('tile', currentTile.code);
-  if (selected) q.set('bid', selected.gid);
-  if (window._toneLabel) q.set('label', window._toneLabel);
-  history.replaceState(null, '', '?' + q.toString());
 }
 
 // ---- Atlas loading ----
@@ -470,12 +370,16 @@ async function loadAtlases() {
       const ctx = c.getContext('2d');
       ctx.fillStyle = '#b7bcc3'; ctx.fillRect(0, 0, c.width, c.height);
       const image = await loadImage(c.toDataURL('image/png'));
-      atlases.set(img, { image, work: null, faces: new Set() });
+      atlases.set(img, { image, work: null });
     } else {
       const image = await loadImage(`/textures/${img}`);
-      atlases.set(img, { image, work: null, faces: new Set() });
+      atlases.set(img, { image, work: null });
     }
   }
+}
+// The changed faces painted into one atlas
+function atlasFaces(img) {
+  return [...changedFaces].filter(pid => faceByPid.get(pid).img === img);
 }
 function workCanvas(img) {
   // Working copy for baking (created from the original atlas on first access)
@@ -489,22 +393,19 @@ function workCanvas(img) {
   return a.work;
 }
 
-// UV -> pixel rectangle inside the atlas (same math as the viewer's cropUV; CityGML's UV origin is bottom-left)
+// The face's pixel box inside its atlas (uvBox, common.js: the 3D view cuts the same box)
 function uvRect(face) {
   const a = atlases.get(face.img);
-  const iw = a.image.naturalWidth, ih = a.image.naturalHeight;
-  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
-  for (const [u, v] of face.uv) {
-    if (u < u0) u0 = u;
-    if (u > u1) u1 = u;
-    if (v < v0) v0 = v;
-    if (v > v1) v1 = v;
-  }
-  return {
-    x: Math.round(u0 * iw), y: Math.round((1 - v1) * ih),
-    w: Math.max(1, Math.round((u1 - u0) * iw)),
-    h: Math.max(1, Math.round((v1 - v0) * ih)),
-  };
+  return uvBox(face.uv, a.image.naturalWidth, a.image.naturalHeight);
+}
+
+// The face's box of an atlas (or its working copy) as a canvas of its own
+function faceCrop(face, src) {
+  const r = uvRect(face);
+  const c = document.createElement('canvas');
+  c.width = r.w; c.height = r.h;
+  c.getContext('2d').drawImage(src, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  return c;
 }
 
 // ---- Face list rendering (wall groups + other faces) ----
@@ -555,9 +456,7 @@ function resetComparison() {
   comparisonKey = '';
   comparisonCameraDriver = null;
   clearTimeout(comparisonCameraTimer);
-  flatToneAdjustments.clear();
-  flatToneCommitted.clear();
-  flatToneTargets.clear();
+  flatTones.clear();
   flatToneBases.clear();
   $('comparisonPanel').style.display = 'none';
   $('flatCompareGrid').innerHTML = '';
@@ -570,11 +469,7 @@ function resetComparison() {
 function changedFacePreview(f) {
   const atlas = atlases.get(f.img);
   if (!atlas || !atlas.work) return null;
-  const r = uvRect(f);
-  const canvas = document.createElement('canvas');
-  canvas.width = r.w; canvas.height = r.h;
-  canvas.getContext('2d').drawImage(atlas.work, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-  return canvas.toDataURL('image/jpeg', 0.92);
+  return faceCrop(f, atlas.work).toDataURL('image/jpeg', 0.92);
 }
 
 function syncComparisonViewer(role) {
@@ -602,12 +497,7 @@ function captureFlatToneBases(pids) {
     if (flatToneBases.has(pid) || !changedFaces.has(pid)) continue;
     const face = faceByPid.get(pid);
     if (!face) continue;
-    const r = uvRect(face);
-    const source = workCanvas(face.img);
-    const base = document.createElement('canvas');
-    base.width = r.w; base.height = r.h;
-    base.getContext('2d').drawImage(source, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-    flatToneBases.set(pid, base);
+    flatToneBases.set(pid, faceCrop(face, workCanvas(face.img)));
   }
 }
 
@@ -626,7 +516,6 @@ function applySubmittedTone(pids, value) {
     ctx.filter = `brightness(${100 + Number(value)}%)`;
     ctx.drawImage(base, 0, 0);
     workCanvas(face.img).getContext('2d').drawImage(adjusted, r.x, r.y);
-    atlases.get(face.img).faces.add(pid);
     postToViewer({
       type: 'previewTexture', pid,
       dataUrl: adjusted.toDataURL('image/jpeg', 0.92),
@@ -647,10 +536,9 @@ function restoreFlatToneBases(pids) {
 
 function reapplyCommittedTones(pids) {
   const changed = new Set(pids);
-  for (const [key, targets] of flatToneTargets) {
-    if (!key.endsWith('|after') || !targets.some(pid => changed.has(pid))) continue;
-    const value = flatToneCommitted.get(key) || 0;
-    if (value) applySubmittedTone(targets, value);
+  for (const [key, tone] of flatTones) {
+    if (!key.endsWith('|after') || !tone.pids.some(pid => changed.has(pid))) continue;
+    if (tone.committed) applySubmittedTone(tone.pids, tone.committed);
   }
 }
 
@@ -677,9 +565,11 @@ function appendFlatComparison(label, pids, beforeFactory, afterFactory) {
     figure.appendChild(canvas);
 
     const toneKey = `${comparisonKey}|${label}|${version}`;
-    flatToneTargets.set(toneKey, pids.slice());
-    const toneValue = flatToneAdjustments.get(toneKey) || 0;
-    let committedValue = flatToneCommitted.get(toneKey) || 0;
+    const tone = flatTones.get(toneKey) || { shown: 0, committed: 0 };
+    tone.pids = pids.slice();
+    flatTones.set(toneKey, tone);
+    const toneValue = tone.shown;
+    let committedValue = tone.committed;
     const toneControl = document.createElement('label');
     toneControl.className = 'flatToneControl';
     const toneText = document.createElement('span');
@@ -699,7 +589,7 @@ function appendFlatComparison(label, pids, beforeFactory, afterFactory) {
     const toneOutput = document.createElement('output');
     const showToneValue = value => {
       const numeric = Number(value);
-      flatToneAdjustments.set(toneKey, numeric);
+      tone.shown = numeric;
       toneOutput.value = `${numeric > 0 ? '+' : ''}${numeric}`;
       toneOutput.textContent = toneOutput.value;
       if (version === 'before') {
@@ -713,9 +603,9 @@ function appendFlatComparison(label, pids, beforeFactory, afterFactory) {
     if (version === 'after') {
       toneInput.addEventListener('change', () => {
         const numeric = Number(toneInput.value);
-        flatToneAdjustments.set(toneKey, numeric);
+        tone.shown = numeric;
         applySubmittedTone(pids, numeric);
-        flatToneCommitted.set(toneKey, numeric);
+        tone.committed = numeric;
         committedValue = numeric;
         canvas.style.filter = 'none';
         replaceFlatCanvas(canvas, afterFactory());
@@ -873,7 +763,7 @@ function selectWall(w) {
     id: String.fromCharCode(65 + wi), n: w.faces.length,
     w: (w.s1 - w.s0).toFixed(1), h: (w.h1 - w.h0).toFixed(1),
   };
-  $('editorTitle').textContent = virtualNew
+  $('editorTitle').textContent = newAtlas
     ? t('tex.wall_editor_title_new',
         'Assign new photos to wall {id} (auto-split across {n} faces; whole wall {w}×{h} m)',
         wallParams)
@@ -1022,27 +912,15 @@ $('warpCanvas').addEventListener('pointerup', () => { dragIdx = -1; drawWarpCanv
 
 // ---- Keystone correction (homography + grid-subdivided drawing) ----
 function solveHomography(src, dst) {
-  // Solve the projective transform H for dst(x,y) -> src(u,v) (8-unknown system, Gaussian elimination)
+  // Solve the projective transform H for dst(x,y) -> src(u,v) (8 unknowns, exactly: gaussSolve)
   const A = [], b = [];
   for (let i = 0; i < 4; i++) {
     const [x, y] = dst[i], [u, v] = src[i];
     A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
     A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
   }
-  const n = 8;
-  const M = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < n; c++) {
-    let p = c;
-    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    [M[c], M[p]] = [M[p], M[c]];
-    if (Math.abs(M[c][c]) < 1e-12) throw new Error(t('tex.invalid_corners', 'Invalid corner positions (e.g. all on one line)'));
-    for (let r = 0; r < n; r++) {
-      if (r === c) continue;
-      const f = M[r][c] / M[c][c];
-      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
-    }
-  }
-  const h = M.map((row, i) => row[n] / row[i]);
+  const h = gaussSolve(A, b);
+  if (!h) throw new Error(t('tex.invalid_corners', 'Invalid corner positions (e.g. all on one line)'));
   return (x, y) => {
     const d = h[6] * x + h[7] * y + 1;
     return [(h[0] * x + h[1] * y + h[2]) / d, (h[3] * x + h[4] * y + h[5]) / d];
@@ -1127,22 +1005,40 @@ function affineLSQ(srcPts, dstPts) {
   return { a, b, c, d, e, f };
 }
 
+// The one way an edit lands on the faces (one face, a wall, the camera's patches): the faces' tone
+// bases go back first, then prepare() makes the painter (it measures the faces as they are now),
+// paint(face, work) draws into the face's atlas copy and may return the 3D preview (else the face's
+// new box), the faces count as changed, and committed submitted tones are applied again.
+function commitFaces(pids, prepare) {
+  restoreFlatToneBases(pids);
+  const paint = prepare();
+  for (const pid of pids) {
+    const f = faceByPid.get(pid);
+    const work = workCanvas(f.img);
+    const preview = paint(f, work) || faceCrop(f, work);
+    changedFaces.add(pid);
+    postToViewer({ type: 'previewTexture', pid, dataUrl: preview.toDataURL('image/jpeg', 0.92) });
+  }
+  reapplyCommittedTones(pids);
+}
+
 function applySingleFace() {
-  restoreFlatToneBases([selectedFace.pid]);
-  const r = uvRect(selectedFace);
-  const warped = toneCorrect(warpPhoto(r.w, r.h), 'A', replacedTarget([selectedFace]));
-  const work = workCanvas(selectedFace.img);
-  work.getContext('2d').drawImage(warped, r.x, r.y);
-  atlases.get(selectedFace.img).faces.add(selectedFace.pid);
-  changedFaces.add(selectedFace.pid);
-  postToViewer({ type: 'previewTexture', pid: selectedFace.pid,
-                 dataUrl: warped.toDataURL('image/jpeg', 0.92) });
-  reapplyCommittedTones([selectedFace.pid]);
+  const f = selectedFace, r = uvRect(f);
+  commitFaces([f.pid], () => {
+    const warped = toneCorrect(warpPhoto(r.w, r.h), 'A', replacedTarget([f]));
+    return (face, work) => {
+      work.getContext('2d').drawImage(warped, r.x, r.y);
+      return warped;
+    };
+  });
 }
 
 function applyWall() {
   const w = selectedWall;
-  restoreFlatToneBases(w.faces);
+  commitFaces(w.faces, () => wallPainter(w));
+}
+
+function wallPainter(w) {
   // Resolution [px/m]: estimated from member faces' texture density (take the max; long side capped at 4096px)
   let ppm = 0;
   for (const pid of w.faces) {
@@ -1158,10 +1054,8 @@ function applyWall() {
   const wallImg = toneCorrect(warpPhoto(W, H), 'A',
     replacedTarget(w.faces.map(p2 => faceByPid.get(p2)).filter(Boolean)));  // target = current tone of the wall being replaced
 
-  for (const pid of w.faces) {
-    const f = faceByPid.get(pid);
+  return (f, work) => {
     const a = atlases.get(f.img);
-    const work = workCanvas(f.img);
     const iw = a.image.naturalWidth, ih = a.image.naturalHeight;
     const r = uvRect(f);
     // Solve the affine from vertex correspondences (ring2d[i] <-> uv[i]). Wall image coordinates are y-down
@@ -1192,14 +1086,7 @@ function applyWall() {
       const shp = Math.max(1, (Math.max(...hs) - Math.min(...hs)) * ppm);
       ctx.drawImage(wallImg, sx, sy, swp, shp, r.x, r.y, r.w, r.h);
     }
-    a.faces.add(pid);
-    changedFaces.add(pid);
-    const pv = document.createElement('canvas');
-    pv.width = r.w; pv.height = r.h;
-    pv.getContext('2d').drawImage(work, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-    postToViewer({ type: 'previewTexture', pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
-  }
-  reapplyCommittedTones(w.faces);
+  };
 }
 
 // ---- Apply button (branches on wall / single face) ----
@@ -1240,7 +1127,7 @@ function setCompare(on) {
 $('btnCompare').onclick = () => setCompare(!comparing);
 $('btnDiscard').onclick = () => {
   if (changedFaces.size && confirm(t('tex.confirm_discard_all', 'Discard all pending edits?'))) {
-    for (const a of atlases.values()) { a.work = null; a.faces.clear(); }
+    for (const a of atlases.values()) a.work = null;
     changedFaces.clear();
     postToViewer({ type: 'clearPreviews' });
     renderFaces(); renderChangeBar();
@@ -1251,22 +1138,22 @@ $('btnDiscard').onclick = () => {
 $('btnPr').onclick = () => {
   if (!selected || changedFaces.size === 0) return;
   document.querySelector('#modal h2').textContent =
-    virtualNew ? t('tex.modal_title_new', 'Create a pull request (new textures)')
+    newAtlas ? t('tex.modal_title_new', 'Create a pull request (new textures)')
                : t('tex.modal_title_update', 'Create a pull request (texture update)');
   $('modalTarget').textContent =
     t('tex.modal_target', 'Target: {name} (tile {code} / this one building only)',
       { name: selected.buildingID || selected.gid, code: currentTile.code });
-  const imgs = [...atlases.entries()].filter(([, a]) => a.work && a.faces.size);
+  const imgs = [...atlases.entries()].filter(([img, a]) => a.work && atlasFaces(img).length);
   $('modalFaces').innerHTML =
-    (virtualNew
+    (newAtlas
       ? t('tex.modal_faces_new', 'Changed faces: {n} / new images added: {m}:',
           { n: changedFaces.size, m: imgs.length })
       : t('tex.modal_faces_update', 'Changed faces: {n} / images updated: {m}:',
           { n: changedFaces.size, m: imgs.length })) + '<br>' +
     imgs.map(([img, a]) => t('tex.modal_faces_item', '- {img} ({n} faces)', {
-      img: virtualNew
+      img: newAtlas
         ? t('tex.modal_faces_new_atlas', '(new atlas, one image per building)') : esc(img),
-      n: a.faces.size,
+      n: atlasFaces(img).length,
     })).join('<br>');
   $('modalResult').innerHTML = '';
   $('ccAgree').checked = false;
@@ -1281,26 +1168,18 @@ let submitBlocked = true;
 async function loadConfirm() {
   const box = $('submitConfirm');
   box.innerHTML = '<div style="color:var(--muted);font-size:12px"><span class="spinner"></span> ' +
-    t('tex.confirm_loading', 'Collecting what this send will do…') + '</div>';
+    t('common.confirm_loading', 'Collecting what this send will do…') + '</div>';
   let s;
   try { s = await api('/api/submission'); } catch (e) { box.innerHTML = `<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`; return; }
-  const idn = s.identity || {};
   // the policy of the city this proposal goes to (each city publishes its own)
   if (/^[\w.-]+\/[\w.-]+$/.test(s.upstream || '')) document.getElementById('policyLink').href = `https://github.com/${s.upstream}/blob/main/docs/data-contribution-policy.md`;
   const row = (k, v) => `<tr><th style="text-align:left;padding:2px 10px 2px 0;white-space:nowrap">${k}</th><td style="padding:2px 0;word-break:break-all">${v}</td></tr>`;
-  submitBlocked = !s.account || !(idn.name || idn.email) || s.originOk === false;
+  submitBlocked = Boolean(s.blocked);   // the server says why nothing can be sent yet
   box.innerHTML = `<div style="font-size:12px;margin-top:8px;${submitBlocked ? 'color:var(--danger)' : ''}"><b>${submitBlocked
-      ? ((s.account && (idn.name || idn.email) && s.originOk === false)
-          ? t('tex.confirm_origin_bad', 'Nothing can be sent yet: the upload target of this data folder is not your copy under this account. Open the hub and choose the account again (Settings → Change); the hub sets the upload target.')
-          : t('tex.confirm_blocked', 'Nothing can be sent yet. Open the hub, choose the GitHub account for this city (Settings → GitHub account), then open this screen again.'))
-      : t('tex.confirm_lead', 'This is what will happen when you press "Send as shown":')}</b></div>` +
+      ? esc(s.blocked)
+      : t('common.confirm_lead', 'This is what will happen when you press "Send as shown":')}</b></div>` +
     `<table style="border-collapse:collapse;font-size:12px;margin:4px 0">` +
-    row(t('tex.confirm_account', 'GitHub account'), s.account ? `<b>@${esc(s.account)}</b>` : `<span style="color:var(--danger)">${t('tex.confirm_no_account', 'none connected for this city')}</span>`) +
-    row(t('tex.confirm_identity', 'Name recorded with the change'), (idn.name || idn.email) ? `${esc(idn.name)} &lt;${esc(idn.email)}&gt;` : t('tex.confirm_identity_unset', '(not set — choose the account in the hub first)')) +
-    row(t('tex.confirm_origin', 'Uploaded to (your own copy)'), s.origin ? esc(s.origin) : '—') +
-    row(t('tex.confirm_upstream', 'Proposed to (the city)'), esc(s.upstream || '')) +
-    row(t('tex.confirm_faces', 'Faces changed'), String(changedFaces.size)) +
-    row(t('tex.confirm_proposal', 'Proposal'), s.autoPr ? t('tex.confirm_pr_auto', 'opened automatically after the upload') : t('tex.confirm_pr_manual', 'GitHub opens for the final step (one green button)')) +
+    submissionRows(s, [[t('tex.confirm_faces', 'Faces changed'), String(changedFaces.size)]]).map(([k, v]) => row(k, v)).join('') +
     `</table>`;
   $('btnSubmit').disabled = submitBlocked || !$('ccAgree').checked;
 }
@@ -1322,21 +1201,17 @@ $('btnSubmit').onclick = async () => {
   try {
     const images = [];
     for (const [img, a] of atlases.entries()) {
-      if (a.work && a.faces.size) {
+      if (a.work && atlasFaces(img).length) {
         images.push({ orig: img, data: await canvasToBase64(a.work) });
       }
     }
     const res = await api('/api/pr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tile: currentTile.code,
-        gid: selected.gid,
-        faceCount: changedFaces.size,
-        reason: $('prReason').value,
-        consentCC0: $('ccAgree').checked,
-        images,
-      }),
+      tile: currentTile.code,
+      gid: selected.gid,
+      faceCount: changedFaces.size,
+      reason: $('prReason').value,
+      consentCC0: $('ccAgree').checked,
+      images,
     });
     let html = t('tex.pr_result_branch', '✅ Branch {branch} (commit {commit})',
       { branch: `<b>${esc(res.branch)}</b>`, commit: esc(res.commit) });
@@ -1346,7 +1221,7 @@ $('btnSubmit').onclick = async () => {
       t('tex.pr_create_here', 'Create the pull request from here') + '</a>';
     if (res.note) html += `<br><span style="color:var(--muted)">${esc(res.note)}</span>`;
     $('modalResult').innerHTML = html;
-    for (const a of atlases.values()) { a.work = null; a.faces.clear(); }
+    for (const a of atlases.values()) a.work = null;
     changedFaces.clear();
     postToViewer({ type: 'clearPreviews' });
     renderChangeBar();
@@ -1387,12 +1262,9 @@ function readTone(which) {
     { $('toneStrength' + w + 'v').textContent = $('toneStrength' + w).value + '%'; };
 });
 
-// Region statistics of a canvas/image (Y mean, Y std dev, Cb/Cr means; transparent pixels excluded, subsampled)
-function regionStats(src, sx, sy0, sw, sh) {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
-  c.getContext('2d').drawImage(src, sx, sy0, sw, sh, 0, 0, c.width, c.height);
-  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+// Tone statistics of RGBA pixels: Y mean and std dev, Cb/Cr means (n pixels counted; transparent
+// ones excluded; every 4th pixel)
+function yccStats(d) {
   let n = 0, sy = 0, sy2 = 0, scb = 0, scr = 0;
   for (let i = 0; i < d.length; i += 16) {
     if (d[i + 3] === 0) continue;
@@ -1402,19 +1274,22 @@ function regionStats(src, sx, sy0, sw, sh) {
     scr += 128 + (d[i] - y) * 0.713;
     n++;
   }
-  if (n < 16) return null;
   const my = sy / n;
-  return {
-    y_mean: my,
-    y_std: Math.sqrt(Math.max(1, sy2 / n - my * my)),
-    cb_mean: scb / n,
-    cr_mean: scr / n,
-  };
+  return { n, y_mean: my, y_std: Math.sqrt(Math.max(1, sy2 / n - my * my)), cb_mean: scb / n, cr_mean: scr / n };
+}
+
+// The statistics of a region of a canvas/image (null when too few pixels are counted)
+function regionStats(src, sx, sy0, sw, sh) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
+  c.getContext('2d').drawImage(src, sx, sy0, sw, sh, 0, 0, c.width, c.height);
+  const st = yccStats(c.getContext('2d').getImageData(0, 0, c.width, c.height).data);
+  return st.n < 16 ? null : st;
 }
 
 // Use statistics of the faces being replaced (current appearance = work preferred) as the target
 function replacedTarget(faceList) {
-  if (virtualNew) return null;  // new assignment: the "current tone" is a blank placeholder, so don't match it
+  if (newAtlas) return null;  // new assignment: the "current tone" is a blank placeholder, so don't match it
   let n = 0, acc = { y_mean: 0, y_std: 0, cb_mean: 0, cr_mean: 0 };
   for (const f of faceList) {
     const a = atlases.get(f.img);
@@ -1435,24 +1310,14 @@ function replacedTarget(faceList) {
 function toneCorrect(canvas, which, target) {
   const t = readTone(which);
   // For new assignments, don't apply the citywide standard (tone_standard) either (cities without a standard use the photo as-is)
-  const ref0 = target || (virtualNew ? null : toneStandard);
+  const ref0 = target || (newAtlas ? null : toneStandard);
   if ((!ref0 || t.strength === 0) && !t.bright && !t.temp) return canvas;
   const ctx = canvas.getContext('2d');
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = img.data;
-  // Statistics (transparent pixels excluded; subsampled every 4 pixels)
-  let n = 0, sy = 0, sy2 = 0, scb = 0, scr = 0;
-  for (let i = 0; i < d.length; i += 16) {
-    if (d[i + 3] === 0) continue;
-    const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    sy += y; sy2 += y * y;
-    scb += 128 + (d[i + 2] - y) * 0.564;
-    scr += 128 + (d[i] - y) * 0.713;
-    n++;
-  }
-  if (!n) return canvas;
-  const my = sy / n, sd = Math.sqrt(Math.max(1, sy2 / n - my * my));
-  const mcb = scb / n, mcr = scr / n;
+  const st = yccStats(d);
+  if (!st.n) return canvas;
+  const my = st.y_mean, sd = st.y_std, mcb = st.cb_mean, mcr = st.cr_mean;
   const ref = ref0 || { y_mean: my, y_std: sd, cb_mean: mcb, cr_mean: mcr };
   const k = ref0 ? t.strength : 0;
   const gain = 1 + k * (Math.min(1.6, ref.y_std / sd) - 1);
@@ -1938,12 +1803,8 @@ $('btnCamCandidates').onclick = () => {
 function camPreviewCandidate(c, on) {
   // 3D preview: send the appearance with the patch overlaid on the current texture
   const f = faceByPid.get(c.pid);
-  const src = atlases.get(f.img).work || atlases.get(f.img).image;
-  const pv = document.createElement('canvas');
-  pv.width = c.r.w; pv.height = c.r.h;
-  const ctx = pv.getContext('2d');
-  ctx.drawImage(src, c.r.x, c.r.y, c.r.w, c.r.h, 0, 0, c.r.w, c.r.h);
-  if (on) ctx.drawImage(c.patch, 0, 0);
+  const pv = faceCrop(f, atlases.get(f.img).work || atlases.get(f.img).image);
+  if (on) pv.getContext('2d').drawImage(c.patch, 0, 0);
   postToViewer({ type: 'previewTexture', pid: c.pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
 }
 
@@ -1974,24 +1835,12 @@ function camRenderCandidates() {
 }
 
 $('btnCamApply').onclick = () => {
-  let applied = 0;
-  const applyingPids = camCandidates.filter(c => c.checked).map(c => c.pid);
-  restoreFlatToneBases(applyingPids);
-  for (const c of camCandidates) {
-    if (!c.checked) continue;
-    const f = faceByPid.get(c.pid);
-    const work = workCanvas(f.img);
+  const chosen = new Map(camCandidates.filter(c => c.checked).map(c => [c.pid, c]));
+  const applied = chosen.size;
+  commitFaces([...chosen.keys()], () => (f, work) => {
+    const c = chosen.get(f.pid);
     work.getContext('2d').drawImage(c.patch, c.r.x, c.r.y);
-    atlases.get(f.img).faces.add(c.pid);
-    changedFaces.add(c.pid);
-    camPreviewCandidate(c, false);  // baked into work, so the current crop = post-apply appearance
-    const pv = document.createElement('canvas');
-    pv.width = c.r.w; pv.height = c.r.h;
-    pv.getContext('2d').drawImage(work, c.r.x, c.r.y, c.r.w, c.r.h, 0, 0, c.r.w, c.r.h);
-    postToViewer({ type: 'previewTexture', pid: c.pid, dataUrl: pv.toDataURL('image/jpeg', 0.92) });
-    applied++;
-  }
-  reapplyCommittedTones(applyingPids);
+  });
   camCandidates = [];
   $('camFaces').innerHTML = '';
   $('camApplyBar').style.display = 'none';
@@ -2005,22 +1854,6 @@ $('btnCamApply').onclick = () => {
 };
 
 
-// Show unexpected errors on screen (so beginners can see them without opening the console)
-window.addEventListener('error', ev => showErrBanner(ev.message));
-window.addEventListener('unhandledrejection', ev => showErrBanner(String(ev.reason)));
-function showErrBanner(msg) {
-  let b = document.getElementById('errBanner');
-  if (!b) {
-    b = document.createElement('div');
-    b.id = 'errBanner';
-    b.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);' +
-      'background:#c92a2a;color:#fff;padding:8px 16px;border-radius:8px;z-index:5000;' +
-      'font-size:12px;max-width:80vw;box-shadow:0 2px 10px rgba(0,0,0,.3)';
-    b.onclick = () => b.remove();
-    document.body.appendChild(b);
-  }
-  b.textContent = '⚠ Error: ' + msg + ' (click to close)';
-}
 
 init();
 </script>

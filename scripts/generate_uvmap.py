@@ -25,19 +25,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts import citygml_faces  # noqa: E402
+from scripts import citygml_faces, citygml_xml  # noqa: E402
 from scripts.safe_xml import safe_parse  # noqa: E402
 
-DEFAULT_GML = (
-    REPO_ROOT
-    / "13101_chiyoda-ku_pref_2023_citygml_1_op/udx/bldg/53394611_bldg_6697_op.gml"
-)
-DEFAULT_OUTPUT = REPO_ROOT / "docs/appearance/uvmap.json"
-
-NS_BLDG = "http://www.opengis.net/citygml/building/2.0"
-NS_GML = "http://www.opengis.net/gml"
-NS_APP = "http://www.opengis.net/citygml/appearance/2.0"
-NS_XLINK = "http://www.w3.org/1999/xlink"
+NS_BLDG, NS_GML, NS_APP, NS_XLINK = citygml_xml.BLDG, citygml_xml.GML, citygml_xml.APP, citygml_xml.XLINK
 
 
 def collect_target_polygons(root, bldg_ids: list[str] | None) -> set[str]:
@@ -80,9 +71,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate uvmap.json from CityGML"
     )
-    parser.add_argument("--gml", type=Path, default=DEFAULT_GML)
+    parser.add_argument("--gml", type=Path, required=True, help="the CityGML file (W3: the default named a dataset this repository never had)")
     parser.add_argument("--bldg-ids", nargs="*", help="Target building gml:ids (default: all buildings)")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path, required=True, help="uvmap.json to write or merge into")
     args = parser.parse_args()
 
     print(f"parsing: {args.gml.name}")

@@ -6,7 +6,7 @@
 **Status: policy v1 (2026-09).** This document fixes *what a bulk submission
 must contain* and *how it is verified*. For the identity kinds the gates are
 implemented in this repository (`scripts/commit_building_scope.py`,
-`scripts/identity_manifest.py`, `scripts/source_update_manifest.py`,
+`scripts/identity_manifest.py`, `dialects/plateau/source_update_manifest.py`,
 `scripts/fetch_materials.py`, CI gate `reproduction`); they still have to be exercised on a real repository during the
 private pilot before the identity PR types are unlocked
 ([Implementation status](implementation-status.md)).
@@ -26,7 +26,7 @@ program** from a declared source, rather than edited building by building:
 | `source-update` | applies an official annual edition, one building per commit | per-building trailers |
 | `identity-baseline` | unifies historical `uro:buildingID` values to the current edition, one building per commit | `identity-baseline` (gated; pilot pending) |
 | `identity-correction` | fixes a mis-linked ID in published history | `identity-correction` (gated; pilot pending) |
-| `carry-forward` | re-bases the repository's accumulated changes onto a new official edition (three-way merge per building and semantic attribute; the edition change itself) | per-building trailers + `Carry-Forward-From:` |
+| `carry-forward` | re-bases the repository's accumulated changes onto a new official edition (three-way merge per building and semantic attribute; the edition change itself) | per-building trailers |
 | `schema-update` | adds an edition's artifacts (code lists, schema profile); no GML change | `schema-update` (gated: artifact paths only) |
 | `schema-migration` | when the repository is the master and no official new-edition file exists: generates the new edition's serialization from the repository's content (registry-driven re-serialization of the i-UR subtree; CityGML 3.0 core via 3DCityDB) | `schema-migration` (designed; gate = semantic equality per registry key + reproduction, not yet implemented) |
 | `layout` | semantics-preserving mesh subdivision | `layout` |
@@ -72,7 +72,7 @@ machine; 5–6 by the city's maintainers.
 1. **A plan issue, opened before the PR** (Part B of the exchange contract).
    It states scope (city, meshes, editions), sources (URLs), the tool and
    version to be used, the order of PRs, and the expected counts. The PR body
-   links it (`Plan-Issue:`).
+   links it (GitHub's issue reference, for example `Refs #12`).
 2. **A provenance manifest file committed in the PR**, at
    `provenance/<kind>/<mesh>-<edition_from>-<edition_to>.json`, conforming to
    [`schemas/provenance/bulk-manifest.schema.json`](../schemas/provenance/bulk-manifest.schema.json)
@@ -93,16 +93,16 @@ machine; 5–6 by the city's maintainers.
      `centroid_m`, `hausdorff_m`, `area_ratio`, `competitor_iou`, `chain`),
      and every building deliberately **not** linked with its reason. For
      `source-update`: the allowed attribute paths, old/new values, and the
-     target ID set (the existing `History-Manifest` fields).
+     target ID set.
 3. **Commit trailers on every data commit** (exchange contract A2), plus
    `Provenance-Manifest: <path>@sha256:<hex>` pointing at the manifest file,
    and `Created-By: <tool>/<version>` naming the generator. `identity-*`
    commits carry `Building-ID-From:` / `Building-ID-To:` and
    `Identity-Evidence: tier=…;method=…;iou=…;centroid_m=…;chain=…`.
-4. **PR body fields** in the template's "Source / manifest" section:
-   `Source-From`, `Source-To`, `Scope-Mesh`, `Provenance-Manifest`,
-   `Manifest-SHA256`, `Building-Count`, `Plan-Issue`, and the reason section
-   (`<!--sec:reason-->`) stating in one paragraph what was generated and why.
+4. **The reason section** of the PR body (`<!--sec:reason-->`, A1) stating in
+   one paragraph what was generated and why. Everything else (sources, scope,
+   counts, digests) is in the manifest, and what people read is generated from
+   the history; the PR body repeats none of it.
 5. **A dedicated submitting account.** Bulk PRs are opened by a conversion
    account (or a GitHub App), not by a maintainer's personal account, so that
    human edits and machine conversions are separable in the audit trail. The
@@ -170,7 +170,7 @@ Only when every item passes is the PR mergeable. Merge method: merge commit
 
 ### 4.2 Implementation (source-update, one attribute family)
 
-- **Generate**: `python3 scripts/source_update_manifest.py generate --mesh … --municipality …
+- **Generate**: `python3 dialects/plateau/source_update_manifest.py generate --mesh … --municipality …
   --family storeys --current <repository GML at the parent commit> --current-label 2024
   --edition-new 2025=<official GML> --product <repo path> --tools-commit <sha> --plan-issue <url>
   --output provenance/source-update/<mesh>-2024-2025-storeys.json`. Targets are
@@ -180,8 +180,8 @@ Only when every item passes is the PR mergeable. Merge method: merge commit
   whose tag/value is ambiguous inside the building, are listed under
   `evidence.excluded` with a reason and are **not** applied: such edition
   restructurings are handled by `carry-forward` (§4.3).
-- **Commits**: one `Building: <id>` commit per target with `Attribute-Family:`,
-  `Source-To:` and `Provenance-Manifest:` trailers.
+- **Commits**: one `Building: <id>` commit per target with the
+  `Provenance-Manifest:` trailer.
 - **Gate (commit scope)**: one manifest per PR, every changed building among
   the manifest's targets exactly once, the building's bytes equal to the
   parent's bytes with the manifest's changes applied, all targets applied.
@@ -190,7 +190,7 @@ Only when every item passes is the PR mergeable. Merge method: merge commit
 
 ### 4.3 Implementation (carry-forward: edition change)
 
-- **Generate**: `python3 scripts/carry_forward_manifest.py generate --mesh … --municipality …
+- **Generate**: `python3 dialects/plateau/carry_forward_manifest.py generate --mesh … --municipality …
   --base <previous official edition> --current <repository file> --new <new official edition>
   --product <repo path> …`. Per building and semantic key
   ([registry](semantic-registry.md)) the tool compares the previous official
@@ -212,9 +212,9 @@ Only when every item passes is the PR mergeable. Merge method: merge commit
   next `source-baseline`; when codes are carried, the old edition's code lists
   are committed first under `codelists/<edition>/` (`commits --codelists-from`);
   the reapplied values follow as one `Building:` commit per building
-  (`Carry-Forward-From:` trailer), gated exactly like `source-update` (§4.2),
+  gated exactly like `source-update` (§4.2),
   and the `reproduction` gate regenerates the manifest from the three
-  materials. `scripts/carried_codespace_report.py` counts what is still
+  materials. `dialects/plateau/carried_codespace_report.py` counts what is still
   carried before an official export.
 
 ## 5. Merge and rollback

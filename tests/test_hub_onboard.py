@@ -23,7 +23,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import shutil
 
-from tests.support import EnglishEnv, TempHome, accounts, fake_git, runtime
+from tests.support import MUNICH, EnglishEnv, TempHome, accounts, fake_git, runtime
+import dialects
+
+PLATEAU_NOT_SOURCES = dialects.dialect("plateau").sources.not_sources   # 898 unknown, 999 not created
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("hub_app", REPO_ROOT / "tools" / "hub" / "app.py")
@@ -112,7 +115,7 @@ class TestSetupHtml(unittest.TestCase):
                             {"DEFAULT_DEST": "C:\\Users\\someone\\Documents\\CityGML Data (x)", "X": "</script><b>"}).decode("utf-8")
         self.assertIn('window.CITYGML = {"DEFAULT_DEST": "C:\\\\Users\\\\someone', html)
         self.assertNotIn("</script><b>", html)
-        self.assertIn("const { UPSTREAM, DEFAULT_DEST, MODE } = window.CITYGML;", setup_html())
+        self.assertIn("const { UPSTREAM, DEFAULT_DEST, MODE, START } = window.CITYGML;", setup_html())
 
     def test_hand_over_screen_lists_traces_and_removes_only_our_own(self):
         h = setup_html()
@@ -124,7 +127,8 @@ class TestSetupHtml(unittest.TestCase):
     def test_clone_steps_explain_waiting_and_safe_retry(self):
         h = setup_html()
         self.assertIn("Creating (up to 1 minute)", h)
-        self.assertIn("The progress text may not change for several minutes", h)
+        self.assertIn("Received so far: <b>{received}</b>", h)   # git's own count, not a size said in advance (#58)
+        self.assertNotIn("several GB", h)
         self.assertIn("Import again to an empty location", h)
         self.assertIn("The partial data is kept, not deleted", h)
         self.assertIn("st.dest !== c.dest", h)
@@ -138,10 +142,9 @@ class TestSetupHtml(unittest.TestCase):
 
     def test_status_poll_keeps_current_screen_on_temporary_error(self):
         h = setup_html()
-        self.assertIn("if (s.ok === false) throw new Error", h)
-        self.assertIn("Checking the status is temporarily delayed", h)
+        self.assertIn("try {\n    const s = await api('/api/setup/status');", h)   # a failed answer throws (common.js)
+        self.assertNotIn("Check your internet connection and wait", h)   # #57: a stopped hub is not the internet
         self.assertIn("Checking the connection status", h)
-        self.assertIn("It checks again automatically", h)
 
 
 class TestPostSetupDashboard(unittest.TestCase):
@@ -185,22 +188,14 @@ class TestPostSetupDashboard(unittest.TestCase):
         self.assertIn("Re-run automated checks", self.html)
         self.assertIn("/retry", self.html)
 
-    def test_feedback_is_submitted_inside_hub_with_defaults_and_badge(self):
-        self.assertIn('id="feedbackBack"', self.html)
-        self.assertIn("Send it to the maintainer from this screen, without opening GitHub.", self.html)
-        self.assertIn("you do not need to sign in to GitHub again", self.html)
-        self.assertIn("const d = await api('/api/feedback')", self.html)
-        self.assertIn("method: 'POST'", self.html)
-        self.assertIn("Reference for the maintainer", self.html)
-        self.assertIn("merged PRs", self.html)
-        self.assertIn("navigator.userAgent", self.html)
-        self.assertIn('id="feedbackSubmit" class="primary" disabled>Send</button>', self.html)
-        self.assertIn("Missing required fields", self.html)
-        self.assertIn("All required fields are filled in. Ready to send.", self.html)
-        self.assertNotIn("value.trim().length >= 5", self.html)
-        self.assertNotIn("Create an issue with this content", self.html)
-        self.assertIn("Sent to the maintainer", self.html)
-        self.assertNotIn('id="feedback" href=', self.html)
+    def test_feedback_is_written_on_github(self):
+        # V4: the in-hub form (about 250 lines) goes; the hub links to the city's own issue page,
+        # whose forms (the organisation's .github) are GitHub's
+        self.assertIn('id="feedbackOpen"', self.html)
+        self.assertIn("s.issuesUrl", self.html)
+        self.assertNotIn("feedbackBack", self.html)
+        self.assertNotIn("/api/feedback", self.html)
+        self.assertFalse(hasattr(hub.Hub, "submit_feedback"))
 
 
 class TestAttributeEditorFirstUse(unittest.TestCase):
@@ -283,10 +278,12 @@ class TestOneDistribution(unittest.TestCase):
     def test_the_hub_zip_is_the_only_client_distribution(self):
         # hub-v1.2: cities distribute no code and the editors travel inside the hub zip;
         # the earlier standalone attribute-editor zips (release-attr-editor.yml) are retired.
-        # The tools-v series (release-tools.yml) carries city processing, not a client.
+        # The tools-v series (release-tools.yml) carries city processing, not a client; release-publish.yml
+        # is the one publishing job both call.
         workflows = sorted(p.name for p in (REPO_ROOT / ".github" / "workflows").glob("release-*.yml"))
-        self.assertEqual(workflows, ["release-hub.yml", "release-tools.yml"])
+        self.assertEqual(workflows, ["release-hub.yml", "release-publish.yml", "release-tools.yml"])
         self.assertFalse((REPO_ROOT / "tools" / "attr_editor" / "packaging").exists())
+        self.assertFalse((REPO_ROOT / "tools" / "hub" / "packaging").exists())   # the installer's launchers replaced them (#59)
 
 
 class TestEditor3DPreviews(unittest.TestCase):
@@ -340,7 +337,7 @@ class TestEditor3DPreviews(unittest.TestCase):
         self.assertIn("version === 'before' ? atlas.image", self.tex_index)
 
     def test_flat_comparison_has_independent_display_tone_sliders(self):
-        self.assertIn("const flatToneAdjustments = new Map()", self.tex_index)
+        self.assertIn("const flatTones = new Map()", self.tex_index)   # T0: one map per slider (shown, committed, pids)
         self.assertIn("toneInput.type = 'range'", self.tex_index)
         self.assertIn("? t('tex.tone_display', 'Display tone') : t('tex.tone_submit', 'Submitted tone')", self.tex_index)
         self.assertIn("canvas.style.filter = `brightness(", self.tex_index)
@@ -392,7 +389,7 @@ class TestAttributeEditorSourceAndPrBody(_EnglishEnv):
                 attr.validate_source_selections(
                     self.changes,
                     [{"key": "storeysAboveGround#0", "code": code}],
-                    self.codes,
+                    self.codes, PLATEAU_NOT_SOURCES,
                 )
 
     def test_server_resolves_selected_code_to_authoritative_label(self):
@@ -479,6 +476,7 @@ class TestAttributeEditorSourceAndPrBody(_EnglishEnv):
             repo = object.__new__(attr.Repo)
             repo.root = root
             repo._tile_cache = {}
+            repo._id_rule = attr.building_identity.IdentityRule("uro:buildingID")
             repo.tile_files = lambda: {"tile": path}
             result = repo.apply_edits(
                 "tile",
@@ -500,6 +498,9 @@ class TestSavedOAuthPrCreation(_EnglishEnv):
         self.repo = object.__new__(attr.Repo)
         self.repo.root = None
         self.repo._origin_nwo = lambda: "beginner/sample-munich-station"
+        self._city = patch.dict(os.environ, {"CITYGML_UPSTREAM": "4dcitygml/sample-munich-station"})   # as the launcher names it
+        self._city.start()
+        self.addCleanup(self._city.stop)
         accounts.save_account("tester", "saved-token", 1)
         self._login = patch.object(accounts, "login_for_clone", lambda root: "tester")
         self._login.start()
@@ -563,6 +564,7 @@ class TestAttributeEditorPretest(_EnglishEnv):
         super().setUp()
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
+        (root / "4dcitygml.json").write_text('{"building_id": {"type": "uro:buildingID"}, "dialect": "plateau", "data_dirs": ["city"], "crs": "EPSG:6697"}', encoding="utf-8")   # PLATEAU data
         bldg = root / "city/udx/bldg"
         bldg.mkdir(parents=True)
         codelists = root / "city/codelists"
@@ -626,7 +628,7 @@ class TestAttributeEditorPretest(_EnglishEnv):
         # A city that identifies buildings by a generic attribute (building_id.type gen:<NAME>):
         # the "Target building" line names that id, like the buildingID the proposal carries.
         root = Path(self.temp.name)
-        (root / "4dcitygml.json").write_text('{"building_id": {"type": "gen:BIN"}}', encoding="utf-8")
+        (root / "4dcitygml.json").write_text('{"building_id": {"type": "gen:BIN"}, "dialect": "plateau", "data_dirs": ["city"]}', encoding="utf-8")
         self.gml.write_text(
             '<?xml version="1.0" encoding="UTF-8"?>'
             '<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" '
@@ -683,7 +685,7 @@ class TestAttrServerMessagesJapanese(_EnglishEnv):
             attr.validate_source_selections(
                 self.changes,
                 [{"key": "storeysAboveGround#0", "code": "898"}],
-                self.codes,
+                self.codes, PLATEAU_NOT_SOURCES,
             )
         self.assertEqual(
             str(ctx.exception),
@@ -755,15 +757,17 @@ class TestReleaseWorkflowsAreGated(unittest.TestCase):
     def test_publishing_is_one_job_gated_by_the_production_environment(self):
         # docs/production-protection.md: builds and smoke tests run unattended; the
         # only job that touches a Release waits for the production approval.
+        publish = (REPO_ROOT / ".github" / "workflows" / "release-publish.yml").read_text(encoding="utf-8")
+        self.assertEqual(publish.count("environment: production"), 1)
+        self.assertEqual(publish.count("gh release upload"), 1)
+        self.assertEqual(publish.count("gh release create"), 1)
         for name in ("release-hub.yml", "release-tools.yml"):
             workflow = (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-            self.assertEqual(workflow.count("environment: production"), 1, name)
             release_job = workflow[workflow.index("\n  release:\n"):]
-            self.assertIn("environment: production", release_job, name)
-            self.assertEqual(workflow.count("gh release upload"), 1, name)
-            self.assertIn("gh release upload", release_job, name)
+            self.assertIn("uses: ./.github/workflows/release-publish.yml", release_job, name)
+            self.assertNotIn("gh release", workflow, name)
             self.assertIn("release_tag:", workflow, name)
-            self.assertIn('RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}', release_job, name)
+            self.assertIn("tag: ${{ inputs.release_tag || github.ref_name }}", release_job, name)
 
 
 class TestWindowsBundle(unittest.TestCase):
@@ -795,7 +799,7 @@ class TestWindowsBundle(unittest.TestCase):
         self.assertNotIn("releases/latest", self.workflow)
         self.assertNotIn("pip install pyinstaller", self.workflow)
         self.assertIn("needs: [windows, macos-zip]", self.workflow)
-        self.assertIn("GH_REPO: ${{ github.repository }}", self.workflow)
+        self.assertIn("uses: ./.github/workflows/release-publish.yml", self.workflow)
 
     def test_program_folder_is_the_one_shared_location(self):
         # program/ in the bundle, tools/ in the source tree: the folder that holds runtime.py
@@ -857,7 +861,7 @@ class TestWindowsBundle(unittest.TestCase):
             (root / "x").mkdir(); (root / "x" / "a.gml").write_text("<x/>")
             subprocess.run([git, "-C", d, "init", "-q"], check=True)
             subprocess.run([git, "-C", d, "remote", "add", "origin", "https://github.com/olduser/sample-munich-station.git"], check=True)
-            h = hub.Hub(root)
+            h = hub.Hub(root, hub.SESSION)
             self.assertTrue(h.ensure_origin("NewUser/sample-munich-station"))
             self.assertEqual(h.nwo(), "NewUser/sample-munich-station")
             self.assertFalse(h.ensure_origin("newuser/sample-munich-station"))   # same fork, case-insensitive: untouched
@@ -878,7 +882,7 @@ class TestWindowsBundle(unittest.TestCase):
         with TempHome() as home:
             accounts.save_account("tester", "secret-token", 1)
             self.assertEqual(accounts.credentials_path("tester").read_text(encoding="utf-8"),
-                             "https://x-access-token:secret-token@github.com\n")
+                             accounts.store_line("secret-token"))
             store = accounts.store_for("tester")
             self.assertEqual(store, home / ".citygml" / "auth" / "tester.git-credentials")
             for exe, bundled in (("C:/bundle/git.exe", True), ("/usr/bin/git", False)):
@@ -900,7 +904,7 @@ class TestWindowsBundle(unittest.TestCase):
         fake_run = lambda args, **kwargs: seen.append(args) or SimpleNamespace(returncode=0, stdout="true\n")
         with fake_git("/bundle/PortableGit/cmd/git.exe", True), patch.object(runtime.subprocess, "run", fake_run):
             with tempfile.TemporaryDirectory() as d:
-                self.assertEqual(hub.Hub(Path(d))._git("status"), "true")
+                self.assertEqual(hub.Hub(Path(d), hub.SESSION)._git("status"), "true")
         self.assertEqual(seen[0][0], "/bundle/PortableGit/cmd/git.exe")
 
 class TestAuthFlow(_EnglishEnv):
@@ -912,7 +916,7 @@ class TestAuthFlow(_EnglishEnv):
         self._home.__enter__()
         self.acc = accounts
         for target, name, value in (
-            (hub, "oauth_client_id", lambda: "test-client-id"),
+            (hub.session, "oauth_client_id", lambda: "test-client-id"),
             (runtime, "github_user_status", lambda token: ((200, {"login": "tester", "id": 1}) if token and token != "dead"
                                                           else (401, None) if token == "dead" else (0, None))),
             (runtime, "post_form", lambda url, f, timeout=15: {"error": "expired_token"}),
@@ -933,14 +937,14 @@ class TestAuthFlow(_EnglishEnv):
         self.addCleanup(p.stop)
 
     def test_requires_client_id(self):
-        hub.oauth_client_id = lambda: ""
+        self.patch(hub.session, "oauth_client_id", lambda: "")
         with self.assertRaises(RuntimeError):
             self.mgr.start()
 
     def test_start_returns_user_code(self):
         # dispatch responses by URL (the token endpoint keeps returning "authorization pending")
         def fake(url, f, timeout=15):
-            if url == hub.DEVICE_CODE_URL:
+            if url == hub.session.DEVICE_CODE_URL:
                 return {"device_code": "dc", "user_code": "ABCD-1234",
                         "verification_uri": "https://github.com/login/device",
                         "interval": 30, "expires_in": 900}
@@ -1037,6 +1041,18 @@ class TestAuthFlow(_EnglishEnv):
         self.assertEqual(session.city, "4dcitygml/sample-munich-station")
         self.assertEqual(self.acc.city_login("4dcitygml/sample-munich-station"), "tester")
 
+    def test_the_hub_follows_a_rebind_by_another_process(self):
+        # V2 / D-3c5: the hub kept login and token in memory, so a rebind (or a forgotten
+        # account) by another hub or tool was not seen; it reads the settings and the store
+        self.acc.save_account("tester", "saved-token", 1)
+        self.acc.save_account("other", "other-token", 2)
+        self.assertIsNone(self.mgr.use_saved("tester"))
+        self.assertEqual((self.mgr.login, self.mgr.token()), ("tester", "saved-token"))
+        self.acc.bind_city_login(self.mgr.city, "other")            # written by another process
+        self.assertEqual((self.mgr.login, self.mgr.token()), ("other", "other-token"))
+        self.acc.delete_account("other")
+        self.assertEqual((self.mgr.login, self.mgr.token()), (None, ""))
+
     def test_renamed_or_recased_account_keeps_one_file(self):
         self.acc.save_account("Tester", "saved-token", 1)      # stored under the old spelling
         self.assertIsNone(self.mgr.use_saved("Tester"))        # GitHub answers "tester"
@@ -1049,7 +1065,7 @@ class TestAuthFlow(_EnglishEnv):
         self.session.fork.clear()
         def offline(token, login, upstream):
             raise hub.urllib.error.URLError("no network")
-        with patch.object(hub, "find_fork", offline):
+        with patch.object(hub.session, "find_fork", offline):
             payload = self.session.settings_payload()
         self.assertEqual(payload["login"], "tester")
         self.assertIsNone(payload["fork"])
@@ -1088,7 +1104,7 @@ class TestAuthFlow(_EnglishEnv):
     def test_stale_401_never_deletes_a_newer_binding(self):
         self.acc.save_account("dead-one", "dead", 1)
         self.acc.save_account("tester", "saved-token", 2)
-        self.mgr.login, self.mgr._token = "dead-one", "dead"
+        self.acc.bind_city_login(self.mgr.city, "dead-one")   # the binding in the settings is the login
         real = runtime.github_user_status
         def slow_then_rebound(token):
             if token == "dead":
@@ -1107,7 +1123,6 @@ class TestAuthFlow(_EnglishEnv):
         runtime.github_user_status = lambda token: self.fail("no network for a label")
         st = self.mgr.state()
         self.assertEqual(st["machine"], {"login": "mach"})
-        self.assertFalse(st["machineChecking"])
 
     def test_disconnect_clears_the_clone_identity(self):
         git = shutil.which("git")
@@ -1125,7 +1140,7 @@ class TestAuthFlow(_EnglishEnv):
 
     def test_legacy_review_removes_only_on_request(self):
         legacy = runtime.legacy_credentials_path()
-        legacy.write_text("https://x:y@github.com\n")
+        legacy.write_text(accounts.store_line("y"))
         st = self.mgr.state()
         self.assertTrue(st["legacy"]["plainStore"])
         self.assertFalse(st["legacyReviewed"])
@@ -1167,7 +1182,7 @@ class TestAuthFlow(_EnglishEnv):
 
 class TestFork(unittest.TestCase):
     def test_create_fork_requires_login(self):
-        nwo, err = hub.create_fork("", None, "4dcitygml/sample-munich-station")
+        nwo, err = hub.session.create_fork("", None, "4dcitygml/sample-munich-station")
         self.assertIsNone(nwo)
         self.assertIn("GitHub", err)
 
@@ -1175,15 +1190,38 @@ class TestFork(unittest.TestCase):
         calls = []
         def fake_api(path, token, method="GET", payload=None, timeout=30):
             calls.append((method, path))
-            return 200, {"fork": True, "full_name": "tester/sample-munich-station"}
+            return 200, {"fork": True, "full_name": "tester/sample-munich-station",
+                         "parent": {"full_name": "4dcitygml/sample-munich-station"}}
         with patch.object(runtime, "github_api", fake_api), TempHome():
-            nwo, err = hub.create_fork("tok", "tester", "4dcitygml/sample-munich-station")   # the session's login (C7)
+            nwo, err = hub.session.create_fork("tok", "tester", "4dcitygml/sample-munich-station")   # the session's login (C7)
         self.assertEqual(nwo, "tester/sample-munich-station")
         self.assertIsNone(err)
         self.assertEqual([m for m, _ in calls], ["GET"])  # POST /forks is never called
 
+    def test_a_fork_of_another_city_is_never_adopted(self):
+        # D-3a1: a fork was found by its name alone; tester/sample-munich-station forked from
+        # another city was adopted and the push went there. The parent decides, and the
+        # idempotent POST /forks names this city's own copy (renamed, as GitHub does)
+        calls = []
+
+        def fake_api(path, token, method="GET", payload=None, timeout=30):
+            calls.append((method, path))
+            if path == "/repos/tester/sample-munich-station":
+                return 200, {"fork": True, "full_name": "tester/sample-munich-station",
+                             "parent": {"full_name": "other-city/sample-munich-station"}}
+            if method == "POST":
+                return 202, {"full_name": "tester/sample-munich-station-1"}
+            if path == "/repos/tester/sample-munich-station-1":
+                return 200, {"fork": True, "full_name": "tester/sample-munich-station-1",
+                             "parent": {"full_name": "4dcitygml/sample-munich-station"}}
+            return 404, {}
+        with patch.object(runtime, "github_api", fake_api), patch.object(hub.time, "sleep", lambda s: None), TempHome():
+            self.assertIsNone(hub.session.find_fork("tok", "tester", "4dcitygml/sample-munich-station"))
+            self.assertEqual(hub.session.create_fork("tok", "tester", "4dcitygml/sample-munich-station"),
+                             ("tester/sample-munich-station-1", None))
+
     def test_upstream_nwo(self):
-        with TempHome():
+        with TempHome(), patch.dict(os.environ, {"CITYGML_UPSTREAM": "4dcitygml/sample-munich-station"}):
             self.assertEqual(runtime.upstream_nwo(), "4dcitygml/sample-munich-station")
 
 
@@ -1192,6 +1230,9 @@ class TestUpstreamAccess(unittest.TestCase):
 
     def setUp(self):
         self._api = runtime.github_api
+        city = patch.dict(os.environ, {"CITYGML_UPSTREAM": "4dcitygml/sample-munich-station"})   # as the launcher names it
+        city.start()
+        self.addCleanup(city.stop)
         self.session = hub.Session()
         self.session.account.login = "tester"
 
@@ -1208,11 +1249,11 @@ class TestUpstreamAccess(unittest.TestCase):
 
     def test_found_copy_is_kept_for_a_minute_missing_one_for_ten_seconds(self):
         calls = []
-        with patch.object(hub, "find_fork", lambda token, login, upstream: calls.append(1) or None):
+        with patch.object(hub.session, "find_fork", lambda token, login, upstream: calls.append(1) or None):
             self.assertIsNone(self.session.fork_nwo())
             _, until = self.session.fork.get(), self.session.fork._until
             self.assertLess(until - hub.time.time(), 11)                       # not found: asked again soon
-        with patch.object(hub, "find_fork", lambda token, login, upstream: calls.append(1) or "tester/r"):
+        with patch.object(hub.session, "find_fork", lambda token, login, upstream: calls.append(1) or "tester/r"):
             self.assertEqual(self.session.fork_nwo(fresh=True), "tester/r")
             self.assertGreater(self.session.fork._until - hub.time.time(), 50)  # found: kept for a minute
             self.assertEqual(self.session.fork_nwo(), "tester/r")               # served from memory
@@ -1240,22 +1281,29 @@ class TestUpstreamAccess(unittest.TestCase):
 
 class TestSetupConsole(_EnglishEnv):
     def test_waiting_is_described_as_running_not_stopped(self):
-        lines = hub.setup_console_messages(False)
-        text = "\n".join(lines)
+        text = "\n".join(hub.console_messages(MUNICH, True, False))
         self.assertIn("normal — not stopped", text)
-        self.assertIn("stays open to run the browser screen", text)
-        self.assertIn("same launcher file", text)
+        self.assertIn("closing it stops the tools", text)
+        self.assertIn("citygml-tools/citygml.sh 4dcitygml/sample-munich-station", text)   # the real way back (#59)
+        self.assertNotIn("launcher file", text)
         self.assertNotIn("クローンが見つかりません", text)
 
+    def test_every_start_says_the_window_must_stay_open(self):
+        # #57: a normal start printed only the address, and a person closed the window
+        lines = hub.console_messages(MUNICH, False, True)
+        self.assertIn("closing it stops the tools", lines[0])
+        self.assertNotIn("initial setup", "\n".join(lines))
+        self.assertEqual(len(hub.console_messages(None, False, False)), 1)   # no city: no command to name
+
     def test_saved_auth_explains_skipped_code_screen(self):
-        text = "\n".join(hub.setup_console_messages(True))
+        text = "\n".join(hub.console_messages(MUNICH, True, True))
         self.assertIn("The account recorded for this city is used", text)
         self.assertIn("account screen may be skipped", text)
 
     def test_console_messages_keep_japanese_when_lang_ja(self):
         # Regression: with CITYGML_LANG=ja the original Japanese terminal guidance is returned
         os.environ["CITYGML_LANG"] = "ja"
-        text = "\n".join(hub.setup_console_messages(True))
+        text = "\n".join(hub.console_messages(MUNICH, True, True))
         self.assertIn("状態: 初回セットアップ中（正常です。停止していません）", text)
         self.assertIn("この都市に記録されたアカウントを使います。アカウント画面は省略されることがあります", text)
         self.assertIn("ブラウザの案内を進めてください", text)
@@ -1272,14 +1320,14 @@ class TestDest(unittest.TestCase):
             base = Path(d) / "CityGML Data"
             base.mkdir()
             (base / "途中データ").write_text("keep", encoding="utf-8")
-            self.assertEqual(hub.next_available_dest(base), Path(d) / "CityGML Data2")
+            self.assertEqual(hub.session.next_available_dest(base), Path(d) / "CityGML Data2")
             self.assertTrue((base / "途中データ").is_file())
 
     def test_file_at_default_path_is_also_avoided(self):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d) / "CityGML Data"
             base.write_text("do not overwrite", encoding="utf-8")
-            self.assertEqual(hub.next_available_dest(base), Path(d) / "CityGML Data2")
+            self.assertEqual(hub.session.next_available_dest(base), Path(d) / "CityGML Data2")
 
 
 class TestGitConfig(unittest.TestCase):
@@ -1287,8 +1335,8 @@ class TestGitConfig(unittest.TestCase):
         # hub-v1.2.1: the commit identity is written into the clone's own config by
         # accounts.apply_clone_identity; nothing writes `git config --global` any more.
         for name in ("git_config_set", "apply_git_identity", "write_git_credentials", "save_token", "load_token"):
-            self.assertFalse(hasattr(hub, name), name)
-        src = (REPO_ROOT / "tools" / "hub" / "app.py").read_text(encoding="utf-8")
+            self.assertFalse(any(hasattr(m, name) for m in (hub, hub.review, hub.session)), name)
+        src = "".join((REPO_ROOT / "tools" / "hub" / f).read_text(encoding="utf-8") for f in ("app.py", "review.py", "session.py"))
         self.assertNotIn('"config", "--global", key, val', src)
         self.assertNotIn("gh\", \"auth\", \"token", src)
 
@@ -1315,7 +1363,7 @@ class TestGitConfig(unittest.TestCase):
                                         "the city organization has enabled OAuth App access restrictions"}
             return 404, {}
         with patch.object(runtime, "github_api", api), TempHome():
-            nwo, err = hub.create_fork("tok", "tester", "4dcitygml/sample-munich-station")
+            nwo, err = hub.session.create_fork("tok", "tester", "4dcitygml/sample-munich-station")
         self.assertIsNone(nwo)
         self.assertIn("has not approved this tool", err)
         self.assertIn("Organization access", err)
@@ -1339,12 +1387,15 @@ class TestContributions(_EnglishEnv):
     def setUp(self):
         super().setUp()
         self._auth, self._api = hub.SESSION.account, runtime.github_api
-        with tempfile.TemporaryDirectory() as d:
-            self.hub_obj = hub.Hub(Path(d))
+        self._clone = tempfile.TemporaryDirectory()   # a clone that names its city (V1: no fallback)
+        (Path(self._clone.name) / "4dcitygml.json").write_text('{"repo": "4dcitygml/sample-munich-station"}', encoding="utf-8")
+        self.hub_obj = hub.Hub(Path(self._clone.name), hub.SESSION)
         self.hub_obj.nwo = lambda: "4dcitygml/sample-munich-station"
 
     def tearDown(self):
         hub.SESSION.account, runtime.github_api = self._auth, self._api
+        if hasattr(self, "_clone"):
+            self._clone.cleanup()
         super().tearDown()
 
     def test_disconnected_returns_reason_without_network(self):
@@ -1377,6 +1428,8 @@ class TestContributions(_EnglishEnv):
                     {"number": 8, "title": "quiet", "state": "OPEN", "url": "u8",
                      "comments": {"totalCount": 0}, "updatedAt": "2026-08-04T00:00:00Z"},
                 ]},
+                # D-3a8: search's own count; the list holds the latest 100 only (T13)
+                "merged": {"issueCount": 137},
             }}
         runtime.github_api = fake_api
         r = self.hub_obj._fetch_contributions()
@@ -1387,13 +1440,18 @@ class TestContributions(_EnglishEnv):
         # same shape as the gh pr list / gh issue list era (keeps the frontend contract)
         self.assertTrue(r["ok"])
         self.assertEqual(r["login"], "tester")
-        self.assertEqual(r["merged"], 1)
+        self.assertEqual(r["merged"], 137)                # search's count, not the merged ones listed
+        self.assertIn("is:merged", captured["payload"]["variables"]["qMerged"])
         self.assertEqual(r["prs"][0]["reacted"], True)   # has a review
         self.assertEqual(r["prs"][1]["draft"], True)
+        # CI's verdict is the current judgement of an open proposal; a merged or closed one is
+        # history, shown by GitHub's own state (no "checks running" beside "Merged")
+        self.assertEqual((r["prs"][0]["checkStatus"], r["prs"][0]["retry"]), ("", {}))
+        self.assertEqual((r["prs"][1]["checkStatus"], r["prs"][1]["retry"]["kind"]), ("pending", "pending"))
         self.assertEqual(r["issues"][0]["comments"], 2)
         self.assertEqual(r["issues"][0]["reacted"], True)
         self.assertEqual(r["issues"][1]["reacted"], False)
-        self.assertEqual(r["badge"], hub.badge_for(1))
+        self.assertEqual(r["badge"], hub.badge_for(137))
 
     def test_graphql_error_is_reported(self):
         hub.SESSION.account = _FakeAuth(token="tok", login="tester")
@@ -1410,103 +1468,33 @@ class TestContributions(_EnglishEnv):
         self.assertIn("runtime", st)
 
 
-class TestFeedbackIssues(_EnglishEnv):
-    def setUp(self):
-        super().setUp()
-        self._auth, self._api = hub.SESSION.account, runtime.github_api
+class TestIssuesLink(_EnglishEnv):
+    def test_the_status_names_the_citys_issue_page(self):
         with tempfile.TemporaryDirectory() as d:
-            self.hub_obj = hub.Hub(Path(d))
-        self.contributions = {
-            "ok": True,
-            "login": "tester",
-            "merged": 3,
-            "badge": hub.badge_for(3),
-            "prs": [],
-            "issues": [],
-        }
-        self.hub_obj.contributions = lambda force=False: self.contributions
-
-    def tearDown(self):
-        hub.SESSION.account, runtime.github_api = self._auth, self._api
-        super().tearDown()
-
-    def test_defaults_include_existing_badge_and_prefilled_context(self):
-        hub.SESSION.account = _FakeAuth(token="tok", login="tester")
-        result = self.hub_obj.feedback_defaults()
-        self.assertTrue(result["connected"])
-        self.assertEqual(result["login"], "tester")
-        self.assertEqual(result["badge"]["name"], "Regular contributor")
-        self.assertEqual(result["merged"], 3)
-        self.assertIn("building data editing tools", result["goal"])
-        self.assertEqual(result["categories"], list(hub.feedback_categories()))
-
-    def test_submit_uses_hub_token_and_records_badge_in_issue(self):
-        hub.SESSION.account = _FakeAuth(token="tok", login="tester")
-        captured = {}
-
-        def fake_api(path, token, method="GET", payload=None, timeout=30):
-            captured.update(path=path, token=token, method=method, payload=payload)
-            return 201, {
-                "number": 321,
-                "title": payload["title"],
-                "html_url": "https://github.example/issues/321",
-            }
-
-        runtime.github_api = fake_api
-        self.hub_obj._contrib_cache = (1.0, self.contributions)
-        result = self.hub_obj.submit_feedback({
-            "title": "Feature request",
-            "category": "The controls are hard to understand",
-            "goal": "Verification",
-            "problem": "Not convenient",
-            "expected": "I want to send it directly from the hub.",
-            "context": "Integrated Hub / macOS / Safari",
-            "building": "13101-bldg-3728",
-            "additional": "It reproduces every time.",
-        })
-        self.assertEqual(captured["path"], "/repos/4dcitygml/sample-munich-station/issues")
-        self.assertEqual(captured["token"], "tok")
-        self.assertEqual(captured["method"], "POST")
-        self.assertEqual(captured["payload"]["title"], "[UX] Feature request")
-        issue_body = captured["payload"]["body"]
-        self.assertIn("@tester", issue_body)
-        self.assertIn("🌿 Regular contributor", issue_body)
-        self.assertIn("Merged PRs: 3", issue_body)
-        self.assertIn("13101-bldg-3728", issue_body)
-        self.assertIn("does not decide issue priority", issue_body)
-        self.assertEqual(result["number"], 321)
-        self.assertIsNone(self.hub_obj._contrib_cache)
-
-    def test_submit_rejects_unknown_category_before_network(self):
-        hub.SESSION.account = _FakeAuth(token="tok", login="tester")
-        runtime.github_api = lambda *a, **k: self.fail("must not call API with invalid input")
-        with self.assertRaisesRegex(ValueError, "Choose the type of problem or suggestion"):
-            self.hub_obj.submit_feedback({
-                "title": "This is an input test.",
-                "category": "Undefined",
-                "goal": "I was trying to verify the operation.",
-                "problem": "I am verifying the form input.",
-            })
-
+            (Path(d) / "4dcitygml.json").write_text('{"repo": "4dcitygml/sample-munich-station"}', encoding="utf-8")
+            self.assertEqual(hub.Hub(Path(d), hub.SESSION).status()["issuesUrl"],
+                             "https://github.com/4dcitygml/sample-munich-station/issues/new/choose")
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(hub.Hub(Path(d), hub.SESSION).status()["issuesUrl"], "")   # a clone that names no city (V1)
 
 class TestPreset(unittest.TestCase):
     def test_shipped_preset_has_client_id(self):
         # The preset.json bundled in the distribution zip (tools/hub/preset.json) must be readable.
         # Without it the device flow cannot start and first-time setup stalls.
-        cid = hub.load_preset().get("oauthClientId")
+        cid = hub.session.load_preset().get("oauthClientId")
         if not cid:
             # This skip disappears once the value is set after creating the 4dcitygml OAuth App (M4 of the launch steps).
             # Must be set before the first Release (this test is the distribution gate).
             self.skipTest("oauthClientId not set (set in preset.json after creating the OAuth App)")
-        self.assertEqual(hub.oauth_client_id(), cid)
+        self.assertEqual(hub.session.oauth_client_id(), cid)
 
     def test_preset_has_no_client_secret(self):
         # The device flow needs no client_secret; keep it out (prevents leakage).
-        self.assertNotIn("oauthClientSecret", hub.load_preset())
+        self.assertNotIn("oauthClientSecret", hub.session.load_preset())
 
     def test_preset_has_no_mode(self):
         # Public operation only (private/invitation modes removed in #9); no mode key at all.
-        self.assertNotIn("mode", hub.load_preset())
+        self.assertNotIn("mode", hub.session.load_preset())
 
 
 if __name__ == "__main__":

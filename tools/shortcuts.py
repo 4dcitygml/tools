@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,21 @@ def ensure_launcher() -> "Path | None":
     if not runtime.WINDOWS:
         target.chmod(0o755)
     return target
+
+
+def _windows_args(city: str) -> str:
+    return f'-NoProfile -ExecutionPolicy Bypass -File "{runtime.launcher_path()}" "{city}"'
+
+
+def start_command(city: str) -> str:
+    """What a person types to start the tools for this city again (Terminal / PowerShell); the
+    desktop icon runs the same launcher with the same city."""
+    if runtime.WINDOWS:
+        return "powershell " + _windows_args(city)
+    launcher, home = runtime.launcher_path(), runtime.home()
+    shown = ("~/" + shlex.quote(launcher.relative_to(home).as_posix()) if launcher.is_relative_to(home)
+             else shlex.quote(str(launcher)))
+    return f"{shown} {shlex.quote(city)}"
 
 
 # ---- macOS ----
@@ -125,23 +141,28 @@ def create_mac_app(dest_dir: Path, display_name: str, city: str,
 
 # ---- Windows ----
 
+def ps_quote(value) -> str:
+    """A value as a PowerShell single-quoted string: a quote inside is doubled, PowerShell's own
+    escape, so no value becomes code (D-3c3: a city name or logo path with ' ran as PowerShell)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def create_windows_shortcut(dest_dir: Path, display_name: str, city: str,
                             logo: "Path | None" = None) -> Path:
     """Create <dest_dir>/<display_name>.lnk that runs the per-user launcher with the city id."""
     name = safe_name(display_name)
     lnk = dest_dir / f"{name}.lnk"
     tools_dir = runtime.tools_dir()
-    launcher = runtime.launcher_path()
     icon = ""
     if logo and logo.is_file():
         ico = tools_dir / f"{re.sub(r'[^A-Za-z0-9]+', '-', city)}.ico"
         ps_icon = (
             "Add-Type -AssemblyName System.Drawing; "
-            f"$bmp = [System.Drawing.Bitmap]::FromFile('{logo}'); "
+            f"$bmp = [System.Drawing.Bitmap]::FromFile({ps_quote(logo)}); "
             "$sq = New-Object System.Drawing.Bitmap 256,256; $g = [System.Drawing.Graphics]::FromImage($sq); "
             "$g.DrawImage($bmp, 0, 0, 256, 256); $g.Dispose(); "
             "$icon = [System.Drawing.Icon]::FromHandle($sq.GetHicon()); "
-            f"$fs = [System.IO.File]::Create('{ico}'); $icon.Save($fs); $fs.Close()"
+            f"$fs = [System.IO.File]::Create({ps_quote(ico)}); $icon.Save($fs); $fs.Close()"
         )
         try:
             subprocess.run(["powershell", "-NoProfile", "-Command", ps_icon], capture_output=True, timeout=60)
@@ -149,14 +170,14 @@ def create_windows_shortcut(dest_dir: Path, display_name: str, city: str,
                 icon = str(ico)
         except (OSError, subprocess.SubprocessError):
             icon = ""
-    args = f'-NoProfile -ExecutionPolicy Bypass -File "{launcher}" "{city}"'
+    args = _windows_args(city)
     ps = (
         "$ws = New-Object -ComObject WScript.Shell; "
-        f"$s = $ws.CreateShortcut('{lnk}'); "
+        f"$s = $ws.CreateShortcut({ps_quote(lnk)}); "
         "$s.TargetPath = 'powershell.exe'; "
-        f"$s.Arguments = '{args}'; "
-        f"$s.WorkingDirectory = '{tools_dir}'; "
-        + (f"$s.IconLocation = '{icon}'; " if icon else "")
+        f"$s.Arguments = {ps_quote(args)}; "
+        f"$s.WorkingDirectory = {ps_quote(tools_dir)}; "
+        + (f"$s.IconLocation = {ps_quote(icon)}; " if icon else "")
         + "$s.Save()"
     )
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, check=True, timeout=60)

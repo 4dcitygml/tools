@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""PLATEAU CityGML LOD2 texture editor — local server (sister tool of the attribute editor).
+"""CityGML LOD2 texture editor — local server (sister tool of the attribute editor).
 
 Specializes in replacing and newly adding building exterior photos (LOD2
 textures) (#119). The editing method is **atlas baking**:
@@ -18,17 +18,16 @@ minimal diff. Shared machinery (GML parsing, leaf replacement, git/PR,
 first-run setup) is reused by importing tools/attr_editor/app.py.
 
 Usage:
-    python app.py [--repo ~/<city clone>] [--port 8766] [--no-browser]
+    python app.py [--repo ~/<city clone>] [--port <port>] [--no-browser]   # runtime.EDITOR_PORTS
 """
 from __future__ import annotations
 
-import argparse
 import base64
 import hashlib
 import re
 import sys
 from pathlib import Path, PurePosixPath
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 APP_DIR = Path(__file__).resolve().parent
 # The shared runtime (program/runtime.py in the bundle, tools/runtime.py in the source
@@ -150,9 +149,9 @@ def grant_polygon_ids(raw: bytes, s: int, e: int, gid: str,
     needed holds planned IDs of the form `<gid>_p<n>` (n = document order of
     Polygons under boundedBy within the building span; same counting as attr's
     _parse_building). IDs that already exist are left alone. Inserts gml:id
-    into each target Polygon's opening tag, and gml:id="<pid>_r0" into its
-    first LinearRing (exterior). Coordinates and element structure are
-    unchanged (gml:id is a standard GML attribute, XSD-conformant).
+    into each target Polygon's opening tag (its exterior ring's ID is
+    grant_ring_ids'). Coordinates and element structure are unchanged
+    (gml:id is a standard GML attribute, XSD-conformant).
     Returns: (updated raw, list of granted IDs).
     """
     span = raw[s:e]
@@ -165,7 +164,6 @@ def grant_polygon_ids(raw: bytes, s: int, e: int, gid: str,
 
     bounded_re = re.compile(rb"<(?:\w+:)?boundedBy\b.*?</(?:\w+:)?boundedBy>", re.DOTALL)
     poly_open_re = re.compile(rb"<(?:\w+:)?Polygon\b[^>]*>")
-    ring_open_re = re.compile(rb"<(?:\w+:)?LinearRing\b")
     inserts: list = []  # (offset within span, bytes to insert)
     n = 0
     for bm in bounded_re.finditer(span):
@@ -181,17 +179,18 @@ def grant_polygon_ids(raw: bytes, s: int, e: int, gid: str,
             # Insert gml:id just before the ">" of <gml:Polygon ...>
             tag_end = bm.start() + pm.end() - 1
             inserts.append((tag_end, f' gml:id="{pid}"'.encode()))
-            # Insert the ring ID into the first LinearRing (exterior) of the same Polygon.
-            # Search bound is the next Polygon start (else block end) = prevents inserting into a neighbor
-            nxt = poly_open_re.search(block, pm.end())
-            rm = ring_open_re.search(block, pm.end(), nxt.start() if nxt else len(block))
-            if rm is not None:
-                inserts.append((bm.start() + rm.end(), f' gml:id="{pid}_r0"'.encode()))
     if not inserts:
         return raw, []
+    return insert_into_span(raw, s, e, inserts), sorted(idx[k] for k in idx if idx[k] in to_add)
+
+
+def insert_into_span(raw: bytes, s: int, e: int, inserts: list) -> bytes:
+    """raw with each (offset within the span [s, e), bytes) inserted; the offsets are those of the
+    unchanged span (the ids granted above and in grant_ring_ids)."""
+    span = raw[s:e]
     for off, ins in sorted(inserts, reverse=True):
         span = span[:off] + ins + span[off:]
-    return raw[:s] + span + raw[e:], sorted(idx[k] for k in idx if idx[k] in to_add)
+    return raw[:s] + span + raw[e:]
 
 
 class TexRepo(attr.Repo):
@@ -359,6 +358,22 @@ class TexRepo(attr.Repo):
         }
 
     # ---- Texture apply (add new image + replace imageURI leaf value) ----
+    def _new_image(self, b64, folder: str) -> "tuple[bytes, str, Path]":
+        """A baked image checked for the data folder: (bytes, path relative to the buildings'
+        folder, absolute path), named by its content (R1: existing images are never changed)."""
+        data = base64.b64decode(str(b64))
+        if not data.startswith(b"\xff\xd8"):
+            raise ValueError(tr("tex.err_not_jpeg", "The image is not a JPEG"))
+        if len(data) > _IMAGE_MAX_BYTES:
+            raise ValueError(tr("tex.err_image_too_large", "The image is too large (over 30 MB)"))
+        newrel = str(PurePosixPath(folder) / f"tex_{hashlib.sha256(data).hexdigest()[:12]}.jpg")
+        newpath = (self.bldg_dir / newrel).resolve()
+        if not newpath.is_relative_to(self.bldg_dir.resolve()):
+            raise ValueError(tr("tex.err_bad_image_path", "Invalid image path"))
+        if newpath.exists() and newpath.read_bytes() != data:   # practically never happens
+            raise RuntimeError(tr("tex.err_hash_collision", "Hash collision: {path}", path=newrel))
+        return data, newrel, newpath
+
     def apply_textures(self, code: str, gid: str, images: list) -> dict:
         """Apply images: [{"orig": current imageURI, "data": base64 of the baked JPEG}].
 
@@ -379,7 +394,7 @@ class TexRepo(attr.Repo):
         pid2gid, img_pids = self._atlas_index(t)
 
         raw = path.read_bytes()
-        added: list = []
+        writes: dict = {}   # every item is checked before any image is written (D-3b1)
         replaced: list = []
         for item in images:
             orig = str(item["orig"])
@@ -395,19 +410,7 @@ class TexRepo(attr.Repo):
                     " buildings (owners: {owners})",
                     orig=orig, owners=sorted(owners),
                 ))
-            data = base64.b64decode(str(item["data"]))
-            if not data.startswith(b"\xff\xd8"):
-                raise ValueError(tr("tex.err_not_jpeg", "The image is not a JPEG"))
-            if len(data) > _IMAGE_MAX_BYTES:
-                raise ValueError(tr("tex.err_image_too_large", "The image is too large (over 30 MB)"))
-
-            digest = hashlib.sha256(data).hexdigest()[:12]
-            newrel = str(PurePosixPath(orig).parent / f"tex_{digest}.jpg")
-            newpath = (self.bldg_dir / newrel).resolve()
-            if not newpath.is_relative_to(self.bldg_dir.resolve()):
-                raise ValueError(tr("tex.err_bad_image_path", "Invalid image path"))
-            if newpath.exists() and newpath.read_bytes() != data:
-                raise RuntimeError(tr("tex.err_hash_collision", "Hash collision: {path}", path=newrel))  # practically never happens
+            data, newrel, newpath = self._new_image(item["data"], str(PurePosixPath(orig).parent))
 
             # Replace the imageURI leaf value (verified unique within the file. R1: existing images untouched)
             pat = re.compile(
@@ -422,16 +425,17 @@ class TexRepo(attr.Repo):
             m = hits[0]
             raw = raw[: m.start()] + m.group(1) + newrel.encode("utf-8") + m.group(2) + raw[m.end() :]
 
-            newpath.write_bytes(data)
-            added.append(newrel)
+            writes[newrel] = (newpath, data)
             replaced.append({"orig": orig, "new": newrel})
 
+        for newpath, data in writes.values():
+            newpath.write_bytes(data)
         path.write_bytes(raw)
         self._tile_cache.pop(code, None)
         return {
             "ok": True,
             "relpath": str(path.relative_to(self.root)),
-            "added": added,
+            "added": list(writes),
             "replaced": replaced,
         }
 
@@ -460,11 +464,10 @@ class TexRepo(attr.Repo):
                 "The virtual atlas name does not match the target building: {orig}",
                 orig=orig))
         layout = self._new_layout(code, gid)
-        data = base64.b64decode(str(item["data"]))
-        if not data.startswith(b"\xff\xd8"):
-            raise ValueError(tr("tex.err_not_jpeg", "The image is not a JPEG"))
-        if len(data) > _IMAGE_MAX_BYTES:
-            raise ValueError(tr("tex.err_image_too_large", "The image is too large (over 30 MB)"))
+        # Image path: <the tile's appearance folder>/tex_<sha256 first 12>.jpg (the dialect pack names
+        # the folder after its own file names; else <file stem>_appearance)
+        folder = (self._pack.appearance_dir or (lambda stem: f"{stem}_appearance"))(path.stem)
+        data, newrel, newpath = self._new_image(item["data"], folder)
 
         raw = path.read_bytes()
         spans = attr.building_spans(raw)
@@ -488,16 +491,6 @@ class TexRepo(attr.Repo):
                     "tex.err_ring_no_id",
                     "Cannot add textures because the exterior ring has no gml:id: {pid}",
                     pid=pid))
-
-        # Image path: <tile stem without _op>_appearance/tex_<sha256 first 12>.jpg
-        stem = path.stem[:-3] if path.stem.endswith("_op") else path.stem
-        digest = hashlib.sha256(data).hexdigest()[:12]
-        newrel = f"{stem}_appearance/tex_{digest}.jpg"
-        newpath = (self.bldg_dir / newrel).resolve()
-        if not newpath.is_relative_to(self.bldg_dir.resolve()):
-            raise ValueError(tr("tex.err_bad_image_path", "Invalid image path"))
-        if newpath.exists() and newpath.read_bytes() != data:
-            raise RuntimeError(tr("tex.err_hash_collision", "Hash collision: {path}", path=newrel))
 
         # surfaceDataMember block (targets in building face order; first UV repeated at the end to close the ring)
         eol = "\r\n" if b"\r\n" in raw[:4096] else "\n"
@@ -534,18 +527,17 @@ class TexRepo(attr.Repo):
             i = raw.index(anchor)
             insert = ("\t" + sdm + eol + "\t\t").encode("utf-8")
         else:
-            # New: just before the first cityObjectMember (directly under CityModel, same position as real PLATEAU data)
+            # New: just before the first cityObjectMember (directly under CityModel, where delivered data keeps it)
             m = re.search(rb"<(?:\w+:)?cityObjectMember\b", raw)
             if not m:
                 raise ValueError(tr(
                     "tex.err_no_cityobjectmember", "cityObjectMember not found"))
             i = m.start()
             # the appearance module of the file's own CityGML version (1.0 data reads appearance/1.0)
-            version = "1.0" if b"http://www.opengis.net/citygml/1.0" in raw[:8192] else "2.0"
+            app_ns = attr.citygml_dialect.ns_for_bytes(raw)["app"]
             block = eol.join(
                 [
-                    '<app:appearanceMember xmlns:app='
-                    f'"http://www.opengis.net/citygml/appearance/{version}">'
+                    f'<app:appearanceMember xmlns:app="{app_ns}">'
                     "<app:Appearance><app:theme>rgbTexture</app:theme>",
                     "\t\t\t" + sdm,  # lines 2+ of sdm carry their own indentation
                     "\t\t</app:Appearance></app:appearanceMember>",
@@ -580,6 +572,10 @@ class TexRepo(attr.Repo):
                 "tex.err_cc0_required",
                 "Agreement to the data contribution policy (CC0) is required"
                 " (docs/data-contribution-policy.md)"))
+        if not attr.pr_reason.filled(reason):   # the PR's reason section, which CI checks (D-3b8)
+            raise ValueError(tr(
+                "tex.err_reason",
+                "Write why you changed the texture and what you checked (at least 5 characters)"))
 
         path = self.tile_files().get(code)
         if path is None:
@@ -664,9 +660,11 @@ class TexRepo(attr.Repo):
                     f"{reason or '(please fill in)'}\n\n"
                     f"## {tr_lang(rlang, 'pr.heading_rights', 'Rights confirmation')}\n\n"
                     + tr_lang(rlang, "pr.rights_body",
-                              "The submitter agrees that the photos used are their own,"
-                              " that they are provided as **CC0 1.0** (moral rights will not"
-                              " be exercised), and that they have confirmed the notes on"
+                              "The submitter agrees that the photos used are their own (in a"
+                              " practice repository, they may instead come from its"
+                              " `docs/practice-photos/` folder), that they are provided as"
+                              " **CC0 1.0** (moral rights in their own photos will not be"
+                              " exercised), and that they have confirmed the notes on"
                               " portrait rights and personal information"
                               " ([Data Contribution Policy]({url}) v2).",
                               url="../blob/main/docs/data-contribution-policy.md")
@@ -684,44 +682,28 @@ class TexHandler(attr.Handler):
     APP_ID = "tex_editor"
     repo: "TexRepo | None" = None
 
-    def do_GET(self) -> None:
-        try:
-            path = urlparse(self.path).path
-            if path == "/api/tonestandard":
-                # The city's standard tone (tone_standard.json). Returns null if absent
-                std_path = APP_DIR / "tone_standard.json"
-                if std_path.is_file():
-                    import json as _json
+    def route_get(self, path: str) -> bool:
+        """The texture editor's own paths over the attribute editor's (which answers errors)."""
+        if path == "/api/tonestandard":
+            # The city's standard tone (tone_standard.json). Returns null if absent
+            std_path = APP_DIR / "tone_standard.json"
+            if std_path.is_file():
+                import json as _json
 
-                    self._json({"ok": True, "standard": _json.loads(std_path.read_text(encoding="utf-8"))})
-                else:
-                    self._json({"ok": True, "standard": None})
-                return
-            if self.repo is not None:
-                if path in ("/", "/index.html"):
-                    self._file(APP_DIR / "index.html")
-                    return
-                if path.startswith("/api/faces/"):
-                    parts = path.split("/")
-                    if len(parts) != 5:
-                        self._error("bad path")
-                        return
-                    self._json({"ok": True, **self.repo.faces_json(parts[3], unquote(parts[4]))})
-                    return
-        except KeyError as e:
-            self._error(tr("tex.err_building_not_found",
-                           "Building not found: {exc}", exc=e), 404)
-            return
-        except FileNotFoundError as e:
-            self._error(tr("tex.err_tile_not_found",
-                           "Tile not found: {exc}", exc=e), 404)
-            return
-        except BrokenPipeError:
-            return
-        except Exception as e:  # noqa: BLE001
-            self._error(f"{type(e).__name__}: {runtime.public_message(e)}", 500)
-            return
-        super().do_GET()
+                self._json({"ok": True, "standard": _json.loads(std_path.read_text(encoding="utf-8"))})
+            else:
+                self._json({"ok": True, "standard": None})
+        elif path in ("/", "/index.html"):
+            self._file(APP_DIR / "index.html")
+        elif path.startswith("/api/faces/"):
+            parts = path.split("/")
+            if len(parts) != 5:
+                self._error("bad path")
+            else:
+                self._json({"ok": True, **self.repo.faces_json(parts[3], unquote(parts[4]))})
+        else:
+            return super().route_get(path)
+        return True
 
 
 
@@ -730,8 +712,9 @@ def grant_ring_ids(raw: bytes, s: int, e: int, pids: list) -> "tuple[bytes, dict
     one gets gml:id="<pid>_r0" (nothing else changes). Returns (raw, {pid: ring id}); a pid whose
     polygon is not found is absent."""
     ids: dict = {}
+    inserts: list = []
+    span = raw[s:e]
     for pid in pids:
-        span = raw[s:e]
         pm = re.search(rb'<(?:\w+:)?Polygon\b[^>]*\sgml:id="' + re.escape(pid.encode("utf-8")) + rb'"[^>]*>', span)
         if pm is None:
             continue
@@ -742,30 +725,13 @@ def grant_ring_ids(raw: bytes, s: int, e: int, pids: list) -> "tuple[bytes, dict
         if own:
             ids[pid] = own.group(1).decode("utf-8")
             continue
-        at = s + pm.end() + rm.start(1)
-        added = f' gml:id="{pid}_r0"'.encode()
-        raw = raw[:at] + added + raw[at:]
-        e += len(added)
+        inserts.append((pm.end() + rm.start(1), f' gml:id="{pid}_r0"'.encode()))
         ids[pid] = f"{pid}_r0"
-    return raw, ids
+    return insert_into_span(raw, s, e, inserts), ids
 
 
 def main() -> None:
-    runtime.console_safe()
-    accounts.scrub_git_env()   # the shell's git overrides never reach the clone
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, help="local clone of the city repository (can be omitted when run from inside the clone)")
-    parser.add_argument("--data", help="substring of data package name (to select if multiple exist; e.g., 13101)")
-    parser.add_argument("--textures", type=Path,
-                        help="texture replacement directory (for 3D tone variant comparison)")
-    parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--no-browser", action="store_true")
-    args = parser.parse_args()
-
-    TexHandler.repo = attr.open_repo(TexRepo, args)
-
-    runtime.serve(TexHandler, args.port, ["CityGML Texture Editor: {url}", f"  Data: {TexHandler.repo.bldg_dir}"],
-                  open_browser=not args.no_browser)
+    attr.main(TexHandler, TexRepo, "tex_editor", "CityGML Texture Editor")
 
 
 if __name__ == "__main__":

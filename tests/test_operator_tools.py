@@ -16,8 +16,10 @@ from tests.support import REPO_ROOT
 
 
 def runnable() -> "set[str]":
-    return {p.stem for p in (REPO_ROOT / "scripts").glob("*.py")
-            if p.stem != "__main__" and re.search(r"__name__ == [\"']__main__[\"']", p.read_text(encoding="utf-8"))}
+    """Every module with a main: scripts/ and the dialect packs' folders."""
+    files = [*(REPO_ROOT / "scripts").glob("*.py"), *(REPO_ROOT / "dialects").glob("*/*.py")]
+    return {p.stem for p in files
+            if p.stem not in ("__main__", "pack") and re.search(r"__name__ == [\"']__main__[\"']", p.read_text(encoding="utf-8"))}
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
@@ -26,14 +28,21 @@ def run(*args: str) -> subprocess.CompletedProcess:
 
 class TestOperatorTools(unittest.TestCase):
     def test_every_runnable_tool_is_in_exactly_one_group(self):
-        listed = [t for tools in entry.GROUPS.values() for t in tools]
+        listed = [t for tools in entry.groups().values() for t in tools]
         self.assertEqual(len(listed), len(set(listed)), "a tool is in two groups")
         self.assertEqual(set(listed), runnable())
 
     def test_every_tool_says_what_it_does(self):
-        for tools in entry.GROUPS.values():
+        for tools in entry.groups().values():
             for tool in tools:
                 self.assertTrue(entry.summary(tool), tool)
+
+    def test_a_manifest_kind_finds_its_tool(self):
+        # the CI's reproduction step asks the registry (the identity kinds are generic; the
+        # others are the city's pack's): a tools checkout declares no city, so no pack kind
+        self.assertEqual(entry.manifest_tool("identity-baseline"), "identity_manifest")
+        self.assertIsNone(entry.manifest_tool("source-update"))
+        self.assertEqual(entry.path_of("split_4th_mesh"), REPO_ROOT / "dialects" / "plateau" / "split_4th_mesh")
 
     def test_the_page_is_generated(self):
         page = (REPO_ROOT / "docs" / "operator-tools.md").read_text(encoding="utf-8")

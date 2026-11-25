@@ -26,6 +26,15 @@ class TestGateResult(unittest.TestCase):
         self.assertEqual(advisory, {"plausibility", "minimal-diff", "topology", "model"})
         self.assertEqual(g.BLOCKS, {"fail", "error", "pending"})
 
+    def test_code_list_blocks_and_the_error_of_the_lint_is_its_alone(self):
+        # one run of plausibility_lint: exit 1 (an invalid code this PR wrote) fails code-list; the driver
+        # hands plausibility 0 then, so that row shows only the warnings
+        keys = [r.key for r in g.ROWS]
+        self.assertEqual(keys.index("code-list") + 1, keys.index("plausibility"))
+        self.assertEqual([g.status_for("code-list", c) for c in (0, 1, 2)], ["pass", "fail", "error"])
+        self.assertEqual(g.status_for("plausibility", 0, warnings=2), "warn")
+        self.assertEqual(g.status_for("plausibility", 0), "pass")
+
     def test_rows_are_the_contract_rows_in_order(self):
         # the <!--cp:key--> anchors of the inspection comment; the ci catalogs name every row
         self.assertEqual([r.key for r in g.ROWS][:3], ["reason", "classification", "commit-scope"])
@@ -49,6 +58,20 @@ class TestGateResult(unittest.TestCase):
                 r = subprocess.run([sys.executable, str(REPO_ROOT / script), str(unreadable)], capture_output=True,
                                    text=True, cwd=REPO_ROOT)
             self.assertEqual(r.returncode, 2, (script, r.stderr[-300:]))
+
+    def test_the_driver_does_not_call_a_crash_a_structure_defect(self):
+        # D-a3: the structure step printed "defects detected" for any non-zero exit, a crash too
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        step = driver[driver.index("scripts/citygml_lint.py"):driver.index("gate_na structure")]
+        self.assertLess(step.index('[ "$rc" = "1" ]'), step.index("structure defects detected"))
+        self.assertIn("could not run (exit $rc)", step)
+
+    def test_a_git_failure_is_never_hidden_behind_grep(self):
+        # D-a6: `git diff ... | grep ... || true` read a git failure as "no image changed" (R1 OK,
+        # the magic-byte check skipped); git now writes its list first, and a failure stops the step
+        driver = (REPO_ROOT / "ci" / "pr_analysis_main.sh").read_text(encoding="utf-8")
+        joined = re.sub(r"\\\n\s*", " ", driver)
+        self.assertEqual(re.findall(r"git diff[^\n|]*\|\s*grep[^\n]*\|\| true", joined), [])
 
     def test_a_malformed_file_is_a_finding_not_a_system_error(self):
         # snapshot broken-xml: a missing end tag made four rows say "not your data"
@@ -79,6 +102,12 @@ class TestGateResult(unittest.TestCase):
             g.main(["write", "--key", "model", "--not-applicable", "--out", t])
             self.assertEqual(g.read(Path(t), "model")["status"], "na")
             self.assertIsNone(g.read(Path(t), "schema"))
+        # D-a5: without --out the result goes to the runner's temporary folder, never to out/
+        # (the artifact the trusted side receives)
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as t, patch.dict("os.environ", {"RUNNER_TEMP": t}):
+            g.main(["write", "--key", "schema", "--exit-code", "0"])
+            self.assertEqual(g.read(Path(t) / "citygml", "schema")["status"], "pass")   # the run folder (U3)
 
 
 if __name__ == "__main__":

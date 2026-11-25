@@ -4,7 +4,7 @@
 """CityGML data quality lint (generic, data-agnostic) — check geometric structural integrity per building.
 
 Beyond `validate_citygml` (well-formed + XSD), this checks only **geometric structural failures
-that are universal to any CityGML data**. **Does not depend on specific data conventions like PLATEAU**
+that are universal to any CityGML data**. **Does not depend on a dialect's data conventions**
 (convention-dependent checks such as sentinel unknowns, codelists, valid ranges are separated
 into `plausibility_lint.py`). This is the data equivalent of standard SE assertion/invariant/property-based
 tests; this layer is **reusable for any CityGML**.
@@ -35,46 +35,40 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from lxml import etree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import md_report  # noqa: E402
+from scripts.md_report import changed_list  # noqa: E402
 from scripts.citygml_constants import CITYGML_LINT_MARKER, COORD_DIM  # noqa: E402
-from scripts.citygml_xml import open_source as _open  # noqa: E402
-from scripts.safe_xml import safe_iterparse  # noqa: E402
-from scripts.diff_citygml import (  # noqa: E402
-    _BUILDING_TAGS,
-    _drop,
-    _geometry_hash,
-    _gml_id,
-    _local,
-    GML_NS,
-    load_buildings,
-)
+from scripts.diff_citygml import GML_NS, buildings_at, changed_ids, geometry_hash, load_buildings  # noqa: E402
+from scripts.citygml_xml import buildings as _buildings, gml_id as _gml_id, qname as _local  # noqa: E402
 
 Source = object  # Path | str | bytes
 # Check-function type: (building element, geometry-hash index or None) -> {"errors":[...], "warnings":[...]}
-CheckFn = Callable[[etree._Element, Optional[dict]], dict]
+CheckFn = Callable[[object, Optional[dict]], dict]
 
 
 # --- Geometry parsing (public helpers also reused by plausibility_lint) ----------
-def ring_points(ring: etree._Element) -> dict:
-    """Get (coordinate-value count, point list or None) from a LinearRing. Numerifies posList.
+def ring_points(ring) -> dict:
+    """Get (coordinate-value count, point list or None) from a LinearRing: its posList, else its gml:pos sequence.
 
     If the coordinate count is not a multiple of the dimension: points=None,
     bad_count=True (coord_count error).
     """
-    pos = None
+    toks = None
     for c in ring.iter():
-        cns, cname = _local(c)
-        if cns == GML_NS and cname == "posList":
-            pos = c
+        if _local(c) == (GML_NS, "posList"):
+            toks = (c.text or "").split()
             break
-    if pos is None:
+    if toks is None:   # a ring written as a gml:pos sequence (D-c7: it was not checked at all)
+        points = [c for c in ring.iter() if _local(c) == (GML_NS, "pos")]
+        if points:
+            toks = [t for p in points for t in (p.text or "").split()]
+    if toks is None:
         return {"n": 0, "points": None, "bad_count": False, "no_poslist": True}
-    toks = (pos.text or "").split()
     n = len(toks)
     if n == 0 or n % COORD_DIM != 0:
         return {"n": n, "points": None, "bad_count": n % COORD_DIM != 0, "no_poslist": False}
@@ -88,14 +82,14 @@ def ring_points(ring: etree._Element) -> dict:
     return {"n": n, "points": pts, "bad_count": False, "no_poslist": False}
 
 
-def iter_linear_rings(elem: etree._Element):
+def iter_linear_rings(elem):
     for r in elem.iter():
         ns, name = _local(r)
         if ns == GML_NS and name == "LinearRing":
             yield r
 
 
-def footprint_rings(building: etree._Element) -> list:
+def footprint_rings(building) -> list:
     """Ring point lists under the building's LOD0 outline and GroundSurface."""
     out = []
     for el in building.iter():
@@ -106,7 +100,7 @@ def footprint_rings(building: etree._Element) -> list:
     return out
 
 
-def number_by_localname(building: etree._Element, localname: str) -> Optional[float]:
+def number_by_localname(building, localname: str) -> Optional[float]:
     """Take exactly one numeric value from the text of the element with the given localname (None if absent). Also used by plausibility_lint."""
     for el in building.iter():
         _, name = _local(el)
@@ -150,7 +144,7 @@ def self_intersects(points: list) -> bool:
 
 
 # --- Generic CityGML building checks ----------------------------------------
-def check_building(building: etree._Element, geom_index: Optional[dict] = None) -> dict:
+def check_building(building, geom_index: Optional[dict] = None) -> dict:
     """Check the geometric structure of one building (generic CityGML, convention-independent)."""
     errors: list = []
     warnings: list = []
@@ -184,7 +178,7 @@ def check_building(building: etree._Element, geom_index: Optional[dict] = None) 
             break
 
     if geom_index is not None:
-        gh = _geometry_hash(building)
+        gh = geometry_hash(building)
         if gh is not None:
             others = [x for x in geom_index.get(gh, []) if x != _gml_id(building)]
             if others:
@@ -220,8 +214,7 @@ def run_lint(
     """
     buildings: list = []
     n_err = n_warn = 0
-    context = safe_iterparse(_open(source), events=("end",), tag=_BUILDING_TAGS)
-    for _event, b in context:
+    for b in _buildings(source):
         bid = _gml_id(b)
         if bid is not None and (only_ids is None or bid in only_ids):
             res = check_fn(b, geom_index)
@@ -229,22 +222,7 @@ def run_lint(
                 buildings.append({"id": bid, **res})
                 n_err += len(res["errors"])
                 n_warn += len(res["warnings"])
-        _drop(b)
     return {"file": path, "buildings": buildings, "n_errors": n_err, "n_warnings": n_warn}
-
-
-def _changed_ids(old_map: dict, new_map: dict) -> set:
-    """Building ids added/modified from base to head (changed ones only, so pre-existing defects do not fail unrelated PRs)."""
-    from scripts.diff_citygml import attribute_diffs
-
-    old_ids, new_ids = set(old_map), set(new_map)
-    changed = set(new_ids - old_ids)
-    for bid in old_ids & new_ids:
-        o_attrs, o_geom = old_map[bid]
-        n_attrs, n_geom = new_map[bid]
-        if o_geom != n_geom or attribute_diffs(o_attrs, n_attrs):
-            changed.add(bid)
-    return changed
 
 
 def collect_ci_files(
@@ -253,22 +231,22 @@ def collect_ci_files(
 ) -> list:
     """CI: for each changed .gml, check only the changed buildings in head (the geometry index is built over all of head).
 
-    When check_fn_for(path) is given, use the check function it returns per file
-    (for checks that depend on the file's location, such as codelist consistency).
+    When check_fn_for(path, base_bytes) is given, use the check function it returns per file
+    (for checks that depend on the file's location, such as codelist consistency, or on what the
+    PR changed: base_bytes is the file at base, b"" when the PR adds the file).
     """
     from scripts.repo_git import blob
 
     results: list = []
     for rel in gml_files:
-        old_map = load_buildings(blob(repo, base_sha, rel))
         head_bytes = blob(repo, head_sha, rel)
         if head_bytes is None:
             continue
-        new_map = load_buildings(head_bytes)
-        changed = _changed_ids(old_map, new_map)
+        new_map = buildings_at(repo, head_sha, rel)
+        changed = changed_ids(buildings_at(repo, base_sha, rel), new_map)
         if not changed:
             continue
-        fn = check_fn_for(Path(repo) / rel) if check_fn_for is not None else check_fn
+        fn = check_fn_for(Path(repo) / rel, blob(repo, base_sha, rel) or b"") if check_fn_for is not None else check_fn
         results.append(
             run_lint(head_bytes, rel, fn, only_ids=changed,
                      geom_index=geom_index_from_map(new_map))
@@ -294,16 +272,14 @@ _LABEL = {
 
 
 def render_markdown(files: list, marker: str, title: str, label: dict = None) -> str:
-    """Markdown for PR comments (with marker, errors/warnings separated)."""
+    """Markdown for PR comments (with marker, errors/warnings separated); "" when nothing is found
+    (a clean check posts no comment: U3), never longer than a comment can be (md_report, D-c2)."""
     label = label or _LABEL
     n_err = sum(f["n_errors"] for f in files)
     n_warn = sum(f["n_warnings"] for f in files)
-    lines = [marker, f"## {title}", ""]
     if n_err == 0 and n_warn == 0:
-        lines += ["✅ No warnings.", ""]
-        return "\n".join(lines).rstrip() + "\n"
-    lines.append(f"**❌ {n_err} error(s) / ⚠️ {n_warn} warning(s)** (errors must be fixed and block merging).")
-    lines.append("")
+        return ""
+    lines = [f"**❌ {n_err} error(s) / ⚠️ {n_warn} warning(s)** (errors must be fixed and block merging).", ""]
     for f in files:
         if not f["buildings"]:
             continue
@@ -314,7 +290,7 @@ def render_markdown(files: list, marker: str, title: str, label: dict = None) ->
             for w in b["warnings"]:
                 lines.append(f"- ⚠️ {label.get(w['code'], w['code'])} (`{b['id']}`): {w['detail']}")
         lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    return md_report.report(marker, title, lines)
 
 
 def build_cli(description: str):
@@ -332,18 +308,18 @@ def build_cli(description: str):
 
 
 def run_main(argv, check_fn: CheckFn, marker: str, title: str, label: dict = None,
-             check_fn_for: Optional[Callable] = None) -> int:
+             check_fn_for: Optional[Callable] = None, doc: Optional[str] = None) -> int:
     """Main body shared by citygml_lint / plausibility_lint.
 
-    When check_fn_for(path) is given, use the check function it returns per file (default is check_fn).
+    When check_fn_for(path[, base_bytes]) is given, use the check function it returns per file (default
+    is check_fn); only the CI run (--file-list) has a base.
     """
-    p = build_cli(__doc__)
+    p = build_cli(doc or __doc__)   # each lint's own --help (D-c8: plausibility showed this text)
     args = p.parse_args(argv)
     if args.file_list is not None:
         if not (args.base_sha and args.head_sha):
             p.error("--base-sha and --head-sha are required when using --file-list.")
-        listed = (ln.strip() for ln in args.file_list.read_text(encoding="utf-8").splitlines())
-        gml_files = [p for p in listed if p.endswith(".gml")]
+        gml_files = changed_list(args.file_list)
         files = collect_ci_files(args.repo or REPO_ROOT, args.base_sha, args.head_sha, gml_files,
                                  check_fn, check_fn_for)
     elif args.files:

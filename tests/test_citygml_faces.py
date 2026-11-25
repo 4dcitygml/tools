@@ -21,7 +21,7 @@ def ring(rid, pts):
 
 SQUARE = [(139.0, 35.0, 0), (139.001, 35.0, 0), (139.001, 35.001, 0), (139.0, 35.001, 0)]
 HOLE = [(139.0004, 35.0004, 0), (139.0006, 35.0004, 0), (139.0006, 35.0006, 0), (139.0004, 35.0006, 0)]
-DOC = f"""<core:CityModel xmlns:core="{NS['core']}" xmlns:bldg="{NS['bldg']}" xmlns:gml="{NS['gml']}" xmlns:app="{NS['app']}">
+DOC = f"""<core:CityModel xmlns:core="{NS['core']}" xmlns:bldg="{NS['bldg']}" xmlns:gml="{NS['gml']}" xmlns:app="{NS['app']}"><gml:boundedBy><gml:Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/6697" srsDimension="3"><gml:lowerCorner>35 139 0</gml:lowerCorner><gml:upperCorner>36 140 10</gml:upperCorner></gml:Envelope></gml:boundedBy>
 <core:cityObjectMember><bldg:Building gml:id="b1">
  <bldg:measuredHeight uom="m">10</bldg:measuredHeight>
  <bldg:lod0RoofEdge><gml:MultiSurface><gml:surfaceMember><gml:Polygon><gml:exterior>{ring("", SQUARE)}</gml:exterior></gml:Polygon></gml:surfaceMember></gml:MultiSurface></bldg:lod0RoofEdge>
@@ -73,12 +73,19 @@ class TestFaces(unittest.TestCase):
         self.assertNotIn("holeRings", cf.public_face(face))
 
     def test_the_ci_preview_reads_the_same(self):
-        buildings = preview._extract_buildings(DOC.encode())
-        texmap = preview._extract_texmap(DOC.encode())
+        buildings = preview._extract_buildings(DOC.encode())   # one parse: faces and their textures
         faces = buildings["b1"]["lod2"]
         self.assertEqual([f["id"] for f in faces], ["poly-roof", "b1_p1"])   # BuildingParts were missed
-        self.assertEqual(texmap["poly-roof"]["uv"][0], [0, 0])
+        self.assertEqual(buildings["b1"]["tex"]["poly-roof"]["uv"][0], [0, 0])
         self.assertIn("holes", faces[0])
+
+    def test_a_roof_only_edit_has_a_preview(self):
+        # D-c6: only a footprint or height change made a preview pair; a roof-only edit had none
+        raised = DOC.replace(ring("r-ext", SQUARE), ring("r-ext", [(x, y, 5) for x, y, _z in SQUARE]))
+        self.assertEqual(preview.preview_pairs(DOC.encode(), DOC.encode()), [])
+        pairs = preview.preview_pairs(DOC.encode(), raised.encode())
+        self.assertEqual([(p["old"]["id"], p["new"]["id"]) for p in pairs], [("b1", "b1")])
+        self.assertEqual(pairs[0]["new"]["tex"]["poly-roof"]["img"], "a/roof.jpg")
 
 
 if __name__ == "__main__":

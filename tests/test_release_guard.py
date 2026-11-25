@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.release_guard import check_environment, check_tag_name, check_workflow
+from scripts.release_guard import check_environment, check_tag_name, check_workflow, notes
 
 REVIEWER = {"type": "required_reviewers", "prevent_self_review": False, "reviewers": [{"type": "User", "reviewer": {"login": "m"}}]}
 ENV = {"name": "production", "protection_rules": [REVIEWER],
        "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
-POLICIES = [{"name": "hub-v*", "type": "tag"}, {"name": "tools-v*", "type": "tag"}, {"name": "install-v*", "type": "tag"}]
-WORKFLOW = "jobs:\n  common-tools:\n    runs-on: x\n  release:\n    needs: common-tools\n    environment: production\n"
+POLICIES = [{"name": "hub-v*", "type": "tag"}, {"name": "tools-v*", "type": "tag"}]
+WORKFLOW = "jobs:\n  common-tools:\n    runs-on: x\n  release:\n    needs: common-tools\n    uses: ./.github/workflows/release-publish.yml\n"
+PUBLISH = "jobs:\n  release:\n    runs-on: x\n    environment: production\n"
 
 
 class TestGuard(unittest.TestCase):
@@ -40,11 +41,21 @@ class TestGuard(unittest.TestCase):
                             for p in check_environment({**ENV, "deployment_branch_policy": None}, POLICIES, "tools-v1.3.0")))
 
     def test_workflow_must_gate_its_release_job(self):
-        self.assertEqual(check_workflow(WORKFLOW, "tools"), [])
-        self.assertTrue(check_workflow(WORKFLOW.replace("environment: production", ""), "tools"))
-        self.assertTrue(check_workflow(None, "hub"))
-        self.assertEqual(check_workflow(None, "install"), [])   # the launcher tag has no build workflow
+        self.assertEqual(check_workflow(WORKFLOW, PUBLISH, "tools"), [])
+        self.assertTrue(check_workflow(WORKFLOW, PUBLISH.replace("environment: production", ""), "tools"))
+        self.assertTrue(check_workflow(WORKFLOW.replace("uses: ./.github/workflows/release-publish.yml", ""), PUBLISH, "tools"))
+        self.assertTrue(check_workflow(None, PUBLISH, "hub"))
 
+    def test_the_real_workflows_pass(self):
+        from pathlib import Path
+        wf = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        for series in ("tools", "hub"):
+            self.assertEqual(check_workflow((wf / f"release-{series}.yml").read_text(encoding="utf-8"),
+                                            (wf / "release-publish.yml").read_text(encoding="utf-8"), series), [])
+
+    def test_the_notes_travel_in_the_tag(self):
+        self.assertIn("citygml.ps1", notes("hub-v2.0.0"))
+        self.assertIn("requirements-ci.txt", notes("tools-v2.0.0"))
 
 if __name__ == "__main__":
     unittest.main()

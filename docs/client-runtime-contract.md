@@ -50,7 +50,7 @@ own screen — never through the GitHub CLI.
 
 Test hooks (never set by launchers in normal use): `CITYGML_TOOLS_DIR`,
 `CITYGML_RELEASES_JSON`, `CITYGML_RELEASES_API`, `CITYGML_ASSET_FILE`,
-`CITYGML_NO_EXEC`, `CITYGML_INSTALL_TAG`, `CITYGML_TOOLS_REPO` (the repository
+`CITYGML_NO_EXEC`, `CITYGML_INSTALLER_URL` (the installer the bootstrap runs), `CITYGML_TOOLS_REPO` (the repository
 that publishes the releases and the launcher, default `4dcitygml/tools`; the
 same name the city workflows and the manifest scripts read);
 `CITYGML_OAUTH_CLIENT_ID` (development).
@@ -59,10 +59,10 @@ same name the city workflows and the manifest scripts read);
 
 ```
 ~/Documents/citygml-tools/                     (Windows: %USERPROFILE%\Documents\citygml-tools\)
-  citygml.sh | citygml.ps1                     per-user launcher (copied from the bundle / install-v1)
+  citygml.sh | citygml.ps1                     per-user launcher (copied from the bundle / the latest hub release)
   <City name>.app | <City name>.lnk            desktop launcher, embeds the city id only
   citygml-hub/<hub-vX.Y.Z>/program/hub.py      one folder per installed version; the newest is started
-  <temp>/citygml-hub-stage.*                   transient, while the launcher verifies a download
+  <temp>/citygml-hub-stage*                    transient, one per run (D-5-3), while the launcher verifies a download
 ~/Documents/CityGML Data (<repo name>)/        the city clone (one per city)
 ~/.citygml_attr_editor.json                    shared settings (below)
 ~/.citygml/auth/<login>.json                   one GitHub connection per account (token, id; 0600)
@@ -124,7 +124,8 @@ Shared settings file (`~/.citygml_attr_editor.json`):
   each with the SHA-256 digest GitHub publishes for it. The zip contains one
   top-level folder `citygml-hub/program/` with the hub, the editors, the
   language and theme packs, the shared modules (`runtime.py`, `accounts.py`,
-  `git_sync.py`, `shortcuts.py`, `pr_classification.py`, `pr_markers.py`, `building_identity.py`) and the launchers
+  `git_sync.py`, `shortcuts.py`, `pr_classification.py`, `pr_markers.py`, `building_identity.py`; `common.js`, what
+  every screen shares, put into each by `runtime.page`) and the launchers
   (`citygml.sh`, `citygml.ps1`). `runtime.py` is the one place that knows the
   files, folders, executables, settings file, city resolution and GitHub access
   described here; the hub and the editors import it and the other shared modules

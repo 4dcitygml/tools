@@ -13,7 +13,7 @@ import unittest
 
 from lxml import etree
 
-from scripts.split_4th_mesh import GML, assign_quadrant, quadrant
+from dialects.plateau.split_4th_mesh import GML, assign_quadrant, quadrant
 
 # Simple cell: lat[0,1] x lon[0,1], midpoint (0.5,0.5). Quadrants 1=SW 2=SE 3=NW 4=NE
 CELL = dict(lat_min=0.0, lon_min=0.0, dlat=1.0, dlon=1.0)

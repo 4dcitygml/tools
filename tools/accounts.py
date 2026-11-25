@@ -10,10 +10,11 @@ Git configuration, its credential helpers or the GitHub CLI unless the person
 explicitly picks "use this computer's GitHub" on the account screen.
 
 Files (readable by the owner only; locations in runtime.py):
-  ~/.citygml/auth/<login>.json             token, id, display name
-  ~/.citygml/auth/<login>.git-credentials  the same token in git-credential-store
-                                           format, handed to git with -c for
-                                           network commands (never in argv)
+  ~/.citygml/auth/<login>.json             id, display name, when it was saved
+  ~/.citygml/auth/<login>.git-credentials  the token, its one copy, in git-credential-store
+                                           format: handed to git with -c for network
+                                           commands (never in argv) and read here for the
+                                           REST calls (V2: the token was stored twice)
 
 Earlier versions kept one token for the whole computer (~/.citygml_auth.json),
 wrote the commit identity into the global Git configuration and, on some
@@ -62,6 +63,18 @@ def store_line(token: str) -> str:
     return f"https://x-access-token:{token}@github.com\n"
 
 
+_STORE_TOKEN = re.compile(r"([^@\s]+)".join(re.escape(part) for part in store_line("\0").strip().split("\0")))
+
+
+def _stored_token(path: Path) -> str:
+    """The token of a credential store, or "" (no file, no line of our form)."""
+    try:
+        m = _STORE_TOKEN.search(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
 def store_for(login) -> "Path | None":
     """The credential store git gets for this account's network commands, or None
     (no account, or its store is gone): see runtime.git_args.
@@ -80,7 +93,7 @@ def store_for(login) -> "Path | None":
         return None
     try:
         if b"\r" in path.read_bytes():
-            token = token_for(login)
+            token = _stored_token(path)
             if token:
                 _write_private(path, store_line(token))
     except OSError:
@@ -108,22 +121,49 @@ def save_account(login: str, token: str, user_id, name: str = "") -> dict:
     login = safe_login(login)
     record = {"login": login, "id": int(user_id or 0), "name": str(name or ""),
               "savedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-    _write_private(account_path(login), json.dumps({**record, "token": str(token)}))
-    _write_private(credentials_path(login), store_line(token))
+    _write_private(credentials_path(login), store_line(token))   # the token's one copy (V2)
+    _write_private(account_path(login), json.dumps(record))
     return record
 
 
 def load_account(login) -> "dict | None":
-    """The stored record including the token, or None."""
+    """The stored record with its token (from the credential store), or None when either is missing."""
     try:
         data = runtime.read_json(account_path(login), default=None)
+        token = _stored_token(credentials_path(login))
     except ValueError:
         return None
-    return data if isinstance(data, dict) and data.get("token") else None
+    return {**data, "token": token} if isinstance(data, dict) and token else None
 
 
 def token_for(login) -> str:
     return str((load_account(login) or {}).get("token") or "")
+
+
+# TEMPORARY (V2 migration): remove in v1.7.0, once every hub has started once on v1.6.
+def migrate_tokens() -> int:
+    """Once at start (as runtime.migrate_config): an account file of an earlier version that
+    still carries the token gets it moved into its credential store, the token's one copy, and
+    loses the copy (V2). Idempotent; returns how many files it rewrote."""
+    folder = runtime.auth_dir()
+    moved = 0
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            login = safe_login(path.stem)
+            data = runtime.read_json(path, default=None)
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or "token" not in data:
+            continue
+        token = str(data.pop("token") or "")
+        try:
+            if token and _stored_token(credentials_path(login)) != token:
+                _write_private(credentials_path(login), store_line(token))
+            _write_private(path, json.dumps(data))
+            moved += 1
+        except OSError:
+            continue
+    return moved
 
 
 def public_record(login) -> "dict | None":
@@ -219,20 +259,7 @@ def city_login(city) -> "str | None":
 
 def bind_city_login(city, login) -> None:
     """Record that this city uses this account (login=None forgets the binding)."""
-    if not city:
-        return
-
-    def mutate(cfg: dict) -> None:
-        cities = cfg.get("cities") if isinstance(cfg.get("cities"), dict) else {}
-        entry = dict(cities.get(str(city).lower()) or {})
-        if login:
-            entry["login"] = safe_login(login)
-        else:
-            entry.pop("login", None)
-        cities[str(city).lower()] = entry
-        cfg["cities"] = cities
-
-    runtime.update_config(mutate)
+    runtime.city_entry(city, login=safe_login(login) if login else None)
 
 
 def is_legacy_acknowledged() -> bool:
@@ -246,18 +273,10 @@ def acknowledge_legacy() -> None:
 def login_for_clone(root) -> "str | None":
     """The account an editor works as for this clone: the binding of the clone's city in
     the shared settings, read fresh on every call (when the hub rebinds the city while the
-    editor is open, the editor follows at once); the login handed over at launch
-    (CITYGML_ACCOUNT) counts only for a clone without a 4dcitygml.json."""
+    editor is open, the editor follows at once). A clone that names no city has no account
+    (V1: the CITYGML_ACCOUNT hand-over at launch goes; the settings file is the one owner)."""
     city = runtime.clone_city(root) if root is not None else None
-    if city:
-        # the settings file is the one owner (S18, F5): an unbound or forgotten city has no
-        # account, whatever login the editor was started with
-        return city_login(city) or None
-    env = os.environ.get("CITYGML_ACCOUNT", "").strip()
-    try:
-        return safe_login(env) if env and load_account(env) else None
-    except ValueError:
-        return None
+    return (city_login(city) or None) if city else None
 
 
 # ---- what earlier versions left on this computer ----

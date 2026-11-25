@@ -18,7 +18,7 @@ class ReleaseSeriesTest(unittest.TestCase):
     def run_guard(self, series, event, tag='', ref='main', ref_type='branch'):
         text = self.workflow(series).split('  validate-release:\n', 1)[1]
         script = text.split('        run: |\n', 1)[1].split('\n\n', 1)[0]
-        return subprocess.run(['bash', '-c', textwrap.dedent(script)], capture_output=True,
+        return subprocess.run(['bash', '-c', textwrap.dedent(script)], capture_output=True, cwd=ROOT,
             env={**os.environ, 'REQUESTED_TAG': tag, 'GITHUB_EVENT_NAME': event,
                  'GITHUB_REF_NAME': ref, 'GITHUB_REF_TYPE': ref_type}).returncode
 
@@ -39,19 +39,25 @@ class ReleaseSeriesTest(unittest.TestCase):
             for tag in [f'{series}-vlatest', f'{series}-v1.1.0; echo unexpected', 'main']:
                 self.assertNotEqual(self.run_guard(series,'workflow_dispatch',tag),0)
 
-    def test_publish_jobs_and_assets_remain_separate(self):
+    def test_one_publishing_job_for_both_series(self):
+        publish = (ROOT / '.github/workflows/release-publish.yml').read_text()
         for series in ['hub','tools']:
             text=self.workflow(series)
             self.assertIn(f"tags: ['{series}-v*']", text)
-            # one publish job per series: a pushed series tag, or a manual run naming an existing Release
+            # a pushed series tag, or a manual run naming an existing Release, calls the one publishing job
             self.assertIn(f"if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/{series}-v')) || inputs.release_tag != ''",text)
-            self.assertNotIn('--clobber',text)
+            self.assertEqual(text.count('uses: ./.github/workflows/release-publish.yml'), 1)
+            self.assertNotIn('sha256sum "citygml', text)   # GitHub publishes the asset digests
+            self.assertNotIn('gh release', text)
+        self.assertIn('environment: production', publish)
+        self.assertIn('--notes-from-tag', publish)
+        self.assertIn('--latest=$latest', publish)             # release_tags: a final hub release only
+        self.assertIn('flags+=(--prerelease)', publish)        # a suffixed tag (D-5-1)
+        self.assertNotIn('--clobber', publish)
         hub=self.workflow('hub'); common=self.workflow('tools')
         self.assertNotIn('citygml-tools-${version}-source.zip',hub)
         self.assertNotIn('windows-full.zip',common)
         self.assertEqual(hub.count('needs: validate-release'),2)
         self.assertEqual(common.count('needs: validate-release'),1)
-        self.assertIn('--latest=false',common)
-
 
 if __name__ == '__main__': unittest.main()

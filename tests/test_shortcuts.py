@@ -83,5 +83,27 @@ class TestMacApp(unittest.TestCase):
             self.assertTrue((app / "Contents" / "Resources" / "icon.icns").is_file())
 
 
+
+class TestPowerShellValues(unittest.TestCase):
+    """D-3c3: the city's display name and the logo path went into single-quoted PowerShell as
+    they were, so a name with ' (config, changeable by a merged PR) ran code when the shortcut
+    was made. Every value is a quoted PowerShell string now."""
+
+    def test_a_quote_never_ends_the_string(self):
+        import re
+        evil = "x'; Remove-Item -Recurse y; #"   # the old code ran this (checked against it)
+        self.assertEqual(sc.ps_quote(evil), "'x''; Remove-Item -Recurse y; #'")
+        seen = []
+        with tempfile.TemporaryDirectory() as d:
+            logo = Path(d) / "it'; Remove-Item z; #.png"
+            logo.write_bytes(b"\x89PNG")
+            with patch.object(sc.runtime, "WINDOWS", True), \
+                    patch.object(sc.subprocess, "run", lambda cmd, **kw: seen.append(cmd[-1])):
+                sc.create_windows_shortcut(Path(d), evil, "city/repo", logo)
+        self.assertEqual(len(seen), 2)   # the icon, the shortcut
+        for command in seen:
+            outside = re.sub(r"'(?:[^']|'')*'", "<s>", command)   # what PowerShell reads as code
+            self.assertNotIn("Remove-Item", outside, command)
+
 if __name__ == "__main__":
     unittest.main()

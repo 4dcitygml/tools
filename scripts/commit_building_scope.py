@@ -46,23 +46,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.repo_git import blob as _blob, git as _git  # noqa: E402
+from scripts.repo_git import GitError, blob as _blob, changed, commits as range_commits, git as _git  # noqa: E402
 from scripts.provenance_manifest import parse_manifest_ref, sha256_hex, validate as validate_manifest  # noqa: E402
-from scripts.repo_scope import data_dirs, is_data  # noqa: E402
+from scripts import city_declaration  # noqa: E402
+from scripts.repo_scope import is_data, is_schema  # noqa: E402
 from scripts.gate_result import malformed_input  # noqa: E402
-from scripts.building_identity import (IdentityRule, building_spans, municipality, replace_stable_id,  # noqa: E402
+from scripts.building_identity import (IdentityRule, building_spans, replace_stable_id,  # noqa: E402
                                        rule_from_config, stable_id)
-from scripts.building_identity import trailer_buildings, trailers as parse_trailers  # noqa: E402
-from scripts.texture_check import _building_appearance_sig  # noqa: E402
+from scripts.building_identity import (CHANGE_TYPES as ACCEPTED_CHANGE_TYPES, GENERIC_KINDS, IDENTITY_KINDS,  # noqa: E402
+                                       WHOLE_FILE_KINDS, trailer_buildings, trailers as parse_trailers)
+from scripts.texture_check import building_appearance_sig  # noqa: E402
 from scripts.lifecycle_manifest import validate as validate_lifecycle  # noqa: E402
 
-IDENTITY_KINDS = {"identity-baseline", "identity-correction"}
-# Exchange Contract A2: the only Change-Type values a commit may declare (schema-migration is
-# designed but has no gate yet, so it is not accepted)
-ACCEPTED_CHANGE_TYPES = frozenset({"lifecycle", "layout", "source-baseline", "scope-extract", "practice-reset",
-                                   "schema-update"} | IDENTITY_KINDS)
-# schema-update: the artifacts an edition brings (code lists, XSD profile, provenance), never data
-SCHEMA_UPDATE_PREFIXES = ("codelists/", "schemas/", "provenance/schema-update/", "docs/")
 
 
 @dataclass
@@ -98,24 +93,8 @@ class CommitResult:
         return not self.errors
 
 
-def _changed_gml_paths(repo: Path, parent: str, commit: str) -> list[str]:
-    # Rename detection is intentionally disabled so renames yield both the old and new paths.
-    output = _git(
-        repo, "diff", "--name-only", "--no-renames", parent, commit, "--", "*.gml"
-    )
-    return sorted({line for line in str(output).splitlines() if line.endswith(".gml")})
 
-
-def _city_config(repo: Path, sha: str) -> dict:
-    """The clone's 4dcitygml.json as committed at sha ({} when absent or unreadable)."""
-    try:
-        cfg = json.loads(str(_git(repo, "show", f"{sha}:4dcitygml.json")))
-    except (RuntimeError, ValueError):
-        return {}
-    return cfg if isinstance(cfg, dict) else {}
-
-
-def _snapshot(blobs: list[bytes], rule: IdentityRule = IdentityRule()) -> Snapshot:
+def _snapshot(blobs: list[bytes], rule: IdentityRule = IdentityRule(), municipality=None) -> Snapshot:
     snapshot = Snapshot()
     appearance_sets: dict[str, set[tuple[str, str, str]]] = {}
 
@@ -126,14 +105,14 @@ def _snapshot(blobs: list[bytes], rule: IdentityRule = IdentityRule()) -> Snapsh
             stable = stable_id(member, gml_id, rule)
             local_gml_to_stable[gml_id] = stable
             snapshot.gml_to_stable[gml_id] = stable
-            snapshot.municipalities[stable] = municipality(member)
+            snapshot.municipalities[stable] = municipality(member) if municipality else None
             digest = hashlib.sha256(member).digest()
             if stable in snapshot.members:
                 snapshot.duplicates.add(stable)
             else:
                 snapshot.members[stable] = digest
 
-        for gml_id, signatures in _building_appearance_sig(raw).items():
+        for gml_id, signatures in building_appearance_sig(raw).items():
             stable = local_gml_to_stable.get(gml_id, gml_id)
             appearance_sets.setdefault(stable, set()).update(signatures)
 
@@ -155,11 +134,10 @@ def _member_bytes(blobs: list[bytes], stable: str, rule: IdentityRule = Identity
 
 
 def _data_path_test(repo: Path, sha: str):
-    """Whether a path belongs to the city's data at that commit: 4dcitygml.json data_dirs, the
-    PLATEAU layout and provenance/ (as the repository scope gate defines data); a repository
-    without any of these treats its CityGML files as the data."""
-    dirs = data_dirs(_city_config(repo, sha))
-    return lambda path: is_data(path, dirs) or (not dirs and path.endswith(".gml"))
+    """Whether a path belongs to the city's data as declared at that commit (repo_scope.is_data:
+    the declared data_dirs, else the CityGML files; and provenance/)."""
+    dirs = city_declaration.read(repo, sha).data_dirs
+    return lambda path: is_data(path, dirs)
 
 
 def _data_blobs(repo: Path, sha: str, in_data) -> dict[str, str]:
@@ -172,20 +150,45 @@ def _data_blobs(repo: Path, sha: str, in_data) -> dict[str, str]:
     return out
 
 
-def inspect_commit(repo: Path, sha: str) -> CommitResult:
-    parents = str(_git(repo, "show", "-s", "--format=%P", sha)).strip().split()
-    subject = str(_git(repo, "show", "-s", "--format=%s", sha)).strip()
-    result = CommitResult(sha=sha, subject=subject)
+BASE_UPDATE = "base-update"   # a merge that only brings in the PR's base (A2, v4.0.0)
+
+
+def is_base_update(repo: Path, sha: str, parents: list[str], base_sha: str) -> bool:
+    """Whether a merge commit only brings the PR's base into it, as GitHub's "Update branch"
+    makes one (default merge mode): two parents, one of them in the base's history, and nothing
+    in the merge that git's own re-merge would not produce (`git show --remerge-diff` is empty:
+    no hand-made resolution, no change of its own)."""
+    def in_base(parent: str) -> bool:
+        try:
+            _git(repo, "merge-base", "--is-ancestor", parent, base_sha)   # exit 1: not an ancestor
+            return True
+        except GitError:
+            return False
+    if len(parents) != 2 or not base_sha or not any(in_base(parent) for parent in parents):
+        return False
+    try:
+        return not str(_git(repo, "show", "--remerge-diff", "--format=", sha)).strip()
+    except GitError:   # a git without --remerge-diff (before 2.36) cannot tell: refused as before
+        return False
+
+
+def inspect_commit(repo: Path, commit: dict, base_sha: str = "") -> CommitResult:
+    """One commit of the PR, as repo_git.commits lists it (sha, parents, subject, message)."""
+    sha, parents = commit["sha"], commit["parents"]
+    result = CommitResult(sha=sha, subject=commit["subject"].strip())
+    if is_base_update(repo, sha, parents, base_sha):
+        result.change_type = BASE_UPDATE   # its content is the base; the other commits are inspected
+        return result
     if len(parents) != 1:
         result.errors.append(
-            "Merge commits inside a PR branch cannot be inspected. Rebase onto main for a linear history."
+            "Merge commits inside a PR branch cannot be inspected, except a merge that only brings in "
+            "main (GitHub's Update branch). Rebase onto main for a linear history."
         )
         return result
 
     parent = parents[0]
-    paths = _changed_gml_paths(repo, parent, sha)
-    message = str(_git(repo, "show", "-s", "--format=%B", sha))
-    trailers = parse_trailers(message)
+    paths = changed(repo, sha, suffix=".gml")   # renames as both paths
+    trailers = parse_trailers(commit["message"])
     result.trailers = trailers
     change_types = trailers.get("Change-Type", [])
     change_type = change_types[-1].lower() if change_types else ""
@@ -196,6 +199,15 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
 
     if len(change_types) > 1:
         result.errors.append("Specify exactly one Change-Type trailer.")
+    # U1: the city's declaration as the PR's base holds it judges every commit of the PR
+    declaration = city_declaration.read(repo, base_sha or sha)
+    pack = declaration.pack
+    if (change_type in ACCEPTED_CHANGE_TYPES - GENERIC_KINDS - pack.kinds
+            or (trailers.get("Provenance-Manifest") and change_type not in IDENTITY_KINDS and not pack.bulk_kinds)):
+        result.errors.append(f"{change_type or 'A manifest-backed change'} comes with a dialect pack: the city's "
+                             "4dcitygml.json declares no dialect with it, so it does not apply here "
+                             "(Exchange Contract A2).")
+        return result
     if change_type and change_type not in ACCEPTED_CHANGE_TYPES:
         result.errors.append(f"Unknown Change-Type {change_type!r}. Accepted values: "
                              + ", ".join(sorted(ACCEPTED_CHANGE_TYPES)) + " (Exchange Contract A2).")
@@ -216,9 +228,8 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
         except RuntimeError:
             result.errors.append(f"The Reset-To commit {targets[0]} is not available in this checkout.")
             return result
-        in_data = _data_path_test(repo, sha)
-        changed = str(_git(repo, "diff", "--name-only", "--no-renames", parent, sha)).splitlines()
-        outside = sorted(p for p in changed if p and not in_data(p))
+        in_data = _data_path_test(repo, base_sha or sha)
+        outside = [p for p in changed(repo, sha) if not in_data(p)]
         if outside:
             result.errors.append("A practice-reset commit changes only the city's data directories; unexpected: "
                                  + ", ".join(outside[:5]))
@@ -234,11 +245,13 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
         if change_type in IDENTITY_KINDS:
             result.errors.append(f"A {change_type} commit carries no CityGML change (documentation-only commits must not declare it).")
         if change_type == "schema-update":
-            changed = str(_git(repo, "diff", "--name-only", "--no-renames", parent, sha)).splitlines()
-            outside = [f for f in changed if not f.startswith(SCHEMA_UPDATE_PREFIXES)]
+            # the artifacts an edition brings (repo_scope's schema category, U11), its provenance and docs/
+            outside = [f for f in changed(repo, sha) if not (is_schema(f, declaration)
+                                                  or f.startswith(("provenance/schema-update/", "docs/")))]
             if outside:
-                result.errors.append("schema-update commits change only edition artifacts (" + ", ".join(SCHEMA_UPDATE_PREFIXES)
-                                     + "); unexpected: " + ", ".join(outside[:5]))
+                result.errors.append("schema-update commits change only edition artifacts (" + ", ".join(
+                    [*(d + "/" for d in pack.schema_dirs), "provenance/schema-update/", "docs/"])
+                    + "); unexpected: " + ", ".join(outside[:5]))
         return result
     if change_type == "schema-update":
         result.errors.append("schema-update commits must not change CityGML data (add the edition's code lists / schema profile only).")
@@ -246,9 +259,9 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
 
     old_blobs = [raw for path in paths if (raw := _blob(repo, parent, path)) is not None]
     new_blobs = [raw for path in paths if (raw := _blob(repo, sha, path)) is not None]
-    rule = rule_from_config(_city_config(repo, sha))
-    old = _snapshot(old_blobs, rule)
-    new = _snapshot(new_blobs, rule)
+    rule = rule_from_config(declaration.resolved)
+    old = _snapshot(old_blobs, rule, pack.municipality)
+    new = _snapshot(new_blobs, rule, pack.municipality)
 
     if old.duplicates or new.duplicates:
         dup = sorted(old.duplicates | new.duplicates)
@@ -290,6 +303,9 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
             )
             return result
         target = scope_values[0]
+        if not re.fullmatch(pack.municipality_code or "", target):
+            result.errors.append(f"Scope-Municipality: {target} is not a municipality code of the city's dialect pack.")
+            return result
         if identities:
             result.errors.append("scope-extract commits must not list per-building trailers.")
 
@@ -347,16 +363,7 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
             result.errors.append(f"{change_type} commits must not list Building/Building-Added/Building-Deleted trailers.")
         source, target = froms[0], tos[0]
         result.identity_from, result.identity_to = source, target
-        if len(refs) != 1 or parse_manifest_ref(refs[0]) is None:
-            result.errors.append("Exactly one Provenance-Manifest: <path>@sha256:<hex> trailer is required.")
-        else:
-            result.manifest_ref = refs[0]
-            ref_path, ref_sha = parse_manifest_ref(refs[0])
-            manifest_blob = _blob(repo, sha, ref_path)
-            if manifest_blob is None:
-                result.errors.append(f"Provenance manifest {ref_path} is not present in the commit.")
-            elif sha256_hex(manifest_blob) != ref_sha:
-                result.errors.append(f"Provenance manifest {ref_path} does not match the digest in the trailer.")
+        _check_manifest_ref(repo, sha, refs, result)
         if change_type == "identity-correction" and len(trailers.get("Corrects", [])) != 1:
             result.errors.append("identity-correction commits carry exactly one Corrects: <commit sha> trailer.")
         if result.deleted_ids != {source} or result.added_ids != {target} or result.changed_ids != {source, target}:
@@ -390,7 +397,7 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
             result.errors.append('Exactly one Lifecycle-Manifest: provenance/lifecycle/<event>.json@sha256:<hex> is required.')
             return result
         raw = _blob(repo, sha, ref[0])
-        changed_records = str(_git(repo, 'diff', '--name-only', parent, sha, '--', 'provenance/lifecycle/')).splitlines()
+        changed_records = [p for p in changed(repo, sha) if p.startswith('provenance/lifecycle/')]
         if changed_records != [ref[0]]:
             result.errors.append('A lifecycle commit records exactly its referenced event; do not change other lifecycle records.')
         if raw is None or sha256_hex(raw) != ref[1]:
@@ -437,18 +444,8 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
         )
         return result
 
-    refs = trailers.get("Provenance-Manifest", [])
-    if refs:
-        if len(refs) != 1 or parse_manifest_ref(refs[0]) is None:
-            result.errors.append("Exactly one Provenance-Manifest: <path>@sha256:<hex> trailer is allowed.")
-        else:
-            result.manifest_ref = refs[0]
-            ref_path, ref_sha = parse_manifest_ref(refs[0])
-            manifest_blob = _blob(repo, sha, ref_path)
-            if manifest_blob is None:
-                result.errors.append(f"Provenance manifest {ref_path} is not present in the commit.")
-            elif sha256_hex(manifest_blob) != ref_sha:
-                result.errors.append(f"Provenance manifest {ref_path} does not match the digest in the trailer.")
+    if trailers.get("Provenance-Manifest"):
+        _check_manifest_ref(repo, sha, trailers["Provenance-Manifest"], result)
     stable = next(iter(result.changed_ids))
     if result.manifest_ref:
         result.member_before = _member_bytes(old_blobs, stable, rule)
@@ -470,18 +467,35 @@ def inspect_commit(repo: Path, sha: str) -> CommitResult:
     return result
 
 
+DIALECT = ("dialect", "building_id", "data_dirs", "crs")   # how the data is read (schemas/city/4dcitygml.schema.json)
+
+
+def _dialect_change_is_configuration_only(repo: Path, base_sha: str, head_sha: str, results: list) -> None:
+    """A PR that changes how the city's data is read (its declared dialect) changes no data: the
+    analysis reads the declaration at the base (U1), so data in the same PR would be judged by
+    the rule it replaces."""
+    before, after = city_declaration.read(repo, base_sha), city_declaration.read(repo, head_sha)
+    if not results or all(before.raw.get(k) == after.raw.get(k) for k in DIALECT):
+        return
+    if any(p.endswith(".gml") or is_data(p, before.data_dirs) or is_data(p, after.data_dirs)
+           for p in changed(repo, base_sha, head_sha)):
+        results[0].errors.append(
+            "This PR changes how the city's data is read (" + ", ".join(k for k in DIALECT if before.raw.get(k) != after.raw.get(k))
+            + " in 4dcitygml.json) and also changes data. Propose the declaration on its own; the data follows "
+            "in a PR after it is merged.")
+
+
 def inspect_range(repo: Path, base_sha: str, head_sha: str) -> list[CommitResult]:
-    commits = str(
-        _git(repo, "rev-list", "--reverse", "--topo-order", f"{base_sha}..{head_sha}")
-    ).splitlines()
-    results = [inspect_commit(repo, sha) for sha in commits if sha]
+    inspected = [inspect_commit(repo, commit, base_sha) for commit in range_commits(repo, base_sha, head_sha)]
+    # the base updates carry the base, not the PR's change: the range rules below see the rest
+    results = [r for r in inspected if r.change_type != BASE_UPDATE]
+    _dialect_change_is_configuration_only(repo, base_sha, head_sha, results)
     lifecycle = [item for item in results if item.change_type == 'lifecycle']
     if lifecycle and len(results) != 1:
         for item in lifecycle:
             item.errors.append('One lifecycle event requires one dedicated commit and PR; do not mix other commits.')
     if not lifecycle:
-        ordinary = [r for r in results if not r.manifest_ref and r.change_type not in
-                    ({'source-baseline', 'layout', 'scope-extract'} | IDENTITY_KINDS)]
+        ordinary = [r for r in results if not r.manifest_ref and r.change_type not in WHOLE_FILE_KINDS | IDENTITY_KINDS]
         if any(r.added_ids or r.deleted_ids for r in ordinary) and len(set().union(*(r.changed_ids for r in ordinary))) > 1:
             ordinary[0].errors.append('Multiple buildings with additions/deletions require a declared lifecycle event or a supported bulk submission.')
     scope_extracts = [item for item in results if item.change_type == "scope-extract"]
@@ -494,7 +508,7 @@ def inspect_range(repo: Path, base_sha: str, head_sha: str) -> list[CommitResult
     _inspect_source_update_range(repo, base_sha, head_sha, results)
     seen: dict[str, CommitResult] = {}
     for result in results:
-        if result.change_type in {"layout", "source-baseline", "scope-extract"} | IDENTITY_KINDS:
+        if result.change_type in WHOLE_FILE_KINDS | IDENTITY_KINDS:
             continue
         for stable in result.changed_ids:
             previous = seen.get(stable)
@@ -505,7 +519,7 @@ def inspect_range(repo: Path, base_sha: str, head_sha: str) -> list[CommitResult
                 )
             else:
                 seen[stable] = result
-    return results
+    return inspected
 
 
 def _repository_building_ids(repo: Path, sha: str, rule: IdentityRule) -> dict[str, list[str]]:
@@ -522,6 +536,50 @@ def _repository_building_ids(repo: Path, sha: str, rule: IdentityRule) -> dict[s
     return ids
 
 
+def _check_manifest_ref(repo: Path, sha: str, refs: list, result: CommitResult) -> None:
+    """A commit's manifest: exactly one Provenance-Manifest: <path>@sha256:<hex> that the commit
+    holds with that digest (identity and bulk commits alike)."""
+    if len(refs) != 1 or parse_manifest_ref(refs[0]) is None:
+        result.errors.append("Exactly one Provenance-Manifest: <path>@sha256:<hex> trailer is required.")
+        return
+    result.manifest_ref = refs[0]
+    ref_path, ref_sha = parse_manifest_ref(refs[0])
+    manifest_blob = _blob(repo, sha, ref_path)
+    if manifest_blob is None:
+        result.errors.append(f"Provenance manifest {ref_path} is not present in the commit.")
+    elif sha256_hex(manifest_blob) != ref_sha:
+        result.errors.append(f"Provenance manifest {ref_path} does not match the digest in the trailer.")
+
+
+def _pr_manifest(repo: Path, head_sha: str, commits: list, refs: set) -> "tuple[dict, str] | None":
+    """The one manifest every commit of a PR references, as the PR head holds it and valid; the
+    errors go to the commits, and None when there is none to use."""
+    if len(refs) != 1:
+        commits[0].errors.append("All commits of a bulk PR reference the same Provenance-Manifest.")
+        return None
+    ref_path, ref_sha = parse_manifest_ref(next(iter(refs)))
+    blob = _blob(repo, head_sha, ref_path)
+    try:
+        manifest = json.loads(blob.decode("utf-8")) if blob is not None else None
+    except ValueError:
+        manifest = None
+    if not isinstance(manifest, dict):
+        commits[0].errors.append(f"Provenance manifest {ref_path} is missing or not JSON at the PR head.")
+        return None
+    if sha256_hex(blob) != ref_sha:
+        commits[0].errors.append(
+            f"Provenance manifest {ref_path} at the PR head does not match the digest the commits reference "
+            "(the manifest was changed after the commits were made)."
+        )
+        return None
+    problems = validate_manifest(manifest)
+    if problems:
+        for r in commits:
+            r.errors.append("Provenance manifest violates the schema: " + "; ".join(problems[:3]))
+        return None
+    return manifest, ref_path
+
+
 def _inspect_identity_range(repo: Path, base_sha: str, head_sha: str, results: list[CommitResult]) -> None:
     """PR-level rules for identity commits: one manifest for the whole PR, every
     From->To pair listed in it with tier A/B (C only under review), and no
@@ -534,39 +592,17 @@ def _inspect_identity_range(repo: Path, base_sha: str, head_sha: str, results: l
     for r in results:
         if r.change_type not in IDENTITY_KINDS and (r.changed_ids or r.change_type):
             r.errors.append("This commit does not belong in an identity PR (identity commits plus documentation only).")
-    refs = {r.manifest_ref for r in identity if r.manifest_ref}
-    if len(refs) != 1:
-        identity[0].errors.append("All identity commits of a PR reference the same Provenance-Manifest.")
+    found = _pr_manifest(repo, head_sha, identity, {r.manifest_ref for r in identity if r.manifest_ref})
+    if found is None:
         return
-    ref_path, ref_sha = parse_manifest_ref(next(iter(refs)))
-    blob = _blob(repo, head_sha, ref_path)
-    manifest = None
-    if blob is not None:
-        try:
-            manifest = json.loads(blob.decode("utf-8"))
-        except ValueError:
-            manifest = None
-    if manifest is None:
-        identity[0].errors.append(f"Provenance manifest {ref_path} is missing or not JSON at the PR head.")
-        return
-    if sha256_hex(blob) != ref_sha:
-        identity[0].errors.append(
-            f"Provenance manifest {ref_path} at the PR head does not match the digest the commits reference "
-            "(the manifest was changed after the commits were made)."
-        )
-        return
-    problems = validate_manifest(manifest)
-    if problems:
-        for r in identity:
-            r.errors.append("Provenance manifest violates the schema: " + "; ".join(problems[:3]))
-        return
+    manifest, ref_path = found
     kinds = {r.change_type for r in identity}
     if manifest.get("kind") not in kinds or len(kinds) != 1:
         for r in identity:
             r.errors.append(f"Manifest kind {manifest.get('kind')!r} does not match the commits' Change-Type.")
     links = {(l["from"], l["to"]): l for l in manifest.get("evidence", {}).get("links", [])}
     review_allowed = os.environ.get("CITYGML_IDENTITY_REVIEW") == "true"
-    current = _repository_building_ids(repo, base_sha, rule_from_config(_city_config(repo, base_sha)))
+    current = _repository_building_ids(repo, base_sha, rule_from_config(city_declaration.read(repo, base_sha).resolved))
     seen_pairs: set[tuple[str, str]] = set()
     for r in identity:
         pair = (r.identity_from, r.identity_to)
@@ -600,117 +636,24 @@ def _inspect_identity_range(repo: Path, base_sha: str, head_sha: str, results: l
 
 
 def _inspect_source_update_range(repo: Path, base_sha: str, head_sha: str, results: list[CommitResult]) -> None:
-    """PR-level rules for bulk source-update commits (normal Building: commits
-    that carry a Provenance-Manifest): one manifest per PR, every changed
-    building listed in evidence.targets exactly once, and each commit's building
-    bytes equal to the parent's bytes with the manifest's changes applied."""
+    """PR-level rules for the bulk commits of a manifest kind (normal Building: commits that carry
+    a Provenance-Manifest): one manifest per PR, then its kind's rules, which the city's dialect
+    pack gives (Pack.bulk_kinds: a pack's own kinds, such as the source update; the identity
+    kinds are checked above, for every city)."""
     bulk = [r for r in results if r.manifest_ref and r.change_type not in IDENTITY_KINDS and r.changed_ids]
     if not bulk:
         return
-    refs = {r.manifest_ref for r in bulk}
-    if len(refs) != 1:
-        bulk[0].errors.append("All commits of a bulk PR reference the same Provenance-Manifest.")
+    found = _pr_manifest(repo, head_sha, bulk, {r.manifest_ref for r in bulk})
+    if found is None:
         return
-    ref_path, ref_sha = parse_manifest_ref(next(iter(refs)))
-    blob = _blob(repo, head_sha, ref_path)
-    try:
-        manifest = json.loads(blob.decode("utf-8")) if blob is not None else None
-    except ValueError:
-        manifest = None
-    if manifest is None:
-        bulk[0].errors.append(f"Provenance manifest {ref_path} is missing or not JSON at the PR head.")
-        return
-    if sha256_hex(blob) != ref_sha:
-        bulk[0].errors.append(
-            f"Provenance manifest {ref_path} at the PR head does not match the digest the commits reference "
-            "(the manifest was changed after the commits were made)."
-        )
-        return
-    problems = validate_manifest(manifest)
-    if problems:
+    manifest, ref_path = found
+    # the rules of the city's dialect at the PR base: a PR cannot choose its own (trusted side)
+    check = next((c for k, _tool, c in city_declaration.read(repo, base_sha).pack.bulk_kinds if k == manifest.get("kind")), None)
+    if check is None:
         for r in bulk:
-            r.errors.append("Provenance manifest violates the schema: " + "; ".join(problems[:3]))
+            r.errors.append(f"Manifest kind {manifest.get('kind')!r} is not a bulk kind of this city's data.")
         return
-    if manifest.get("kind") == "semantic-correction":
-        _inspect_semantic_range(repo, base_sha, head_sha, results, manifest, ref_path)
-        return
-    if manifest.get("kind") not in ("source-update", "carry-forward"):
-        for r in bulk:
-            r.errors.append(f"Manifest kind {manifest.get('kind')!r} does not match Building: commits (expected source-update or carry-forward).")
-        return
-    from scripts.source_update_manifest import apply_changes_to_member  # lazy: lxml-heavy module
-
-    per_building: dict[str, list[dict]] = {}
-    for change in manifest.get("evidence", {}).get("changes", []):
-        per_building.setdefault(change["id"], []).append(change)
-    targets = set(manifest.get("evidence", {}).get("targets", []))
-    seen: set[str] = set()
-    unlisted = [r for r in results if r.changed_ids and not r.manifest_ref and r.change_type not in IDENTITY_KINDS]
-    for r in unlisted:
-        r.errors.append("A bulk PR contains only manifest-backed commits; this commit has no Provenance-Manifest trailer.")
-    for r in bulk:
-        stable = next(iter(r.changed_ids))
-        if stable not in targets:
-            r.errors.append(f"{stable} is not among the manifest's targets.")
-            continue
-        if stable in seen:
-            r.errors.append(f"{stable} appears in more than one commit of this PR.")
-        seen.add(stable)
-        before, after = r.member_before, r.member_after
-        try:
-            expected = apply_changes_to_member(before, per_building.get(stable, [])) if before is not None else None
-        except SystemExit as exc:
-            expected = None
-            r.errors.append(f"Manifest changes for {stable} cannot be applied: {exc}")
-        if expected is not None and expected != after:
-            r.errors.append(f"The bytes of {stable} differ from the parent with the manifest's changes applied (extra or missing edits).")
-    missing = sorted(targets - seen)
-    if missing and not any(r.errors for r in bulk):
-        bulk[0].errors.append(f"The PR applies {len(seen)} of the manifest's {len(targets)} targets (missing e.g. {missing[0]}).")
-
-
-def _inspect_semantic_range(repo, base_sha, head_sha, results, manifest, ref_path):
-    """Exact file-level and per-commit verification of the narrow LOD0 recipe."""
-    from scripts import lod0_semantic_manifest as L
-    try:
-        L.contract(manifest)
-        L.safe_path(ref_path)
-        if not ref_path.startswith('provenance/semantic-correction/'):
-            raise ValueError('Semantic manifest must be under provenance/semantic-correction/')
-        product = manifest['products'][0]['path']
-        if manifest['materials'][0]['uri'] != f'git:{base_sha}:{product}':
-            raise ValueError('Current material must identify the PR base and exact product path')
-        if os.environ.get('GITHUB_REPOSITORY') and manifest['repository'] != os.environ['GITHUB_REPOSITORY']:
-            raise ValueError('Manifest repository differs from the city repository')
-        before = _blob(repo, base_sha, product)
-        if before is None:
-            raise ValueError('Current product missing at PR base')
-        expected = L.reproduce(manifest, before)
-        if _blob(repo, head_sha, product) != expected:
-            raise ValueError('Full PR product differs from the exact semantic transformation')
-        seen = set()
-        for r in results:
-            parents = str(_git(repo, 'show', '-s', '--format=%P', r.sha)).split()
-            if len(parents) != 1:
-                raise ValueError('Linear building commits required')
-            parent = parents[0]
-            changed = set(str(_git(repo, 'diff', '--name-only', '--no-renames', parent, r.sha)).splitlines())
-            if not changed <= {product, ref_path}:
-                raise ValueError('Semantic PR changes a file outside its product and manifest')
-            if r.change_type or len(r.changed_ids) != 1 or not r.manifest_ref:
-                raise ValueError('Each semantic commit must be a manifest-backed single Building change')
-            stable = next(iter(r.changed_ids))
-            if stable in seen or stable not in manifest['evidence']['targets']:
-                raise ValueError('Repeated or unlisted semantic target')
-            seen.add(stable)
-            raw = _blob(repo, parent, product)
-            out, _ = L.transform(raw, manifest['scope']['municipality'], [stable])
-            if _blob(repo, r.sha, product) != out:
-                raise ValueError('Commit changes bytes beyond the declared building property names')
-        if seen != set(manifest['evidence']['targets']):
-            raise ValueError('Semantic PR must apply every declared target exactly once')
-    except (ValueError, KeyError, TypeError, RuntimeError, L.etree.XMLSyntaxError, L.expat.ExpatError) as exc:
-        results[0].errors.append('Semantic correction: ' + str(exc))
+    check(repo, base_sha, head_sha, results, manifest, ref_path)
 
 
 def render(results: list[CommitResult]) -> str:
@@ -761,20 +704,20 @@ class _FileBuildings:
             stable = stable_id(raw[start:end], gml_id, rule)
             self.gml[stable], self.member[stable] = gml_id, raw[start:end]
         self.first = min((start for start, _ in spans.values()), default=0)
-        appearance = _building_appearance_sig(raw) if raw else {}
+        appearance = building_appearance_sig(raw) if raw else {}
         self.appearance = {stable: frozenset(appearance.get(gml_id, ())) for stable, gml_id in self.gml.items()}
 
     def meaning(self, stables) -> dict[str, tuple]:
         """stable -> (attributes, geometry hash, appearance) for the given buildings."""
         from scripts.building_identity import citymodel_close
-        from scripts.diff_citygml import iter_buildings
+        from scripts.diff_citygml import iter_buildings, signature
         wanted = [s for s in stables if s in self.member]
         if not wanted:
             return {}
         close = citymodel_close(self.raw)
         doc = self.raw[:self.first] + b"".join(self.member[s] for s in wanted) + (self.raw[close:] if close >= 0 else b"")
         by_gml = {gml_id: (attrs, geom) for gml_id, attrs, geom in iter_buildings(doc)}
-        return {s: (*by_gml.get(self.gml[s], ({}, None)), self.appearance[s]) for s in wanted}
+        return {s: signature(*by_gml.get(self.gml[s], ({}, None)), self.appearance[s]) for s in wanted}
 
 
 def pr_scope(repo: Path, base_sha: str, head_sha: str) -> dict:
@@ -786,9 +729,8 @@ def pr_scope(repo: Path, base_sha: str, head_sha: str) -> dict:
     unchanged but whose id changed is a rename, a notice). A change of texture counts as a change
     of its building. Deleted GML files count too (the quality step listed only A/M/R paths).
     """
-    rule = rule_from_config(_city_config(repo, head_sha))
-    paths = [p for p in str(_git(repo, "diff", "--name-only", "--no-renames", base_sha, head_sha)).splitlines()
-             if p.endswith(".gml")]
+    rule = rule_from_config(city_declaration.read(repo, base_sha).resolved)   # U1: the base's declaration
+    paths = changed(repo, base_sha, head_sha, suffix=".gml")
     files = [(_FileBuildings(_blob(repo, base_sha, p) or b"", rule), _FileBuildings(_blob(repo, head_sha, p) or b"", rule))
              for p in paths]
     gml_before = {s: g for old, _ in files for s, g in old.gml.items()}
@@ -814,19 +756,19 @@ def pr_scope(repo: Path, base_sha: str, head_sha: str) -> dict:
     for stable in sorted(before & after):
         if content_before[stable] == content_after[stable] and gml_before[stable] != gml_after[stable]:
             renamed.append(stable)                        # gml:id changed, stable ID and content kept
-    for new_id in list(added):                            # stable ID changed with the gml:id (e.g. Munich)
-        old_id = next((d for d in deleted if d in content_before and content_before[d] == content_after.get(new_id)), None)
-        if old_id is not None:
-            added.remove(new_id)
-            deleted.remove(old_id)
-            renamed.append(new_id)
+    # the stable ID changed with the gml:id (e.g. Munich): diff_citygml's one rename rule (U6)
+    from scripts.diff_citygml import rename_pairs
+    for new_id, old_id in rename_pairs({d: content_before[d] for d in deleted if d in content_before},
+                                       {a: content_after[a] for a in added if a in content_after}).items():
+        added.remove(new_id)
+        deleted.remove(old_id)
+        renamed.append(new_id)
     modified = sorted(s for s in before & after if content_before[s] != content_after[s])
     from scripts.reconstruct_minimal import classify
     return {
         "modified": modified, "added": added, "deleted": deleted, "renamed": sorted(renamed),
-        "gmlIds": {"modified": sorted(gml_after[i] for i in modified), "added": sorted(gml_after[i] for i in added),
-                   "deleted": sorted(gml_before[i] for i in deleted), "renamed": sorted(gml_after[i] for i in renamed)},
         "class": classify(len(modified), len(added), len(deleted), len(renamed)),
+        "rule": rule.type,   # the stable ID's kind, for the suggested commit (U4)
     }
 
 

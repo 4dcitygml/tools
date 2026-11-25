@@ -1,0 +1,22 @@
+{
+  "common.ago_min": "{n} min ago",
+  "common.ago_hour": "{n} hr ago",
+  "common.ago_day": "{n} days ago",
+  "common.err_banner": "⚠ Error: {msg} (click to close)",
+  "common.shortcut_done": "Created {name}. Drag it to your Desktop or Dock; from now on, open the tools with it.",
+  "common.shortcut_failed": "Could not create the icon: {reason}",
+  "common.keep_terminal_open": "Keep this window open: closing it stops the tools.",
+  "common.tool_stopped": "The tool has stopped. If you closed its terminal window, start it again (the same way as before), then reload this page.",
+  "common.back_to_hub": "← Back to the hub",
+  "common.confirm_loading": "Collecting what this send will do…",
+  "common.confirm_account": "GitHub account",
+  "common.confirm_no_account": "none connected for this city",
+  "common.confirm_identity": "Name recorded with the change",
+  "common.confirm_identity_unset": "(not set — choose the account in the hub first)",
+  "common.confirm_origin": "Uploaded to (your own copy)",
+  "common.confirm_upstream": "Proposed to (the city)",
+  "common.confirm_proposal": "Proposal",
+  "common.confirm_pr_auto": "opened automatically after the upload",
+  "common.confirm_pr_manual": "GitHub opens for the final step (one green button)",
+  "common.confirm_lead": "This is what will happen when you press \"Send as shown\":"
+}

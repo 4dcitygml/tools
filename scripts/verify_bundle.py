@@ -60,9 +60,10 @@ def smoke(program: pathlib.Path, flavor: str, git_smoke=None) -> None:
             raise RuntimeError(f"{pack} pack not loaded from program/: {mod.__file__}")
     if pathlib.Path(hub.runtime.SHARED_DIR).resolve() != program:
         raise RuntimeError(f"runtime.SHARED_DIR is {hub.runtime.SHARED_DIR}, not program/")
-    for app in ("hub", "attr_editor", "tex_editor"):
+    languages = sorted(f"{lang}.json" for lang in hub.runtime.i18n_loader.SUPPORTED)   # the program's own list (V8)
+    for app in ("common", "hub", "attr_editor", "tex_editor"):
         catalogs = sorted(p.name for p in (program / "i18n" / "catalogs" / app).glob("*.json"))
-        if catalogs != ["de.json", "en.json", "ja.json"]:
+        if catalogs != languages:
             raise RuntimeError(f"{app} catalogs incomplete: {catalogs}")
     if git_smoke is not None:
         # under the bundled Python on Windows: the bundled MinGit and PythonPortable are the ones used
@@ -71,7 +72,7 @@ def smoke(program: pathlib.Path, flavor: str, git_smoke=None) -> None:
             raise RuntimeError(f"hub does not use the bundled MinGit: {hub.runtime.git_exe()}")
         if not hub.runtime.python_bundled() or pathlib.Path(hub.runtime.python_exe()).resolve().parent != (program / "PythonPortable").resolve():
             raise RuntimeError(f"hub does not use the bundled PythonPortable: {hub.runtime.python_exe()}")
-        if hub.Hub(pathlib.Path(git_smoke))._git("rev-parse", "--is-inside-work-tree") != "true":
+        if hub.Hub(pathlib.Path(git_smoke), hub.Session())._git("rev-parse", "--is-inside-work-tree") != "true":
             raise RuntimeError("hub cannot read a repository with the bundled MinGit")
 
 

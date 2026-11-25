@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/4dcitygml/tools/schemas/city/4dcitygml.schema.json",
+  "title": "4D-CityGML city declaration (4dcitygml.json)",
+  "description": "The one owner of the declaration's shape. Read by scripts/city_declaration.py; checked by the schema subset of scripts/provenance_manifest.validate. Groups: identity (id, name, repo), dialect (dialect, building_id, data_dirs, crs), presentation (lang, map, logo, attribution, license, country), versions (tools, min_hub).",
+  "type": "object",
+  "required": [
+    "repo"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "Identity: the city's short name, lower case (for example tokyo-station).",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "name": {
+      "description": "Identity: the city's display name per language (en, ja, de, ...).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "repo": {
+      "description": "Identity: the city repository on GitHub, owner/name.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "building_id": {
+      "description": "Dialect: the city's stable building ID (Exchange Contract A2). type: uro:buildingID (i-UR), gml:id, core:externalReference (the object name of the first external reference, such as an ALKIS identifier), or gen:<name> (a generic string attribute). Absent: the dialect pack's rule (plateau: uro:buildingID), else gml:id. invalid_values: values that are no ID (the building then falls back to its gml:id).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^(uro:buildingID|gml:id|core:externalReference|gen:[^\\s]+)$"
+        },
+        "invalid_values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "data_dirs": {
+      "description": "Dialect: the folders, relative to the repository root, that hold the city's data.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\)[^\\s].*$"
+      }
+    },
+    "dialect": {
+      "description": "Dialect: the dialect pack the city's data follows (plateau: PLATEAU, i-UR). The pack brings the default building_id and crs (the city may override both), detects and checks the i-UR edition per file, and enables its own kinds. Absent: plain CityGML.",
+      "type": "string",
+      "enum": [
+        "plateau"
+      ]
+    },
+    "crs": {
+      "description": "Dialect: the CRS the data is written in, EPSG:<code>. Absent: the dialect pack's default (plateau: EPSG:6697), else none. Missing or unknown: no map and no 3D preview.",
+      "type": "string",
+      "pattern": "^EPSG:[0-9]+$"
+    },
+    "lang": {
+      "description": "Presentation: the repository's working language (BCP 47), for PR texts and CI comments. Absent: en.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$"
+    },
+    "map": {
+      "description": "Presentation: the editors' map. tiles: osm or gsi; center: [lat, lon]; zoom 0-22.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tiles": {
+          "type": "string",
+          "enum": [
+            "osm",
+            "gsi"
+          ]
+        },
+        "center": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "number"
+          }
+        },
+        "zoom": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 22
+        }
+      }
+    },
+    "logo": {
+      "description": "Presentation: a raster image in the repository, relative path (png, jpg, jpeg, webp; the theme loader's list).",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\.\\.)(?!.*\\\\).+\\.(png|jpg|jpeg|webp)$"
+    },
+    "attribution": {
+      "description": "Presentation: the data source attribution the license requires.",
+      "type": "string"
+    },
+    "license": {
+      "description": "Presentation: the data license (an SPDX id where one exists).",
+      "type": "string"
+    },
+    "country": {
+      "description": "Presentation: ISO 3166-1 alpha-2.",
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "tools": {
+      "description": "Versions: the 4dcitygml/tools commit the city's CI runs, a commit a tools-v release tag points to (A11). Its tag is resolved when shown, not stored.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "min_hub": {
+      "description": "Versions: the oldest editing-tools release the city accepts proposals from.",
+      "type": "string",
+      "pattern": "^hub-v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.-]+)?$"
+    }
+  }
+}

@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.plateau_codelists import (  # noqa: E402
+from dialects.plateau.plateau_codelists import (  # noqa: E402
     is_quality_axis,
     is_unknown_label,
     load_codelist,

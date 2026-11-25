@@ -8,9 +8,9 @@
 # driver decided run=true for the topology scope.
 #
 # Contract with the wrapper:
-#   - cwd = city repository checkout, changed_gml.txt exists (written by main)
+#   - cwd = city repository checkout; the run folder ($CITYGML_RUN) has changed_gml.txt (written by main)
 #   - TOOLS_DIR, CITYGML_TOOLS, VAL3DITY_CMD are set
-#   - writes the topology row to $RUNNER_TEMP/gates/topology.json (scripts/gate_result.py)
+#   - writes the topology row to $CITYGML_RUN/gates/topology.json (scripts/gate_result.py)
 #
 # The gate is differential and advisory: it validates only the buildings the PR
 # changed and warns only about invalids newly introduced by the PR. Missing
@@ -22,10 +22,11 @@ set -uo pipefail
 export PYTHONPATH="${TOOLS_DIR}${PYTHONPATH:+:$PYTHONPATH}"
 PY="$(command -v python || command -v python3)"   # setup-python provides `python` on runners; python3 is the local fallback
 
-EVENT="${GITHUB_EVENT_PATH:?}"
+EVENT="${CITYGML_EVENT:-${GITHUB_EVENT_PATH:?}}"   # the PR the analysis judged (D23)
 BASE_SHA="$(jq -r '.pull_request.base.sha' "$EVENT")"
 HEAD_SHA="$(jq -r '.pull_request.head.sha' "$EVENT")"
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
+RUN="${CITYGML_RUN:-${RUNNER_TEMP:-/tmp}/citygml}"
 set +e
 (
   set -uo pipefail
@@ -35,10 +36,9 @@ set +e
     --repo "$WORKSPACE" \
     --base-sha "$BASE_SHA" \
     --head-sha "$HEAD_SHA" \
-    --file-list changed_gml.txt --enforce > out/val3dity.md
-  "$PY" "$TOOLS_DIR/scripts/gate_result.py" write --key topology --exit-code "$?" --out "${RUNNER_TEMP:-/tmp}" > /dev/null || true
-  # If there is no regression (clean), do not post. If there is one, keep it as an advisory comment.
-  if grep -q "introduce no new topological inconsistencies" out/val3dity.md 2>/dev/null; then rm -f out/val3dity.md; fi
+    --file-list "$RUN/changed_gml.txt" --enforce > out/val3dity.md
+  "$PY" "$TOOLS_DIR/scripts/gate_result.py" write --key topology --exit-code "$?" --out "$RUN" > /dev/null || true
+  # A clean check writes nothing, so nothing is posted; new invalids stay as an advisory comment (U2/U3).
   [ -s out/val3dity.md ] || rm -f out/val3dity.md
 )
 exit 0

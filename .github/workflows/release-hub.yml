@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Build the distribution of the integrated front-end (hub) and attach it to Releases on tag push (hub-v*).
 # - Windows: an "all-in-one zip" with the bundled Python embeddable package (PythonPortable)
-#   and MinGit; works through clone/push with no install. The entry point is
-#   start-windows.bat → program/PythonPortable/python.exe program/hub.py.
+#   and MinGit; works through clone/push with no install. The per-user launcher citygml.ps1
+#   runs program/PythonPortable/python.exe program/hub.py.
 #   (Decision 2026-08-28: the Windows distribution is the bundled-Python zip only; the
 #   former PyInstaller exe was removed so there is exactly one launch path to maintain.)
 # - macOS: a zip with no bundled binaries (hub.py, its screens, the editors, the shared modules).
@@ -15,14 +15,14 @@
 # (entry points, licenses, layout) are asserted per OS before upload.
 #
 # Zip layout (hub-v1.2.0): the zip is the payload of the one-line installer
-# (install/citygml.sh | citygml.ps1), not a user-facing download. The only top-level
+# (install/release/citygml.sh | citygml.ps1, attached to the release too), not a user-facing download. The only top-level
 # item is program/; the installer unpacks it into citygml-tools/citygml-hub/<tag>/ and
 # starts program/hub.py. What travels is listed in ONE place, scripts/build_bundle.py
 # (the manifest), and checked by scripts/verify_bundle.py; this workflow only calls them,
 # and tests/test_bundle.py runs the same two scripts against the source tree, so a
-# rename in the code cannot break the release unnoticed.
+# rename in the code cannot break the release unnoticed. The steps take the asset's name and
+# path from build_bundle's step outputs; the one publishing job is release-publish.yml.
 # Cities distribute no code: nothing is ever loaded from a city clone.
-# The data itself is not needed, so only the bundled folders are fetched via blob:none + sparse-checkout.
 #
 # Note: the embeddable package ships a python314._pth (site disabled, isolated sys.path).
 # The "Test extracted bundle" step below runs verify_bundle.py under the bundled python.exe
@@ -37,6 +37,7 @@ on:
       # everything the zip carries or that builds it (hub-v1.3.1: runtime.py and the
       # other shared modules were missing here, so a hotfix to them had no PR build)
       - '.github/workflows/release-hub.yml'
+      - '.github/workflows/release-publish.yml'
       - 'tools/**'
       - 'scripts/**'
       - 'install/**'
@@ -69,6 +70,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Validate release series before building
         shell: bash
         env:
@@ -78,9 +82,7 @@ jobs:
           tag="$REQUESTED_TAG"
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then tag="$GITHUB_REF_NAME"; fi
           if [[ -n "$tag" ]]; then
-            [[ "$tag" =~ ^hub-v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || {
-              echo '::error::Expected a hub-v release tag'; exit 1;
-            }
+            python3 scripts/release_tags.py check hub "$tag" >/dev/null   # the one tag grammar
           fi
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -z "$REQUESTED_TAG" && "$GITHUB_REF_TYPE" != branch ]]; then
             echo '::error::Build-only dispatch must select a branch'; exit 1
@@ -95,26 +97,6 @@ jobs:
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           persist-credentials: false
-          filter: blob:none
-          sparse-checkout: |
-            tools/hub
-            tools/attr_editor
-            tools/tex_editor
-            tools/i18n
-            tools/themes
-            scripts/pr_classification.py
-            scripts/pr_markers.py
-            scripts/pr_reason.py
-            scripts/building_identity.py
-            scripts/citygml_dialect.py
-            scripts/citygml_faces.py
-            tools/git_sync.py
-            tools/shortcuts.py
-            tools/accounts.py
-            tools/runtime.py
-            scripts/build_bundle.py
-            scripts/verify_bundle.py
-            install
       - name: Download pinned MinGit and PythonPortable (verify SHA-256 before extraction)
         shell: pwsh
         working-directory: tools/hub
@@ -171,30 +153,20 @@ jobs:
           $status = & $git -C $work status --porcelain
           if ($LASTEXITCODE -ne 0) { throw "MinGit status verification failed" }
           if ($status) { throw "Working tree is dirty after MinGit verification" }
-      - name: Test bundled Python (._pth isolated mode) runs the hub
-        shell: pwsh
-        working-directory: tools/hub/dist
-        run: |
-          $py = (Resolve-Path ".\PythonPortable\python.exe").Path
-          & $py --version
-          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to start" }
-          # The embeddable ._pth disables site and the script-dir sys.path entry;
-          # the hub must still parse (single-file, stdlib-only).
-          & $py ..\app.py --help *> $null
-          if ($LASTEXITCODE -ne 0) { throw "PythonPortable failed to run app.py" }
       - name: Assemble the Windows zip with scripts/build_bundle.py (the one manifest)
+        id: build
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: python scripts/build_bundle.py --flavor windows --tag "${RELEASE_TAG:-$GITHUB_REF_NAME}" --portable tools/hub/dist --out tools/hub/dist
       - name: Verify the archive with scripts/verify_bundle.py (layout, required files, smoke test)
         shell: bash
-        run: python scripts/verify_bundle.py tools/hub/dist/citygml-hub-*-windows-full.zip --flavor windows
+        run: python scripts/verify_bundle.py "${{ steps.build.outputs.path }}" --flavor windows
       - name: Test the extracted bundle under the bundled Python (._pth isolated mode) with the bundled Git
         shell: pwsh
         run: |
           $py = (Resolve-Path "tools\hub\dist\PythonPortable\python.exe").Path
-          $zip = (Get-ChildItem "tools\hub\dist\citygml-hub-*-windows-full.zip").FullName
+          $zip = "${{ steps.build.outputs.path }}"
           # The fallback path to the bundled Git on an unconfigured PC, unaffected by the runner's Git settings.
           $env:GIT_CONFIG_GLOBAL = Join-Path $env:RUNNER_TEMP "empty-gitconfig"
           $smoke = Join-Path $env:RUNNER_TEMP "mingit-smoke\work"
@@ -205,8 +177,8 @@ jobs:
         if: github.event_name != 'pull_request'
         with:
           name: hub-windows
-          path: tools/hub/dist/citygml-hub-*-windows-full.zip
-      - name: Test the Windows installer (install/citygml.ps1) against the built zip
+          path: ${{ steps.build.outputs.path }}
+      - name: Test the Windows installer (install/release/citygml.ps1) and the bootstrap against the built zip
         # Runs the per-user launcher the way a resident's PowerShell 5.1 would, with the
         # test hooks pointing at this build instead of the GitHub API / download:
         # first run installs into a versioned folder, second run starts it without network.
@@ -214,8 +186,7 @@ jobs:
         working-directory: tools/hub/dist
         run: |
           $ErrorActionPreference = "Stop"
-          $zip = Get-ChildItem -Filter "citygml-hub-*-windows-full.zip" | Select-Object -First 1
-          if (-not $zip) { throw "built zip not found" }
+          $zip = Get-Item "${{ steps.build.outputs.path }}"
           $ver = $zip.Name -replace '^citygml-hub-(.*)-windows-full\.zip$', '$1'
           # PR builds are versioned "dev"; the installer only accepts hub-vX.Y.Z, so present the
           # same file under a contract-shaped name (the file on disk is unchanged). The name must
@@ -223,15 +194,17 @@ jobs:
           if ($ver -notmatch '^v\d+\.\d+\.\d+$') { $ver = "v99.0.0" }
           $assetName = "citygml-hub-$ver-windows-full.zip"
           $sha = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $rel = @(@{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
-                      assets = @(@{ name = $assetName; browser_download_url = "u"; digest = "sha256:$sha" }) })
+          # GitHub's latest release: one object
+          $rel = @{ tag_name = "hub-$ver"; draft = $false; prerelease = $false; html_url = "x";
+                    assets = @(@{ name = $assetName; browser_download_url = "u"; digest = "sha256:$sha" }) }
           $json = Join-Path $env:RUNNER_TEMP "releases.json"
           ConvertTo-Json -InputObject $rel -Depth 5 | Set-Content -Encoding UTF8 $json
           $env:CITYGML_TOOLS_DIR = Join-Path $env:RUNNER_TEMP "citygml-tools"
           $env:CITYGML_RELEASES_JSON = $json
           $env:CITYGML_ASSET_FILE = $zip.FullName
           $env:CITYGML_NO_EXEC = "1"
-          $script = Resolve-Path "..\..\..\install\citygml.ps1"
+          $script = Resolve-Path "..\..\..\install\release\citygml.ps1"
+          $boot = Resolve-Path "..\..\..\install\citygml.ps1"   # the one-line command's bootstrap (install-v1)
           # The child's stderr must not become a terminating error here; judge by exit code and output.
           $ErrorActionPreference = "Continue"
           $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $script "4dcitygml/sample-newyork-station" 2>&1 | Out-String
@@ -250,19 +223,24 @@ jobs:
           # the one-line command run again (script text, no file behind it, as [scriptblock]::Create((irm …)) runs it):
           # a newer release is published (same zip under a higher name) → it is installed next to the old one and started
           $ver2 = "v99.1.0"
-          $rel2 = @(@{ tag_name = "hub-$ver2"; draft = $false; prerelease = $false; html_url = "x";
-                       assets = @(@{ name = "citygml-hub-$ver2-windows-full.zip"; browser_download_url = "u"; digest = "sha256:$sha" }) })
+          $rel2 = @{ tag_name = "hub-$ver2"; draft = $false; prerelease = $false; html_url = "x";
+                     assets = @(@{ name = "citygml-hub-$ver2-windows-full.zip"; browser_download_url = "u"; digest = "sha256:$sha" }) }
           $json2 = Join-Path $env:RUNNER_TEMP "releases2.json"
           ConvertTo-Json -InputObject $rel2 -Depth 5 | Set-Content -Encoding UTF8 $json2
           $env:CITYGML_RELEASES_JSON = $json2
           $out4 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$script'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $out4 -notmatch "Updated the editing tools: hub-$ver2 installed next to hub-$ver" -or $out4 -notmatch "EXEC hub-$ver2 4dcitygml/sample-newyork-station") { Write-Host $out4; throw "one-line command run again did not update" }
           if (-not (Test-Path (Join-Path $env:CITYGML_TOOLS_DIR "citygml-hub\hub-$ver\program\hub.py"))) { throw "the previous version was not left in place" }
+          # the README's one-line command through the bootstrap: it fetches this installer (here a local file) and runs it
+          $env:CITYGML_INSTALLER_URL = $script.Path
+          $out6 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$boot'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $out6 -notmatch "up to date \(hub-$ver2\)" -or $out6 -notmatch "EXEC hub-$ver2 4dcitygml/sample-newyork-station") { Write-Host $out6; throw "the bootstrap did not run the installer" }
+          Remove-Item Env:CITYGML_INSTALLER_URL
           # …and offline, the one-line command starts what is installed instead of failing
           $env:CITYGML_RELEASES_JSON = Join-Path $env:RUNNER_TEMP "no-such-releases.json"
           $out5 = & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$script'))) 4dcitygml/sample-newyork-station" 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0 -or $out5 -notmatch "Could not check for a newer version; starting the installed hub-$ver2" -or $out5 -notmatch "EXEC hub-$ver2") { Write-Host $out5; throw "one-line command offline did not start the installed version" }
-          Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver, one-line command updated to hub-$ver2 and starts it offline"
+          Write-Host "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers hub-$ver, one-line command updated to hub-$ver2, the bootstrap runs it, and it starts offline"
 
   macos-zip:
     # M1: a zip that bundles no binaries and uses the CLT python3 + git (no signing needed).
@@ -274,47 +252,28 @@ jobs:
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           persist-credentials: false
-          filter: blob:none
-          sparse-checkout: |
-            tools/hub
-            tools/attr_editor
-            tools/tex_editor
-            tools/i18n
-            tools/themes
-            scripts/pr_classification.py
-            scripts/pr_markers.py
-            scripts/pr_reason.py
-            scripts/building_identity.py
-            scripts/citygml_dialect.py
-            scripts/citygml_faces.py
-            tools/git_sync.py
-            tools/shortcuts.py
-            tools/accounts.py
-            tools/runtime.py
-            scripts/build_bundle.py
-            scripts/verify_bundle.py
-            install
       - name: Assemble the macOS zip with scripts/build_bundle.py (the one manifest)
+        id: build
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: python3 scripts/build_bundle.py --flavor macos --tag "${RELEASE_TAG:-$GITHUB_REF_NAME}" --out tools/hub/dist
       - name: Verify the archive with scripts/verify_bundle.py (layout, required files, smoke test)
         shell: bash
-        run: python3 scripts/verify_bundle.py tools/hub/dist/citygml-hub-*-macos.zip --flavor macos
+        run: python3 scripts/verify_bundle.py "${{ steps.build.outputs.path }}" --flavor macos
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request'
         with:
           name: hub-macos
-          path: tools/hub/dist/citygml-hub-*-macos.zip
-      - name: Test the macOS installer (install/citygml.sh) against the built zip
+          path: ${{ steps.build.outputs.path }}
+      - name: Test the macOS installer (install/release/citygml.sh) and the bootstrap against the built zip
         # Same idea as the Windows step: the per-user launcher with the test hooks
         # (fake releases payload + local asset) — first run installs, second run needs no network.
         shell: bash
         run: |
           set -euo pipefail
-          zip="$(ls tools/hub/dist/citygml-hub-*-macos.zip | head -n 1)"
+          zip="${{ steps.build.outputs.path }}"
           ver="${zip##*/citygml-hub-}"; ver="${ver%-macos.zip}"
           # PR builds are versioned "dev"; present the file under a contract-shaped name above
           # the installer's hub-v1.2.0 floor (else the second run would try to fetch a newer one).
@@ -323,62 +282,43 @@ jobs:
           python3 - "$ver" "$sha" > "$RUNNER_TEMP/releases.json" <<'PY'
           import json, sys
           ver, sha = sys.argv[1:]
-          print(json.dumps([{"tag_name": f"hub-{ver}", "draft": False, "prerelease": False, "html_url": "x",
-                             "assets": [{"name": f"citygml-hub-{ver}-macos.zip", "browser_download_url": "u", "digest": f"sha256:{sha}"}]}]))
+          print(json.dumps({"tag_name": f"hub-{ver}", "draft": False, "prerelease": False, "html_url": "x",   # the latest release: one object
+                            "assets": [{"name": f"citygml-hub-{ver}-macos.zip", "browser_download_url": "u", "digest": f"sha256:{sha}"}]}))
           PY
           export CITYGML_TOOLS_DIR="$RUNNER_TEMP/citygml-tools" CITYGML_RELEASES_JSON="$RUNNER_TEMP/releases.json" \
-                 CITYGML_ASSET_FILE="$PWD/$zip" CITYGML_NO_EXEC=1
-          out="$(bash install/citygml.sh 4dcitygml/sample-newyork-station)"
+                 CITYGML_ASSET_FILE="$zip" CITYGML_NO_EXEC=1
+          out="$(bash install/release/citygml.sh 4dcitygml/sample-newyork-station)"
           echo "$out"; grep -q "EXEC hub-$ver 4dcitygml/sample-newyork-station" <<<"$out"
           test -f "$CITYGML_TOOLS_DIR/citygml-hub/hub-$ver/program/hub.py"
           test -x "$CITYGML_TOOLS_DIR/citygml-hub/hub-$ver/program/citygml.sh"
+          # the README's one-line command through the bootstrap (install-v1): it fetches this installer and runs it
+          boot="$(CITYGML_INSTALLER_URL="file://$PWD/install/release/citygml.sh" bash -c "$(cat install/citygml.sh)" -- 4dcitygml/sample-newyork-station)"
+          grep -q "up to date (hub-$ver)" <<<"$boot" && grep -q "EXEC hub-$ver 4dcitygml/sample-newyork-station" <<<"$boot" \
+            || { echo "$boot"; echo "the bootstrap did not run the installer"; exit 1; }
           unset CITYGML_RELEASES_JSON CITYGML_ASSET_FILE
-          out2="$(bash install/citygml.sh 4dcitygml/sample-newyork-station)"
+          out2="$(bash install/release/citygml.sh 4dcitygml/sample-newyork-station)"
           grep -q "EXEC hub-$ver" <<<"$out2"
           # the hub's "Get it now" = the launcher's fetch mode: the version is already installed, so it
           # answers with the tag and downloads nothing (no releases / asset hooks are set any more)
-          out3="$(bash install/citygml.sh --fetch-latest 2>&1 || true)"
+          out3="$(bash install/release/citygml.sh --fetch-latest 2>&1 || true)"
           echo "$out3" | tail -n 1 | grep -q "^hub-v" || { echo "$out3"; echo "fetch mode failed"; exit 1; }
-          echo "installer OK: first run installed hub-$ver, second run started it without network, fetch mode answers a tag"
+          echo "installer OK: first run installed hub-$ver, the bootstrap runs it, second run started it without network, fetch mode answers a tag"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # W8: the installers travel with every hub release (the bootstrap fetches them from the latest)
+        if: github.event_name != 'pull_request'
+        with:
+          name: hub-installers
+          path: |
+            install/release/citygml.sh
+            install/release/citygml.ps1
 
   release:
-    # The only job that publishes. It runs in the `production` environment, so it waits
-    # for the deployment approval (docs/production-protection.md); the builds and smoke
-    # tests above run unattended and nothing reaches users before that approval.
+    # The one publishing job (release-publish.yml): the production approval, notes from the tag.
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/hub-v')) || inputs.release_tag != ''
     needs: [windows, macos-zip]
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: hub-*
-          path: dist
-          merge-multiple: true
-      - name: Create the release for a pushed tag, then upload the versioned packages
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: |
-          version="${RELEASE_TAG#hub-}"
-          windows="dist/citygml-hub-${version}-windows-full.zip"
-          macos="dist/citygml-hub-${version}-macos.zip"
-          test -f "$windows"
-          test -f "$macos"
-          {
-            echo "Install or update with the one-line command in your city's README (install/citygml.sh or citygml.ps1 from the install-v1 tag of 4dcitygml/tools); the hub also offers this version from its update banner. The zips below are the installer's payload: citygml-hub-${version}-windows-full.zip (Python and Git bundled) and citygml-hub-${version}-macos.zip (runs on the Command Line Tools python3/git). SHA-256 digests are published by GitHub on each asset."
-            echo
-            echo '```'
-            (cd dist && sha256sum "citygml-hub-${version}-windows-full.zip" "citygml-hub-${version}-macos.zip")
-            echo '```'
-          } > notes.md
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            # A manual run names an existing Release; only a pushed tag creates one.
-            [[ "$GITHUB_REF" == refs/tags/* ]] || { echo "::error::Release $RELEASE_TAG does not exist"; exit 1; }
-            gh release create "$RELEASE_TAG" --verify-tag \
-              --title "citygml-hub $RELEASE_TAG" \
-              --notes-file notes.md
-          fi
-          gh release upload "$RELEASE_TAG" "$windows" "$macos"
+    uses: ./.github/workflows/release-publish.yml
+    with:
+      tag: ${{ inputs.release_tag || github.ref_name }}
+      series: hub
+      title: citygml-hub
+      artifacts: hub-*

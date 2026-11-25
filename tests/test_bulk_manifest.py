@@ -29,9 +29,10 @@ class TestToolsRepositoryName(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "scripts"
         constants = (root / "citygml_constants.py").read_text(encoding="utf-8")
         self.assertRegex(constants, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO["']\) or ["']4dcitygml/tools["']""")
-        for name in ("identity_manifest.py", "source_update_manifest.py", "carry_forward_manifest.py",
-                     "lod0_semantic_manifest.py", "repo_scope.py"):
-            src = (root / name).read_text(encoding="utf-8")
+        pack = root.parent / "dialects" / "plateau"
+        for path in (root / "identity_manifest.py", pack / "source_update_manifest.py", pack / "carry_forward_manifest.py",
+                     pack / "lod0_semantic_manifest.py", root / "repo_scope.py"):
+            name, src = path.name, path.read_text(encoding="utf-8")
             self.assertIn("default=tools_repo()", src, name)
             self.assertNotRegex(src, r"""os\.environ\.get\(["']CITYGML_TOOLS_REPO""", name)   # read once, in tools_repo()
             self.assertNotRegex(src, r"""default=["']4dcitygml/tools["']""", name)
@@ -71,7 +72,7 @@ class BulkManifestTest(unittest.TestCase):
 
     def test_policy_names_the_machine_contract(self) -> None:
         for token in ("Provenance-Manifest:", "Building-ID-From:", "Building-ID-To:",
-                      "Identity-Evidence:", "Created-By:", "Plan-Issue", "Manifest-SHA256",
+                      "Identity-Evidence:", "Created-By:",
                       "materials", "builder", "invocation", "products", "evidence", "sample_audit",
                       "continuous", "mixed", "renumbered"):
             self.assertIn(token, DOC, token)

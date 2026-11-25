@@ -10,7 +10,7 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts import semantic_registry as R
+from dialects.plateau import semantic_registry as R
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OBSERVED = json.loads((REPO_ROOT / "tests/fixtures/iur_paths_by_edition.json").read_text(encoding="utf-8"))["paths"]
@@ -64,12 +64,24 @@ class SemanticRegistryTest(unittest.TestCase):
         self.assertEqual(R.family_of("building.id"), "source_identity")
 
     def test_families_match_the_yearly_planner(self) -> None:
-        from scripts.plan_yearly_citygml_transition import attribute_family
+        from dialects.plateau.plan_yearly_citygml_transition import attribute_family
         for key, attr in self.reg["attributes"].items():
             for edition, path in attr["paths"].items():
                 planner = attribute_family(path.replace("[@name]", "[@name=x]"))
                 self.assertEqual(planner, attr["family"], f"{key} ({edition}): registry {attr['family']} vs planner {planner}")
 
+
+
+class TestEditionDetection(unittest.TestCase):
+    def test_any_prefix_and_either_quote(self):
+        # D-4b3: only xmlns:uro="..." was read; another prefix or single quotes gave no edition
+        from dialects.plateau import semantic_registry as R
+        for decl in (b'xmlns:uro="https://www.geospatial.jp/iur/uro/3.1"', b"xmlns:uro='https://www.geospatial.jp/iur/uro/3.1'",
+                     b'xmlns:u = "https://www.geospatial.jp/iur/uro/3.1"'):
+            self.assertEqual(R.detect_edition(b"<core:CityModel " + decl + b">"), "iur-3.1", decl)
+        self.assertIsNone(R.detect_edition(b'<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0">'))
+        from dialects.plateau.generic_to_uro import detect_uro_namespace
+        self.assertIsNone(detect_uro_namespace(b"<CityModel/>"))   # no edition: no guessed namespace (W5)
 
 if __name__ == "__main__":
     unittest.main()

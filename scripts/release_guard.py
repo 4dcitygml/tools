@@ -10,13 +10,13 @@ settings, the release would publish unapproved or never publish. This script
 reads the repository through the GitHub API and pushes the tag only when every
 condition holds:
 
-1. the tag name belongs to a release series (hub-v, tools-v, install-v) and
-   does not exist yet;
+1. the tag name belongs to a release series (hub-v, tools-v: scripts/release_tags.py)
+   and does not exist yet;
 2. the commit is on `main` (reachable from it);
 3. optionally, the commit's tree id equals the tree that was rehearsed
    (`--expect-tree`): the port to production is then byte-identical;
-4. the workflow of that series at that commit declares `environment: production`
-   in its `release` job;
+4. the workflow of that series at that commit calls the one publishing workflow
+   (release-publish.yml), whose job declares `environment: production`;
 5. the `production` environment exists with at least one required reviewer,
    self-review allowed (one maintainer account), and a deployment policy that
    admits the tag; a policy for `main` is only advised (manual re-publishing
@@ -34,12 +34,15 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
-import re
 import subprocess
 import sys
+from pathlib import Path
 
-SERIES = {"hub": "release-hub.yml", "tools": "release-tools.yml", "install": None}
-TAG_RE = re.compile(r"^(hub|tools|install)-v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import release_tags  # noqa: E402
+
+SERIES = {"hub": "release-hub.yml", "tools": "release-tools.yml"}
+PUBLISH = "release-publish.yml"   # the one publishing job of both series
 ENVIRONMENT = "production"
 
 
@@ -53,8 +56,14 @@ def gh_api(path: str):
     return json.loads(proc.stdout) if proc.stdout.strip() else None
 
 
+def workflow_at(repo: str, name: str, commit: str) -> "str | None":
+    import base64
+    content = gh_api(f"repos/{repo}/contents/.github/workflows/{name}?ref={commit}")
+    return base64.b64decode(content["content"]).decode("utf-8") if content and content.get("content") else None
+
+
 def check_tag_name(tag: str) -> list[str]:
-    return [] if TAG_RE.match(tag) else [f"{tag} is not a hub-v / tools-v / install-v release tag"]
+    return [] if release_tags.parse(tag) else [f"{tag} is not a hub-v / tools-v release tag"]
 
 
 def check_environment(env: dict | None, policies: list | None, tag: str) -> list[str]:
@@ -79,15 +88,28 @@ def check_environment(env: dict | None, policies: list | None, tag: str) -> list
     return problems
 
 
-def check_workflow(text: str | None, series: str) -> list[str]:
-    if SERIES.get(series) is None:
-        return []
+def check_workflow(text: "str | None", publish: "str | None", series: str) -> list[str]:
+    """The series workflow's release job calls the one publishing workflow, whose job runs in the
+    production environment (the approval)."""
     if text is None:
         return [f"{SERIES[series]} not found at the commit"]
     job = text[text.find("\n  release:\n"):] if "\n  release:\n" in text else ""
-    if f"environment: {ENVIRONMENT}" not in job:
-        return [f"{SERIES[series]} at the commit has no `environment: {ENVIRONMENT}` on its release job"]
+    if f"uses: ./.github/workflows/{PUBLISH}" not in job:
+        return [f"{SERIES[series]} at the commit: its release job does not call {PUBLISH}"]
+    if publish is None or f"environment: {ENVIRONMENT}" not in publish:
+        return [f"{PUBLISH} at the commit has no `environment: {ENVIRONMENT}` on its job"]
     return []
+
+
+def notes(tag: str) -> str:
+    """The release notes, carried by the annotated tag (the release is created --notes-from-tag)."""
+    version = tag.split("-", 1)[1]
+    if tag.startswith("hub-"):
+        return (f"citygml-hub {version}: install or update with the one-line command in your city's README (it runs "
+                "citygml.sh / citygml.ps1 of the latest hub release), or from the hub's update banner. The zips are their "
+                "payload; GitHub publishes each asset's SHA-256 digest, which the installers check.")
+    return (f"4dcitygml tools {version}: city processing, CI, schemas, semantic definitions and documentation "
+            "(dependencies: requirements-ci.txt). A city's CI pins the tools commit in its 4dcitygml.json.")
 
 
 def main(argv=None) -> int:
@@ -111,14 +133,8 @@ def main(argv=None) -> int:
             problems.append(f"commit {a.commit[:12]} is not on main (compare status: {cmp.get('status')})")
         if a.expect_tree and commit["commit"]["tree"]["sha"] != a.expect_tree:
             problems.append(f"tree {commit['commit']['tree']['sha'][:12]} differs from the rehearsed tree {a.expect_tree[:12]}")
-        wf = SERIES.get(series)
-        if wf:
-            content = gh_api(f"repos/{a.repo}/contents/.github/workflows/{wf}?ref={a.commit}")
-            text = None
-            if content and content.get("content"):
-                import base64
-                text = base64.b64decode(content["content"]).decode("utf-8")
-            problems += check_workflow(text, series)
+        if series in SERIES:
+            problems += check_workflow(workflow_at(a.repo, SERIES[series], a.commit), workflow_at(a.repo, PUBLISH, a.commit), series)
     env = gh_api(f"repos/{a.repo}/environments/{ENVIRONMENT}")
     policies = (gh_api(f"repos/{a.repo}/environments/{ENVIRONMENT}/deployment-branch-policies") or {}).get("branch_policies") if env else None
     problems += check_environment(env, policies, a.tag)
@@ -129,7 +145,7 @@ def main(argv=None) -> int:
         return 1
     print(f"OK   {a.repo}: {a.tag} -> {a.commit[:12]} may be released; the release job will wait for the approval")
     if a.push:
-        subprocess.run(["git", "tag", "-a", a.tag, a.commit, "-m", f"{a.tag}"], check=True)
+        subprocess.run(["git", "tag", "-a", a.tag, a.commit, "-m", notes(a.tag)], check=True)
         subprocess.run(["git", "push", "origin", a.tag], check=True)
         print(f"pushed {a.tag}")
     return 0

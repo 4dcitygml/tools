@@ -1,0 +1,22 @@
+{
+  "common.ago_min": "vor {n} Min.",
+  "common.ago_hour": "vor {n} Std.",
+  "common.ago_day": "vor {n} Tagen",
+  "common.err_banner": "⚠ Fehler: {msg} (zum Schließen klicken)",
+  "common.shortcut_done": "{name} wurde angelegt. Ziehen Sie es auf den Schreibtisch oder ins Dock; öffnen Sie die Werkzeuge künftig damit.",
+  "common.shortcut_failed": "Symbol konnte nicht angelegt werden: {reason}",
+  "common.keep_terminal_open": "Lassen Sie dieses Fenster offen: Wenn Sie es schließen, halten die Werkzeuge an.",
+  "common.tool_stopped": "Das Werkzeug wurde beendet. Wenn Sie sein Terminalfenster geschlossen haben, starten Sie es wie zuvor erneut und laden Sie dann diese Seite neu.",
+  "common.back_to_hub": "← Zurück zum Hub",
+  "common.confirm_loading": "Es wird zusammengestellt, was dieses Senden bewirkt …",
+  "common.confirm_account": "GitHub-Konto",
+  "common.confirm_no_account": "für diese Stadt keines verbunden",
+  "common.confirm_identity": "Mit der Änderung eingetragener Name",
+  "common.confirm_identity_unset": "(nicht gesetzt – wählen Sie zuerst das Konto im Hub)",
+  "common.confirm_origin": "Hochgeladen nach (Ihre eigene Kopie)",
+  "common.confirm_upstream": "Vorgeschlagen an (die Stadt)",
+  "common.confirm_proposal": "Vorschlag",
+  "common.confirm_pr_auto": "wird nach dem Hochladen automatisch eröffnet",
+  "common.confirm_pr_manual": "Für den letzten Schritt öffnet sich GitHub (eine grüne Schaltfläche)",
+  "common.confirm_lead": "Das geschieht, wenn Sie „Wie angezeigt senden“ drücken:"
+}

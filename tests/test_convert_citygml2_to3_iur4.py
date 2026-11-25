@@ -9,7 +9,7 @@ from pathlib import Path
 from lxml import etree
 
 
-MODULE_PATH = Path(__file__).parents[1] / "scripts/convert_citygml2_to3_iur4.py"
+MODULE_PATH = Path(__file__).parents[1] / "dialects/plateau/convert_citygml2_to3_iur4.py"
 SPEC = importlib.util.spec_from_file_location("convert_citygml2_to3_iur4", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
@@ -135,10 +135,10 @@ class ConverterTest(unittest.TestCase):
             out_first, out_second = root / "out-first.gml", root / "out-second.gml"
             MODULE.restore_ade(source, first, out_first)
             MODULE.restore_ade(source, second, out_second)
-            self.assertEqual(MODULE.sha256(out_first), MODULE.sha256(out_second))
+            self.assertEqual(MODULE.sha256_file(out_first), MODULE.sha256_file(out_second))
 
     def test_provisional_schema_and_compatibility_dictionary_cover_converter(self):
-        schema_root = Path(__file__).parents[1] / "schemas/i4dur/1.0"
+        schema_root = Path(__file__).parents[1] / "dialects/plateau/i4dur/1.0"
         schema = etree.parse(str(schema_root / "i4dUR.xsd"))
         self.assertEqual(schema.getroot().get("targetNamespace"), MODULE.DEFAULT_I4DUR_NS)
         dictionary = etree.parse(

@@ -6,16 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title data-i18n="review.title">Review change proposals — Building data management</title>
 <style>
-  :root {
-    --bg:#f5f6f8; --card:#fff; --border:#d8dee4; --text:#1f2933; --muted:#66717f;
-    --accent:#0969da; --ok:#1f883d; --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5;
-    --danger:#cf222e; --danger-bg:#ffebe9; --change:#d1242f; --shadow:0 8px 24px rgba(31,35,40,.08);
-  }
-  * { box-sizing:border-box; }
-  html,body { margin:0; min-height:100%; font-family:"Hiragino Sans","Noto Sans JP",sans-serif;
-    color:var(--text); background:var(--bg); font-size:14px; }
-  header { height:58px; padding:0 22px; background:#24292f; color:#fff; display:flex;
-    align-items:center; gap:16px; }
+  :root { --ok-bg:#dafbe1; --warn:#9a6700; --warn-bg:#fff8c5; --danger-bg:#ffebe9; --change:#d1242f; --shadow:0 8px 24px rgba(31,35,40,.08); }
+  html,body { min-height:100%; font-size:14px; }
+  header { height:58px; padding:0 22px; display:flex; align-items:center; gap:16px; }
   header a { color:#c9d1d9; text-decoration:none; }
   header h1 { margin:0; font-size:16px; font-weight:650; }
   header .account { margin-left:auto; color:#c9d1d9; font-size:12px; }
@@ -33,9 +26,6 @@
   #pendingRuns .runNote { color:var(--muted); font-size:12px; line-height:1.6; margin:0 0 8px; }
   #pendingRuns .run { border-top:1px solid #eadca0; padding:8px 0; font-size:13px; line-height:1.5; }
   #pendingRuns .runMeta { color:var(--muted); font-size:12px; }
-  #pendingRuns .runFiles { font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); word-break:break-all; }
-  #pendingRuns .runWarn { color:#9a3412; font-size:12px; }
-  #pendingRuns button { margin-top:6px; }
   .queue { display:flex; flex-direction:column; gap:8px; }
   .queueSectionTitle { display:flex; align-items:center; justify-content:space-between; margin:2px 3px 8px;
     color:#116329; font-size:12px; font-weight:750; }
@@ -61,7 +51,6 @@
   .kind.attribute { background:#ddf4ff; color:#0550ae; }
   .kind.texture { background:#fbefff; color:#8250df; }
   .kind.geometry { background:#fff1e5; color:#9a6700; }
-  .example { margin-left:auto; color:var(--warn); font-size:10px; }
   .qtitle { font-weight:750; line-height:1.45; font-size:14px; font-family:ui-monospace,monospace; }
   .qsummary { color:var(--text); font-size:12px; line-height:1.45; margin-top:5px; }
   .qmeta { color:var(--muted); font-size:11px; margin-top:7px; }
@@ -71,14 +60,11 @@
   .qsource { display:inline-block; margin-top:8px; padding:3px 8px; border-radius:999px; color:#82071e;
     background:var(--danger-bg); font-size:10px; font-weight:750; }
   .qsource.reviewer { color:#512a97; background:#fbefff; }
-  .qsource.latest { color:#633c01; background:var(--warn-bg); }
+  .qnote { color:#633c01; font-size:12px; }
   .qsource.checking { color:#57606a; background:#eef1f4; }
   .qsource.approval { color:#7d4e00; background:#fff8c5; }
   main { min-width:0; padding:22px 26px 120px; max-width:1180px; width:100%; margin:0 auto; }
   .empty { color:var(--muted); text-align:center; padding:80px 20px; line-height:1.8; }
-  .spinner { display:inline-block; width:15px; height:15px; border:2px solid #c7ccd1;
-    border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; vertical-align:-3px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
   .detailHead { display:flex; gap:12px; align-items:flex-start; margin-bottom:16px; }
   .detailHead .headText { flex:1; min-width:0; }
   .detailHead h2 { font-size:20px; line-height:1.45; margin:4px 0 5px; }
@@ -210,15 +196,10 @@
   .actionBar .confirm { flex:1; line-height:1.45; }
   .actionBar .confirm label { cursor:pointer; font-weight:650; }
   .actionBar .confirm small { display:block; color:var(--muted); margin:3px 0 0 23px; }
-  button { font:inherit; border:1px solid var(--border); border-radius:7px; background:#f6f8fa; padding:7px 13px;
-    cursor:pointer; }
-  button:hover { background:#eef1f4; }
-  button.primary { background:var(--ok); border-color:var(--ok); color:#fff; font-weight:700; padding:10px 22px; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { font-weight:700; padding:10px 22px; }
   #seal { display:none; border:2px solid var(--ok); color:var(--ok); border-radius:8px; padding:7px 13px;
     font-weight:750; transform:rotate(-2deg); }
-  #toast { position:fixed; left:50%; top:72px; transform:translateX(-50%); background:#24292f; color:#fff;
-    border-radius:8px; padding:9px 16px; display:none; z-index:100; box-shadow:var(--shadow); }
+  #toast { top:72px; bottom:auto; padding:9px 16px; font-size:inherit; box-shadow:var(--shadow); }
   @media(max-width:820px) {
     .layout { grid-template-columns:1fr; }
     aside { border-right:0; border-bottom:1px solid var(--border); }
@@ -260,28 +241,15 @@
 
 <script>
 'use strict';
-const $ = id => document.getElementById(id);
 const initialParams = new URLSearchParams(location.search);
 const demo = initialParams.get('demo') === '1';
 const requestedBuilding = initialParams.get('building');
 let selected = null, current = null, queueData = null, approved = false;
 if (demo) $('demoBanner').hidden = false;
-function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function kindLabel(kind) { return {attribute:t('review.kind_attribute','Attributes'),texture:t('review.kind_texture','Texture'),geometry:t('review.kind_geometry','Building shape')}[kind] || t('review.kind_other','Other'); }
 function statusLabel(c) {
   if (c.status!=='completed') return t('review.check_running','In progress');
   return {success:t('review.check_pass','Passed'),neutral:t('review.check_pass','Passed'),failure:t('review.check_fail','Failed'),cancelled:t('review.check_cancelled','Cancelled'),skipped:t('review.check_skipped','Not applicable')}[c.conclusion] || t('review.check_attention','Needs attention');
-}
-function ago(iso) {
-  if (!iso) return '';
-  const sec = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (sec < 3600) return t('hub.ago_min','{n} min ago',{n:Math.max(0,Math.floor(sec/60))});
-  if (sec < 86400) return t('hub.ago_hour','{n} hr ago',{n:Math.floor(sec/3600)});
-  return t('hub.ago_day','{n} days ago',{n:Math.floor(sec/86400)});
-}
-function toast(msg) {
-  const t=$('toast'); t.textContent=msg; t.style.display='block';
-  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3500);
 }
 function rememberBuilding(buildingId) {
   if (!buildingId) return;
@@ -289,21 +257,16 @@ function rememberBuilding(buildingId) {
   url.searchParams.set('building',buildingId);
   history.replaceState(null,'',url);
 }
-async function api(path, opts) {
-  const r=await fetch(path,opts); const j=await r.json().catch(()=>({ok:false,error:`HTTP ${r.status}`}));
-  if (!r.ok || j.ok===false) throw new Error(j.error || `HTTP ${r.status}`); return j;
-}
 
 async function loadQueue() {
   $('queue').innerHTML='<div class="empty"><span class="spinner"></span> '+t('review.loading','Loading…')+'</div>';
   try {
-    queueData=await api('/api/reviews'+(demo?'?demo=1':''));
+    queueData=await api('/api/reviews');
     $('account').innerHTML=`${t('review.reviewer_label','Reviewer')} <b>@${esc(queueData.login)}</b><br>${queueData.canReview?t('review.can_review','Can approve'):t('review.view_only','View only')}`;
     // A reviewer starts a first-time contributor's checks in the panel above; the proposal joins
     // this list once they run. A view-only account has no panel and sees it here, labelled.
     let items=queueData.items.filter(it=>!(queueData.canReview && !demo && it.waitingSource==='approval'));
     scheduleQueueRefresh(items);
-    if (demo) items.sort((a,b)=>(b.example?1:0)-(a.example?1:0));
     if (!items.length) { $('queue').innerHTML='<div class="empty">'+t('review.queue_empty','Nothing is waiting for approval.')+'</div>'; return; }
     const groupBuildings=list=>{
       const grouped=new Map();
@@ -311,18 +274,18 @@ async function loadQueue() {
         if (!grouped.has(id)) grouped.set(id,[]); grouped.get(id).push(it);});
       return [...grouped.entries()].map(([buildingId,proposals])=>{
         proposals.sort((a,b)=>String(b.updated).localeCompare(String(a.updated)));
-        return {buildingId,proposals,latest:(demo?proposals.find(x=>x.example):null)||proposals[0]};
+        return {buildingId,proposals,latest:proposals[0]};
       });
     };
-    const sourceLabel={reviewer:t('review.source_reviewer','Question from the reviewer'),latest:t('review.source_latest','Merge in the latest version'),checking:t('review.source_checking','Automated checks running'),approval:t('review.source_approval','Checks wait for your permission (first-time contributor)'),draft:t('review.source_draft','Draft in progress'),ci:t('review.source_ci','CI found issues')};
+    const sourceLabel={reviewer:t('review.source_reviewer','Question from the reviewer'),checking:t('review.source_checking','Automated checks running'),approval:t('review.source_approval','Checks wait for your permission (first-time contributor)'),draft:t('review.source_draft','Draft in progress'),ci:t('review.source_ci','CI found issues')};
     const renderBuildings=(buildings,state='reviewer_waiting')=>buildings.map(g=>`<button class="queueItem ${state==='reviewer_waiting'?'':'adjusting'} ${g.proposals.some(x=>selected===x.number)?'active':''}" data-n="${g.latest.number}" data-building="${esc(g.buildingId)}">
       <div class="qtop"><span class="kind ${esc(g.latest.kind)}">${kindLabel(g.latest.kind)}</span>
       ${g.proposals.length>1?`<span class="num">${t('review.proposals_count','{n} proposals',{n:g.proposals.length})}</span>`:''}
-      ${g.proposals.some(x=>x.example)?`<span class="example">${t('review.demo_item','Demo item')}</span>`:''}
       <span class="qstate ${state==='reviewer_waiting'?'ready':'adjusting'}">${state==='reviewer_waiting'?t('review.ci_passed','Automated checks passed'):t('review.awaiting_response','Awaiting response')}</span></div>
       <div class="qtitle">${esc(g.buildingId)}</div><div class="qsummary">${esc(g.latest.title)}</div>
       ${state==='proposer_waiting'?`<span class="qsource ${esc(g.latest.waitingSource)}">${esc(sourceLabel[g.latest.waitingSource] || t('review.source_attention','Needs attention'))}</span>`:''}
       ${state==='proposer_waiting'&&g.latest.adjustmentReasons?.length?`<div class="qsummary">${esc(g.latest.adjustmentReasons.join(t('review.reason_sep',', ')))}</div>`:''}
+      ${g.latest.behind?`<div class="qnote">${t('review.behind_note','Behind main: GitHub\'s "Update branch" brings it up to date (does not block)')}</div>`:''}
       <div class="qmeta">${t('review.author_label','Proposed by')} @${esc(g.latest.author)}${t('review.meta_sep',' · ')}${ago(g.latest.updated)}</div></button>`).join('');
     const reviewerItems=items.filter(x=>x.queueStatus==='reviewer_waiting');
     const proposerItems=items.filter(x=>x.queueStatus==='proposer_waiting');
@@ -426,7 +389,7 @@ async function requestRetry() {
   if (!confirm(t('review.retry_confirm','This re-runs the automated checks only; no data is changed. Continue?'))) return;
   btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.retry_requesting','Requesting…');
   try {
-    const result=await api(`/api/reviews/${current.number}/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo})});
+    const result=await api(`/api/reviews/${current.number}/retry`, {demo});
     btn.textContent=t('review.retry_accepted','Re-check requested'); toast(result.message || t('review.retry_accepted_toast','The re-check was accepted. Please wait a few minutes'));
   } catch(e) { btn.disabled=false; btn.textContent=current.retry.label; toast(t('review.retry_failed_prefix','Could not re-run the checks: ')+e.message); }
 }
@@ -486,7 +449,7 @@ async function sendFeedback() {
   if (!confirm(label+'\n\n'+text)) return;
   btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.sending','Sending…');
   try {
-    await api(`/api/reviews/${current.number}/feedback`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,demo})});
+    await api(`/api/reviews/${current.number}/feedback`, {message:text,demo});
     current.reviewerFeedback=true; $('actionBar').hidden=true; btn.textContent=t('review.sent','Sent');
     const sent=$('feedbackSent'); sent.hidden=false; sent.textContent=demo?t('review.feedback_sent_demo','Sent as a demo (the PR was not modified)'):t('review.feedback_sent','Sent to the proposer. Review again after their reply or fix.');
     if (!$('coordinationNotice')) $('main').insertAdjacentHTML('afterbegin',
@@ -537,7 +500,7 @@ async function approve() {
   if (!confirm(label+'\n\n'+t('review.confirm_ok','Continue?'))) return;
   const btn=$('approve'); btn.disabled=true; btn.innerHTML='<span class="spinner"></span> '+t('review.approving','Approving…');
   try {
-    const r=await api(`/api/reviews/${current.number}/decision`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({demo})});
+    const r=await api(`/api/reviews/${current.number}/decision`, {demo});
     approved=true; btn.style.display='none'; $('seal').style.display='block'; $('seal').textContent=`${t('review.approved_seal','✓ Approved')}  @${r.reviewer}`;
     toast(demo?t('review.approve_done_demo','Demo complete (no data was changed)'):t('review.approve_done','Your approval was recorded in the building\'s change history'));
   } catch(e) { btn.disabled=false; btn.textContent=t('review.approve_btn','Approve this proposal'); toast(t('review.approve_error_prefix','Could not approve: ')+e.message); }
@@ -553,9 +516,8 @@ function scheduleQueueRefresh(items) {
   queueTimer=setTimeout(()=>{ queueRefreshes++; loadQueue(); }, 60000);
 }
 
-// First-time contributors: GitHub holds the checks of their fork PRs until a maintainer starts
-// them once. Shown only to an account that can approve; starting runs the checks, nothing else,
-// and the proposal then moves to the list below and waits for them to finish.
+// First-time contributors: GitHub holds the checks of their fork PRs until a maintainer approves
+// them on GitHub's own page (V3). Shown only to an account that can approve; each links there.
 async function loadPendingRuns() {
   const box=$('pendingRuns');
   if (demo || !queueData || !queueData.canReview) { box.hidden=true; return; }
@@ -565,24 +527,11 @@ async function loadPendingRuns() {
   box.innerHTML=`<h2>${t('review.pending_title','First-time contributors: start their checks ({n})',{n:data.runs.length})}</h2>
     <p class="runNote">${t('review.pending_note','A first-time contributor\'s proposal needs a maintainer to start its checks once. After you start them, the proposal moves to the list below and waits for the checks to finish; review it there as usual.')}</p>`+
     data.runs.map(r=>{
-      const files=r.files.join(', ')+(r.fileCount>r.files.length?` … (+${r.fileCount-r.files.length})`:'');
-      const action=r.touchesWorkflows
-        ? `<div class="runWarn">${t('review.pending_workflows','Changes files under .github/: check it on GitHub and allow it there.')}</div>`
-        : `<button type="button" data-run="${esc(r.runId)}">${t('review.pending_approve','Start the checks')}</button>`;
       return `<div class="run"><b>#${esc(r.number)}</b> ${esc(r.title)}
-        <div class="runMeta">@${esc(r.author)} · ${esc(r.workflow)} · ${ago(r.created)} · <a href="${esc(r.url)}" target="_blank" rel="noopener">GitHub ↗</a></div>
-        <div class="runFiles">${esc(files)}</div>${action}</div>`;
+        <div class="runMeta">@${esc(r.author)} · ${esc(r.workflow)} · ${ago(r.created)}</div>
+        <a href="${esc(r.url)}" target="_blank" rel="noopener">${t('review.pending_open','Open on GitHub to approve ↗')}</a></div>`;
     }).join('');
   box.hidden=false;
-  box.querySelectorAll('button[data-run]').forEach(b=>b.onclick=async()=>{
-    b.disabled=true;
-    try {
-      await api(`/api/reviews/pending-runs/${b.dataset.run}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-      toast(t('review.pending_done','The checks started. The proposal is now in the list and waits for them to finish.'));
-    } catch (e) { toast(e.message); }
-    await loadQueue();
-    loadPendingRuns();
-  });
 }
 $('reload').onclick=()=>{ loadQueue().then(loadPendingRuns); };
 loadQueue().then(loadPendingRuns);

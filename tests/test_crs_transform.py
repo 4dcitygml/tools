@@ -43,9 +43,11 @@ class TestCrsTransformer(unittest.TestCase):
         self.assertAlmostEqual(lon, -73.9716, delta=1e-3)
 
     def test_latlon_crs_needs_no_transform(self):
-        # PLATEAU (EPSG:6697 lat/lon) and unknown systems return None = no transform
-        self.assertIsNone(attr.crs_transformer(
-            "http://www.opengis.net/def/crs/EPSG/0/6697"))
+        # PLATEAU (EPSG:6697) and the other geographic systems keep their values (the identity);
+        # a missing or unknown CRS gives None: no map, never read as lat/lon (v2.0.0 phase 1-2;
+        # before, all three gave None and were read as lat/lon)
+        for srs in ("http://www.opengis.net/def/crs/EPSG/0/6697", "EPSG:4326", "urn:ogc:def:crs:EPSG::6668"):
+            self.assertEqual(attr.crs_transformer(srs)(35.68, 139.76), (35.68, 139.76), srs)
         self.assertIsNone(attr.crs_transformer(""))
         self.assertIsNone(attr.crs_transformer("EPSG:99999"))
 

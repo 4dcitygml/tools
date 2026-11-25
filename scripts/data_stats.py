@@ -4,9 +4,10 @@
 """Data quality metrics (#13 extension) — output attribute statistics with sentinels excluded and compute "unknown rate".
 
 Whereas lint (`citygml_lint`/`plausibility_lint`) identifies anomalies at the **point level (single building)**,
-this tool observes **distribution across the dataset**. Excludes unknown-value sentinels
-(`sentinels.py` numeric ±9999 / `plateau_codelists.py` unknown codes) from statistics
-and outputs the "**unknown rate (sentinel ratio)**" itself as a quality indicator.
+this tool observes **distribution across the dataset**. Excludes the values the city's dialect pack
+says mean "unknown" (Pack.unknown_value: sentinels; Pack.unknown_label: unknown codes) from
+statistics and outputs the "**unknown rate (sentinel ratio)**" itself as a quality indicator.
+The quality profile grades codes as the pack does (Pack.quality_axis / quality_tier).
 
 - **Numeric attributes** (measuredHeight, floor count, etc.): count/mean/min/max excluding sentinels + unknown rate.
 - **Code attributes** (with `codeSpace`): total value count and "unknown" code count → **unknown rate** (requires codelists directory).
@@ -32,37 +33,60 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from lxml import etree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_lint import number_by_localname  # noqa: E402
-from scripts.diff_citygml import _BUILDING_TAGS, _drop, _local  # noqa: E402
-from scripts.plateau_codelists import (  # noqa: E402
-    TIER_NAMES,
-    is_quality_axis,
-    load_codelists,
-    quality_tier,
-    unknown_codes,
-)
-from scripts.citygml_xml import open_source as _open  # noqa: E402
-from scripts.safe_xml import safe_iterparse  # noqa: E402
-from scripts.sentinels import is_sentinel  # noqa: E402
+from scripts.citygml_xml import buildings as _iter_buildings, lod_of, qname as _local, without_lod  # noqa: E402
+from scripts import city_declaration  # noqa: E402
+from scripts.codelists import load_codelist  # noqa: E402
+from scripts import safe_xml  # noqa: E402
+from scripts.citygml_dialect import list_key  # noqa: E402
+
+
+def load_codelists(codelists_dir: Path) -> dict:
+    """Every list of the code lists folder, its edition folders included, by list_key."""
+    root, out = Path(codelists_dir), {}
+    for p in sorted(root.rglob("*.xml")):
+        try:
+            out[p.relative_to(root).as_posix()] = load_codelist(p)
+        except safe_xml.ParseError:
+            continue
+    return out
+
+
+def unknown_codes(codelists_dir: Path, pack) -> dict:
+    """{file name: frozenset(codes whose label the pack says means "unknown")}, lists that have some."""
+    if pack.unknown_label is None:
+        return {}
+    out: dict = {}
+    for name, table in load_codelists(codelists_dir).items():
+        codes = frozenset(code for code, label in table.items() if pack.unknown_label(label))
+        if codes:
+            out[name] = codes
+    return out
 
 # Numeric attributes (localname) to collect stats for by default. Replace via --numeric as needed.
 DEFAULT_NUMERIC = ("measuredHeight", "storeysAboveGround", "storeysBelowGround")
 
 
-def _iter_buildings(source):
-    context = safe_iterparse(_open(source), events=("end",), tag=_BUILDING_TAGS)
-    for _event, b in context:
-        yield b
-        _drop(b)
+def coded_values(building, pack=None):
+    """(element local name, list key, code) of every coded value of a building: the list its
+    codeSpace names, else the one the pack gives the element (Pack.default_codelists) (the one
+    walk: W6, the unknown rates, the quality profile and the code distribution had one each)."""
+    defaults = dict(pack.default_codelists) if pack else {}
+    for el in building.iter():
+        if not isinstance(el.tag, str):
+            continue
+        name, code = _local(el)[1], (el.text or "").strip()
+        key = list_key(el.get("codeSpace")) if el.get("codeSpace") else (None if len(el) else defaults.get(name))
+        if key and code:
+            yield name, key, code
 
 
-def collect(source, numeric_attrs, unknown_map: Optional[dict] = None):
+def collect(source, numeric_attrs, unknown_map: Optional[dict] = None, pack=None):
     """Collect numeric-attribute statistics and coded-attribute unknown rates from one source."""
     num = {a: {"total": 0, "sentinel": 0, "values": []} for a in numeric_attrs}
     coded: dict = {}  # codelist name -> {"total":n, "unknown":n}
@@ -72,21 +96,12 @@ def collect(source, numeric_attrs, unknown_map: Optional[dict] = None):
             if v is None:
                 continue
             num[a]["total"] += 1
-            if is_sentinel(a, v):
+            if pack and pack.unknown_value and pack.unknown_value(a, v):
                 num[a]["sentinel"] += 1
             else:
                 num[a]["values"].append(v)
         if unknown_map is not None:
-            for el in b.iter():
-                if not isinstance(el.tag, str):
-                    continue
-                cs = el.get("codeSpace")
-                if not cs:
-                    continue
-                code = (el.text or "").strip()
-                if not code:
-                    continue
-                name = cs.rsplit("/", 1)[-1]  # e.g. ../../codelists/Building_usage.xml -> Building_usage.xml
+            for _ln, name, code in coded_values(b, pack):
                 d = coded.setdefault(name, {"total": 0, "unknown": 0})
                 d["total"] += 1
                 if code in unknown_map.get(name, frozenset()):
@@ -122,13 +137,14 @@ def summarize(num: dict, coded: dict) -> dict:
     return {"numeric": numeric, "categorical": categorical}
 
 
-def stats_for_files(paths, numeric_attrs, codelists_dir: Optional[Path] = None) -> dict:
+def stats_for_files(paths, numeric_attrs, codelists_dir: Optional[Path] = None, pack=None) -> dict:
     """Return statistics aggregated across multiple files (numeric + coded unknown rates)."""
-    unknown_map = unknown_codes(codelists_dir) if codelists_dir else None
+    pack = pack or city_declaration.read(Path.cwd()).pack
+    unknown_map = unknown_codes(codelists_dir, pack) if codelists_dir else None
     num = {a: {"total": 0, "sentinel": 0, "values": []} for a in numeric_attrs}
     coded: dict = {}
     for p in paths:
-        n, c = collect(Path(p).read_bytes(), numeric_attrs, unknown_map)
+        n, c = collect(Path(p).read_bytes(), numeric_attrs, unknown_map, pack)
         for a in numeric_attrs:
             num[a]["total"] += n[a]["total"]
             num[a]["sentinel"] += n[a]["sentinel"]
@@ -141,36 +157,28 @@ def stats_for_files(paths, numeric_attrs, codelists_dir: Optional[Path] = None) 
 
 
 import collections as _collections  # noqa: E402
-import re as _re  # noqa: E402
-
-_LOD_PAT = _re.compile(r"[Ll]od(\d)")
 
 
-def quality_profile(paths, codelists_dir: Path) -> dict:
+
+def quality_profile(paths, codelists_dir: Path, pack=None) -> dict:
     """For each DataQuality **element (quality axis x LOD)**, aggregate the value distribution into **quality tiers**.
 
-    PLATEAU records provenance in per-LOD elements (`geometrySrcDescLod0..4`, `appearanceSrcDescLod2..4`, etc.).
+    A profile may record provenance in per-LOD elements (`geometrySrcDescLod0..4`, `appearanceSrcDescLod2..4`, etc.).
     Emits the ordinal-scale distribution "surveyed -> drawings -> estimated -> not created" per element name
     (localname), making per-LOD maturity visible. Serves as the basis for tracking the progression
     "provisional -> measured, not created -> surveyed" over time via multi-party PRs (connects to #22).
     """
+    pack = pack or city_declaration.read(Path.cwd()).pack
+    if not (pack.quality_axis and pack.quality_tier):
+        raise SystemExit("This city's dialect grades no data quality (its pack has no quality tiers).")
+    is_quality_axis, quality_tier = pack.quality_axis, pack.quality_tier
     tables = load_codelists(codelists_dir)
     per_elem: dict = {}  # element localname -> {"codelist":..., "counter":Counter}
     for p in paths:
         for b in _iter_buildings(Path(p).read_bytes()):
-            for el in b.iter():
-                if not isinstance(el.tag, str):
+            for ln, cl, code in coded_values(b, pack):
+                if cl not in tables or not is_quality_axis(cl.rsplit("/", 1)[-1]):
                     continue
-                cs = el.get("codeSpace")
-                if not cs:
-                    continue
-                cl = cs.rsplit("/", 1)[-1]
-                if cl not in tables or not is_quality_axis(cl):
-                    continue
-                code = (el.text or "").strip()
-                if not code:
-                    continue
-                ln = _local(el)[1]
                 d = per_elem.setdefault(ln, {"codelist": cl, "counter": _collections.Counter()})
                 d["counter"][code] += 1
 
@@ -181,13 +189,12 @@ def quality_profile(paths, codelists_dir: Path) -> dict:
         for code, n in d["counter"].items():
             tiers[quality_tier(table.get(code, ""))] += n
         total = sum(tiers.values())
-        m = _LOD_PAT.search(ln)
         result[ln] = {
             "total": total,
-            "lod": int(m.group(1)) if m else None,
-            "base": _LOD_PAT.sub("", ln) or ln,
+            "lod": lod_of(ln),
+            "base": without_lod(ln),
             "codelist": d["codelist"],
-            "tier_rates": {t: round(tiers[t] / total, 4) for t in TIER_NAMES if tiers[t]},
+            "tier_rates": {t: round(tiers[t] / total, 4) for t in pack.quality_tiers if tiers[t]},
             # Per-code counts, rates, and tiers (most common first). Shown with --detail; used to inspect/calibrate the breakdown.
             "codes": [
                 {"code": c, "label": table.get(c, c), "count": n,
@@ -239,7 +246,7 @@ def render_profile_markdown(profile: dict, detail: bool = False) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def code_distribution(paths, codelists_dir: Optional[Path] = None) -> list:
+def code_distribution(paths, codelists_dir: Optional[Path] = None, pack=None) -> list:
     """Collect counts and rates of every code for all coded attributes (with codeSpace), keyed by **element (localname) x codelist**.
 
     Emits **everything**, not just quality axes (verbose). Distinguishes cases where the same element
@@ -250,28 +257,18 @@ def code_distribution(paths, codelists_dir: Optional[Path] = None) -> list:
     buckets: dict = {}  # (localname, codelist) -> Counter
     for p in paths:
         for b in _iter_buildings(Path(p).read_bytes()):
-            for el in b.iter():
-                if not isinstance(el.tag, str):
-                    continue
-                cs = el.get("codeSpace")
-                if not cs:
-                    continue
-                code = (el.text or "").strip()
-                if not code:
-                    continue
-                key = (_local(el)[1], cs.rsplit("/", 1)[-1])
-                buckets.setdefault(key, _collections.Counter())[code] += 1
+            for ln, cl, code in coded_values(b, pack):
+                buckets.setdefault((ln, cl), _collections.Counter())[code] += 1
 
     records: list = []
     for (ln, cl), cc in buckets.items():
         total = sum(cc.values())
         table = tables.get(cl, {})
-        m = _LOD_PAT.search(ln)
         records.append({
             "element": ln,
             "codelist": cl,
-            "lod": int(m.group(1)) if m else None,
-            "base": _LOD_PAT.sub("", ln) or ln,
+            "lod": lod_of(ln),
+            "base": without_lod(ln),
             "total": total,
             "codes": [
                 {"code": c, "label": table.get(c, ""), "count": n, "rate": round(n / total, 4)}
@@ -449,13 +446,16 @@ def main(argv: Optional[list] = None) -> int:
     p.add_argument("--rel-threshold", type=float, default=DEFAULT_REL_THRESHOLD,
                    help=f"Relative change threshold for count/mean/max (default {DEFAULT_REL_THRESHOLD})")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--dialect", help="the data's dialect pack (default: the city declared in the working directory)")
     args = p.parse_args(argv)
+    import dialects
+    pack = dialects.dialect(args.dialect) if args.dialect else city_declaration.read(Path.cwd()).pack
 
     if args.save_baseline and args.baseline:
         p.error("--save-baseline and --baseline cannot be specified together (choose save or compare).")
 
     if args.all_codes:
-        recs = code_distribution(args.files, args.codelists)
+        recs = code_distribution(args.files, args.codelists, pack)
         if args.json:
             json.dump(recs, sys.stdout, ensure_ascii=False, indent=2)
             sys.stdout.write("\n")
@@ -466,7 +466,7 @@ def main(argv: Optional[list] = None) -> int:
     if args.profile:
         if not args.codelists:
             p.error("--profile requires --codelists")
-        prof = quality_profile(args.files, args.codelists)
+        prof = quality_profile(args.files, args.codelists, pack)
         if args.json:
             json.dump(prof, sys.stdout, ensure_ascii=False, indent=2)
             sys.stdout.write("\n")
@@ -474,7 +474,7 @@ def main(argv: Optional[list] = None) -> int:
             sys.stdout.write(render_profile_markdown(prof, detail=args.detail))
         return 0
 
-    stats = stats_for_files(args.files, tuple(args.numeric), args.codelists)
+    stats = stats_for_files(args.files, tuple(args.numeric), args.codelists, pack)
 
     if args.save_baseline:
         save_baseline(args.save_baseline, stats, args.numeric, len(args.files))

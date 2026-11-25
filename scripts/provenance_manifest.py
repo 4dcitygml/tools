@@ -6,11 +6,12 @@ schemas/provenance/bulk-manifest.schema.json, the trailer reference format, and
 the command skeleton the manifest scripts share (generate / commits / verify).
 
 The validator is a small dependency-free subset of JSON Schema (required,
-type, enum, const, pattern, minItems, minimum/maximum, additionalProperties,
-$ref into $defs) — enough for the manifest schema, identical in CI and locally.
+type, enum, const, pattern, minItems/maxItems, minimum/maximum, additionalProperties,
+$ref into $defs) — enough for the manifest schema and the city declaration schema
+(schemas/city/4dcitygml.schema.json), identical in CI and locally.
 
 Trailer reference format (exchange contract A7):
-    Provenance-Manifest: provenance/identity-baseline/53394651-2020-2025.json@sha256:<hex>
+    Provenance-Manifest: provenance/identity-baseline/<name>.json@sha256:<hex>
 """
 from __future__ import annotations
 
@@ -71,6 +72,8 @@ def validate(manifest: object, schema: dict | None = None) -> list[str]:
                 return [f"{path}: array expected"]
             if len(value) < node.get("minItems", 0):
                 errors.append(f"{path}: at least {node['minItems']} item(s) required")
+            if "maxItems" in node and len(value) > node["maxItems"]:
+                errors.append(f"{path}: at most {node['maxItems']} item(s) allowed")
             for index, item in enumerate(value):
                 errors += check(node["items"], item, f"{path}[{index}]")
         elif kind == "string":
@@ -83,6 +86,8 @@ def validate(manifest: object, schema: dict | None = None) -> list[str]:
                 return [f"{path}: integer expected"]
             if "minimum" in node and value < node["minimum"]:
                 errors.append(f"{path}: below minimum {node['minimum']}")
+            if "maximum" in node and value > node["maximum"]:
+                errors.append(f"{path}: above maximum {node['maximum']}")
         elif kind == "number":
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 return [f"{path}: number expected"]
@@ -101,7 +106,14 @@ def canonical_bytes(obj: object) -> bytes:
 
 
 def sha256_hex(data: bytes) -> str:
+    """The SHA-256 of bytes as hex: the one digest of the manifests and their materials (W3)."""
     return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path) -> str:
+    """The SHA-256 of a file as hex, read in chunks (hashlib.file_digest)."""
+    with open(path, "rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def manifest_ref(path: str, data: bytes) -> str:
@@ -114,10 +126,6 @@ def parse_manifest_ref(value: str) -> tuple[str, str] | None:
     if match is None:
         return None
     return match.group("path"), match.group("sha")
-
-
-def load_manifest(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------

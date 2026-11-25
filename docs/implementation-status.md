@@ -45,9 +45,9 @@ a release verification item; executable filter/persistence logic is checked loca
 - Per-building history derived from git regardless of commit granularity (`scripts/building_history.py`: follows the building through ID changes, whole-file baselines and manifest-backed commits, reporting registry-keyed changes per commit); the `history-index.yml` workflow publishes it as a static Pages site (`history/index.html` + `history/buildings/<id>.json`) on every push to main
 - Target-municipality set and retained-building invariance for `scope-extract`
 - XML/XSD (i-UR 2.0–3.2 bundled), structure, references, textures, geometry checks and comparison views; PR comments on large PRs are truncated at 60,000 characters with a pointer to the artifacts
-- Base-freshness guidance
+- Base-freshness guidance: GitHub's own (the compare of the base branch with the head, "Update branch"); the hub reads it live (v2.0.0: the freshness comment and the analysis's `freshness` row are gone)
 - The hub: device-flow sign-in, fork → PR, checkpoint list in the repository language, Approve / Request changes, and a queue separating Draft / checking / waiting-for-latest-main / waiting-for-review
-- The one-line installer / per-user launcher (`install/citygml.sh`, `citygml.ps1`), versioned hub folders, the in-hub update banner with digest-verified download, and desktop launchers (`tools/shortcuts.py`) — replacing the earlier starter-kit release and `.release-tag` mechanism (hub-v1.2.0)
+- The one-line command's bootstrap (`install/citygml.sh`, `.ps1`) and the installer / per-user launcher it fetches from the latest hub release (`install/release/citygml.sh`, `citygml.ps1`), versioned hub folders, the in-hub update banner with digest-verified download, and desktop launchers (`tools/shortcuts.py`) — replacing the earlier starter-kit release and `.release-tag` mechanism (hub-v1.2.0)
 
 ## 2. To implement before unlocking the corresponding PR types
 
@@ -55,7 +55,7 @@ a release verification item; executable filter/persistence logic is checked loca
 - Pilot verification of the implemented `identity-baseline` / `identity-correction` gates (commit scope rules + `identity` reproduction) on a real repository
 - Pilot verification of the `source-update` value-replacement gate (one attribute family per PR; manifest-backed commits, reproduction) on a real repository
 - Edition restructurings (attribute containers added or removed by a new edition) are handled by `carry-forward` (implemented) while official editions exist; the registry-driven `schema-migration` for the master-copy phase (re-serializer, semantic-equality gate, i-UR 4.0 registry) is designed but not implemented
-- Full matching of Allowed-Paths, old/new values, and manifest IDs for `source-update`
+- Full matching of the manifest's allowed paths, old/new values, and manifest IDs for `source-update`
 - The release gate for final path signature and official-source consistency
 - Subdivision / re-aggregation tools for deeper mesh levels where needed
 - Extending the history index from buildingID → commit → PR → merge commit to the release
@@ -80,10 +80,10 @@ these items are where the implementations have not caught up with v3.0.0 yet.
   (`scripts/pr_classification.py` is the one table; `ci/pr_analysis_main.sh`
   records `CLASSIFICATION_OUTCOME`, `ci/inspection_summary.sh` adds the
   `<!--cp:classification-->` row and appends the guidance table to the
-  resubmission comment; the city-template report publisher expects fourteen
-  keys; `CITYGML_CLASSIFICATION_WARN_ONLY` gives a city an advisory first
+  resubmission comment; the city-template report publisher expects every A6
+  key; `CITYGML_CLASSIFICATION_WARN_ONLY` gives a city an advisory first
   release). Pending: a tools release containing it, and the cities' pin
-  updates (`CITYGML_TOOLS_REF`), after which the gate is live.
+  updates (`tools` in `4dcitygml.json`), after which the gate is live.
 - Hub: show every open PR whatever its class (today `other` is dropped from
   the review queue); take the `reason` verdict from the `cp:reason` row instead
   of re-deriving it; resolve the building from the A2 trailers before falling

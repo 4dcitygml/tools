@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import re
 import sys
 from pathlib import Path
 
@@ -32,76 +31,67 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.reconstruct_minimal import building_spans  # noqa: E402
+from scripts import citygml_dialect, citygml_faces  # noqa: E402
+from scripts.safe_xml import fromstring  # noqa: E402
 
-_POLY_RE = re.compile(rb'<gml:Polygon[^>]*\bgml:id="([^"]+)"')
-_PT_RE = re.compile(rb"<app:ParameterizedTexture\b.*?</app:ParameterizedTexture>", re.DOTALL)
-_IMGURI_RE = re.compile(rb"<app:imageURI>([^<]+)</app:imageURI>")
-_TARGET_RE = re.compile(rb"<app:target\b.*?</app:target>", re.DOTALL)
-_TARGET_URI_RE = re.compile(rb'uri="#?([^"]+)"')
-_TEXCOORD_RE = re.compile(rb"<app:textureCoordinates[^>]*>([^<]+)</app:textureCoordinates>")
+
+def _tree(raw: bytes):
+    """(root, the file's namespaces): the appearance is read namespace-aware, any prefix and either
+    CityGML version, with entities unescaped (U8, D-c5: byte regexes knew only gml: and app:)."""
+    root = fromstring(raw)
+    return root, citygml_dialect.ns_for_root(root)
 
 
 def referenced_image_uris(raw: bytes) -> set[str]:
     """Set of imageURIs (relative path strings) referenced by the .gml."""
-    return {m.group(1).decode("utf-8").strip() for m in _IMGURI_RE.finditer(raw)}
+    root, ns = _tree(raw)
+    return {(e.text or "").strip() for e in root.iter(f"{{{ns['app']}}}imageURI") if (e.text or "").strip()}
 
 
-def _poly_to_building(raw: bytes) -> dict[str, str]:
-    """polygon gml:id -> gml:id of the building containing it."""
+def _poly_to_building(root, ns: dict) -> dict[str, str]:
+    """polygon gml:id -> gml:id of the member's (outermost) building containing it."""
+    gml_id = f"{{{ns['gml']}}}id"
     p2b: dict[str, str] = {}
-    for bid, (s, e) in building_spans(raw).items():
-        for m in _POLY_RE.finditer(raw, s, e):
-            p2b[m.group(1).decode("utf-8")] = bid
+    for member in root.iter(f"{{{ns['core']}}}cityObjectMember"):
+        building = next(member.iter(f"{{{ns['bldg']}}}Building"), None)
+        if building is None or not building.get(gml_id):
+            continue
+        for poly in building.iter(f"{{{ns['gml']}}}Polygon"):
+            if poly.get(gml_id):
+                p2b[poly.get(gml_id)] = building.get(gml_id)
     return p2b
+
+
+def _appearance(raw: bytes):
+    """(image, building, polygon, target) of every texture target that belongs to a building."""
+    root, ns = _tree(raw)
+    p2b = _poly_to_building(root, ns)
+    for img, poly, target in citygml_faces.textures(root, ns):
+        if poly in p2b:
+            yield img, p2b[poly], poly, target, ns
 
 
 def image_to_buildings(raw: bytes) -> dict[str, set[str]]:
     """imageURI -> set of buildings referencing it (for reports/GC; not needed for the localization guarantee)."""
-    p2b = _poly_to_building(raw)
     img2b: dict[str, set[str]] = {}
-    for pt in _PT_RE.finditer(raw):
-        block = pt.group(0)
-        mu = _IMGURI_RE.search(block)
-        if not mu:
-            continue
-        img = mu.group(1).decode("utf-8").strip()
-        for tgt in _TARGET_RE.finditer(block):
-            mt = _TARGET_URI_RE.search(tgt.group(0))
-            if mt and mt.group(1).decode("utf-8") in p2b:
-                img2b.setdefault(img, set()).add(p2b[mt.group(1).decode("utf-8")])
+    for img, bid, _poly, _target, _ns in _appearance(raw):
+        img2b.setdefault(img, set()).add(bid)
     return img2b
 
 
-def _building_appearance_sig(raw: bytes) -> dict[str, frozenset[tuple[str, str, str]]]:
+def building_appearance_sig(raw: bytes) -> dict[str, frozenset[tuple[str, str, str]]]:
     """Building -> {(polygon, imageURI, UV hash)} signature. The semantic state of the appearance."""
-    p2b = _poly_to_building(raw)
     per_bldg: dict[str, set[tuple[str, str, str]]] = {}
-    for pt in _PT_RE.finditer(raw):
-        block = pt.group(0)
-        mu = _IMGURI_RE.search(block)
-        if not mu:
-            continue
-        img = mu.group(1).decode("utf-8").strip()
-        for tgt in _TARGET_RE.finditer(block):
-            tb = tgt.group(0)
-            mt = _TARGET_URI_RE.search(tb)
-            if not mt:
-                continue
-            poly = mt.group(1).decode("utf-8")
-            bid = p2b.get(poly)
-            if bid is None:
-                continue
-            uv = b"".join(m.group(1) for m in _TEXCOORD_RE.finditer(tb))
-            uv_hash = hashlib.sha256(uv).hexdigest()[:16]
-            per_bldg.setdefault(bid, set()).add((poly, img, uv_hash))
+    for img, bid, poly, target, ns in _appearance(raw):
+        uv = "".join(c.text or "" for c in target.iter(f"{{{ns['app']}}}textureCoordinates"))
+        per_bldg.setdefault(bid, set()).add((poly, img, hashlib.sha256(uv.encode()).hexdigest()[:16]))
     return {b: frozenset(v) for b, v in per_bldg.items()}
 
 
 def appearance_changed_buildings(base: bytes, head: bytes) -> list[str]:
     """gml:ids of buildings whose appearance signature changed between base and head (= retexturing etc., (a))."""
-    bs = _building_appearance_sig(base)
-    hs = _building_appearance_sig(head)
+    bs = building_appearance_sig(base)
+    hs = building_appearance_sig(head)
     changed = [b for b in set(bs) | set(hs) if bs.get(b) != hs.get(b)]
     return sorted(changed)
 
@@ -128,6 +118,14 @@ _IMAGE_MAGIC: dict[str, tuple[bytes, ...]] = {
     ".tif": (b"II*\x00", b"MM\x00*"),
     ".tiff": (b"II*\x00", b"MM\x00*"),
 }
+IMAGE_SUFFIXES = tuple(_IMAGE_MAGIC)   # the texture images: the one list (gc_textures, the driver's texture row)
+
+
+def texture_images(bldg_dir: Path) -> list[Path]:
+    """The texture images of a buildings folder: the image files of its *_appearance folders (the
+    one walk, W2: gc_textures and strip_lod2 each had theirs)."""
+    return sorted(f for app in bldg_dir.glob("*_appearance") if app.is_dir()
+                  for f in app.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES)
 
 
 def image_magic_mismatches(paths: list[Path]) -> list[str]:

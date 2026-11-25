@@ -24,20 +24,20 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from scripts import pr_markers  # noqa: E402
 
-PREVIEW_MARKER = pr_markers.PREVIEW
 SUMMARY_MARKER = pr_markers.CHANGE_SUMMARY
 LINT_MARKER = pr_markers.REVIEWABILITY_LINT
 METADATA_MARKER = pr_markers.METADATA
-# The data-quality lint has two layers (generic CityGML structure / PLATEAU conventions), each with its own comment.
+# The data-quality lint has two layers (generic CityGML structure / a dialect's data conventions), each with its own comment.
 CITYGML_LINT_MARKER = pr_markers.QUALITY_LINT
 PLAUSIBILITY_LINT_MARKER = pr_markers.PLAUSIBILITY_LINT
-PLAUSIBILITY_LINT_LEGACY_MARKER = pr_markers.PLAUSIBILITY_LINT_LEGACY
 # Topological consistency gate (official engine val3dity, diff-based). Pre-existing defects are tolerated; only invalids introduced by the PR are warned about.
 VAL3DITY_MARKER = pr_markers.VAL3DITY
 
 # --- val3dity topology gate (topological consistency per official standards, §6.3 L07-L14 / val3dity 100-405) ---
 # Planarity tolerance [m]. Follows product spec §6.3 L12 (LOD2/3 "tolerance for treating surfaces as coplanar").
 VAL3DITY_PLANARITY_D2P_M = 0.03
+
+GIT_HOST_FILE_LIMIT = 100 * 1024 * 1024   # GitHub refuses a file over 100 MiB in a push
 
 # --- reviewability lint (W3 / D-1-a) thresholds ---
 # If the number of changed buildings per PR exceeds this, emit a "large change" warning.
@@ -50,4 +50,4 @@ COORD_DIM = 3
 MAX_MEASURED_HEIGHT_M = 300.0
 # Plausible upper bound for storeysAbove/BelowGround (exceeding it is a warning).
 MAX_STOREYS = 200
-# Note: the "unknown-value sentinel (e.g. +/-9999)" definitions are centralized in `scripts/sentinels.py` (shared by lint/stats/monitoring).
+# Note: the values that mean "unknown" (sentinels such as +/-9999) are a dialect pack's (Pack.unknown_value; lint/stats/monitoring ask it).

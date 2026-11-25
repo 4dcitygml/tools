@@ -32,14 +32,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
-from scripts import semantic_registry as R  # noqa: E402
-from scripts.building_identity import (IdentityRule, building_spans, citymodel_close, member_markers,  # noqa: E402
-                                       rule_from_config, stable_id, trailers as parse_trailers)
+from scripts import building_compare as A  # noqa: E402
+from scripts.building_identity import (CHANGE_TYPES, IDENTITY_KINDS, IdentityRule, building_spans,  # noqa: E402
+                                       citymodel_close, member_markers, rule_from_config, stable_id,
+                                       trailers as parse_trailers)
+from scripts import city_declaration  # noqa: E402
 from scripts.provenance_manifest import parse_manifest_ref  # noqa: E402
-from scripts.repo_git import blob as _blob, git as _git  # noqa: E402
+from scripts.repo_git import blob as _blob, changed, git as _git  # noqa: E402
 
-BULK_KINDS = {"source-baseline", "scope-extract", "layout", "carry-forward", "schema-update", "schema-migration", "lifecycle"}
+BULK_KINDS = CHANGE_TYPES - IDENTITY_KINDS   # commits that may name many buildings: every file is read
 
 
 def aliases_of(repo: Path, rev: str, stable: str) -> list[str]:
@@ -65,12 +66,8 @@ def aliases_of(repo: Path, rev: str, stable: str) -> list[str]:
 
 
 def city_rule(repo: Path, rev: str) -> IdentityRule:
-    """The building ID rule of the city's 4dcitygml.json at rev (the default rule when absent)."""
-    raw = _blob(repo, rev, "4dcitygml.json")
-    try:
-        return rule_from_config(json.loads(raw.decode("utf-8")) if raw else None)
-    except ValueError:
-        return IdentityRule()
+    """The building ID rule of the city's declaration at rev (scripts/city_declaration.py)."""
+    return rule_from_config(city_declaration.read(repo, rev).resolved)
 
 
 def _members(raw: bytes, rule: IdentityRule) -> dict[str, bytes]:
@@ -85,123 +82,45 @@ def _frame(raw: bytes) -> tuple[bytes, bytes]:
     return (raw[:start] if start > 0 else raw[:4096]), (raw[close:] if close >= 0 else b"</core:CityModel>")
 
 
-def _key(path: str, edition: str | None) -> str:
-    """The registry key of an attribute path when the data has a registered edition; otherwise
-    the path as written (generic attributes keep their names)."""
-    if not edition:
+def _key(path: str, edition: str | None, pack) -> str:
+    """The pack's edition-independent key of an attribute path when the data is in one of its
+    editions (Pack.attribute_key: a pack's semantic registry); otherwise the path as written
+    (generic attributes keep their names)."""
+    if not edition or pack.attribute_key is None:
         return path
-    return R.key_for(path, edition) or R.normalize_path(path)
+    return pack.attribute_key(path, edition)
 
 
-def _values(member: bytes, edition: str | None, frame: tuple[bytes, bytes]) -> dict[str, str]:
+def _edition(raw: bytes, pack) -> "str | None":
+    """The edition of a file under its city's pack (Pack.edition_of), None for plain CityGML."""
+    return pack.edition_of(raw) if pack.edition_of else None
+
+
+def _values(member: bytes, edition: str | None, frame: tuple[bytes, bytes], pack) -> dict[str, str]:
     """Keyed values of one building member (coded values raw, numbers normalized)."""
-    from lxml import etree
-    from scripts.safe_xml import safe_fromstring
+    from scripts.safe_xml import ParseError, safe_fromstring
     try:
         root = safe_fromstring(frame[0] + member + frame[1])
-    except etree.XMLSyntaxError:
+    except ParseError:
         return {}
     building = next(root.iter(*A.BUILDING_TAGS), None)
     if building is None:
         return {}
-    out = {_key(path, edition): value for path, value in sorted(A.extract_attributes(building).items())}
-    out["geometry.lod0_fingerprint"] = (A.geometry_fingerprint(A.lod0_geometry(building)) or "-")[:12]
+    out = {_key(path, edition, pack): value for path, value in sorted(A.extract_attributes(building).items())}
+    # the file's own frame (its head holds the Envelope), as _file_state reads it
+    out["geometry.lod0_fingerprint"] = (A.geometry_fingerprint(A.lod0_geometry(building, A.frame_for(frame[0]))) or "-")[:12]
     return out
 
 
-def _manifest_entry(repo: Path, sha: str, trailers: dict, ids: set[str]) -> dict | None:
-    refs = trailers.get("Provenance-Manifest", [])
-    if not refs or parse_manifest_ref(refs[0]) is None:
-        return None
-    path, _digest = parse_manifest_ref(refs[0])
-    blob = _blob(repo, sha, path)
-    if blob is None:
-        return None
-    try:
-        m = json.loads(blob.decode("utf-8"))
-    except ValueError:
-        return None
-    ev = m.get("evidence", {})
-    entry = {"kind": m.get("kind"), "manifest": path}
-    for section in ("links", "changes", "absorbed", "conflicts", "unmappable", "insert_needed", "carried_old_codespace", "unlinked"):
-        hits = [e for e in ev.get(section, []) if (e.get("id") in ids or e.get("from") in ids or e.get("to") in ids)]
-        if hits:
-            entry[section] = hits
-    return entry
-
-
-def history(repo: Path, stable: str, rev: str = "HEAD") -> list[dict]:
-    ids = set(aliases_of(repo, rev, stable))
-    rule = city_rule(repo, rev)
-    files = [p for p in _git(repo, "ls-tree", "-r", "--name-only", rev).splitlines() if p.endswith(".gml")]
-    log = _git(repo, "log", rev, "--reverse", "--format=%H%x00%ct%x00%s%x00%B%x01", "--", *files)
-    rows: list[dict] = []
-    prev_values: dict[str, str] | None = None
-    prev_id: str | None = None
-    for entry in log.split("\x01"):
-        if entry.count("\x00") < 3:
-            continue
-        sha, ts, subject, body = entry.lstrip("\n").split("\x00", 3)
-        sha, ts = sha.strip(), ts.strip()
-        trailers = parse_trailers(body)
-        kind = (trailers.get("Change-Type") or ["proposal"])[-1]
-        mentioned = ids & set(trailers.get("Building", []) + trailers.get("Building-Added", []) + trailers.get("Building-Deleted", [])
-                              + trailers.get("Building-ID-From", []) + trailers.get("Building-ID-To", []))
-        has_building_trailers = any(trailers.get(k) for k in ("Building", "Building-Added", "Building-Deleted", "Building-ID-From", "Building-ID-To"))
-        if has_building_trailers and not mentioned and kind not in BULK_KINDS:
-            continue  # a per-building commit about another building: no need to read the blobs
-        parents = _git(repo, "show", "-s", "--format=%P", sha).split()
-        changed_files = _git(repo, "diff", "--name-only", "--no-renames", parents[0] if parents else "4b825dc642cb6eb9a060e54bf8d69288fbee4904", sha, "--", "*.gml").splitlines()
-        if not changed_files:
-            continue
-        member = current_id = None
-        for f in changed_files:
-            raw = _blob(repo, sha, f)
-            if raw is None:
-                continue
-            current_id, member = next(((k, m) for k, m in _members(raw, rule).items() if k in ids), (None, None))
-            if member is not None:
-                edition, frame = R.detect_edition(raw), _frame(raw)
-                break
-        if member is None:
-            # deleted in this commit?
-            if prev_values is not None and any(_blob(repo, sha, f) is None or not ids & set(_members(_blob(repo, sha, f), rule)) for f in changed_files):
-                if kind != "proposal" or mentioned:
-                    rows.append({"commit": sha[:12], "time": int(ts), "subject": subject, "kind": kind, "event": "removed", "id": prev_id})
-                    prev_values = None
-            continue
-        values = _values(member, edition, frame)
-        diff = {k: (prev_values.get(k) if prev_values else None, v) for k, v in values.items() if prev_values is None or prev_values.get(k) != v}
-        if prev_values is not None:
-            diff.update({k: (prev_values[k], None) for k in prev_values if k not in values})
-        if prev_values is not None and not diff and current_id == prev_id and not mentioned and kind not in ("source-baseline", "scope-extract", "layout"):
-            continue  # the file changed but not this building
-        if prev_values is not None and not diff and current_id == prev_id and kind in ("source-baseline", "scope-extract", "layout") :
-            rows.append({"commit": sha[:12], "time": int(ts), "subject": subject, "kind": kind, "event": "carried unchanged", "id": current_id, "edition": edition})
-            prev_id = current_id
-            continue
-        row = {"commit": sha[:12], "time": int(ts), "subject": subject, "kind": kind, "edition": edition, "id": current_id,
-               "event": "first appearance" if prev_values is None else ("id changed" if current_id != prev_id else "changed"),
-               "changes": {k: {"old": o, "new": n} for k, (o, n) in diff.items()}}
-        if current_id != prev_id and prev_id is not None:
-            row["id_from"] = prev_id
-        manifest = _manifest_entry(repo, sha, trailers, ids)
-        if manifest:
-            row["manifest"] = manifest
-        rows.append(row)
-        prev_values, prev_id = values, current_id
-    return rows
-
-
-def _file_state(raw: bytes, rule: IdentityRule) -> tuple[dict[str, dict[str, str]], str | None]:
+def _file_state(raw: bytes, rule: IdentityRule, pack) -> tuple[dict[str, dict[str, str]], str | None]:
     """stable ID -> keyed values for every building of a file (one parse)."""
-    edition = R.detect_edition(raw)
+    edition = _edition(raw, pack)
     stable_of = {gml_id: stable_id(raw[s:e], gml_id, rule) for gml_id, (s, e) in building_spans(raw).items()}
     state: dict[str, dict[str, str]] = {}
     for gml_id, building in _load_from_bytes(raw).items():
         if gml_id not in stable_of:
             continue
-        values = {_key(path, edition): value for path, value in sorted(building.attrs.items())}
+        values = {_key(path, edition, pack): value for path, value in sorted(building.attrs.items())}
         values["geometry.lod0_fingerprint"] = (building.fingerprint_1mm or "-")[:12]
         state[stable_of[gml_id]] = values
     return state, edition
@@ -218,11 +137,20 @@ def _load_from_bytes(raw: bytes) -> dict:
         os.unlink(name)
 
 
+def history(repo: Path, stable: str, rev: str = "HEAD") -> list[dict]:
+    """One building's timeline, under every ID it had: its rows of the one-pass index (U10)."""
+    events = build_index(repo, rev)
+    rows = [row for alias in aliases_of(repo, rev, stable) for row in events.get(alias, [])]
+    return sorted(rows, key=lambda r: r["time"])
+
+
 def build_index(repo: Path, rev: str = "HEAD") -> dict[str, list[dict]]:
-    """Every building's timeline in one pass over the history (files parsed once per commit)."""
+    """Every building's timeline in one pass over the history (files parsed once per commit).
+    Every commit that touched a CityGML file counts, including files that no longer exist at rev
+    (a layout move, D-b5)."""
     rule = city_rule(repo, rev)
-    files = [p for p in _git(repo, "ls-tree", "-r", "--name-only", rev).splitlines() if p.endswith(".gml")]
-    log = _git(repo, "log", rev, "--reverse", "--format=%H%x00%ct%x00%s%x00%B%x01", "--", *files)
+    pack = city_declaration.read(repo, rev).pack   # the city's dialect: its editions and attribute keys
+    log = _git(repo, "log", rev, "--reverse", "--format=%H%x00%ct%x00%s%x00%B%x01", "--", "*.gml")
     state: dict[str, dict[str, str]] = {}          # current values per stable ID
     events: dict[str, list[dict]] = {}
     file_states: dict[str, dict[str, dict[str, str]]] = {}   # path -> stable ID -> values (at the last seen commit)
@@ -231,17 +159,18 @@ def build_index(repo: Path, rev: str = "HEAD") -> dict[str, list[dict]]:
             continue
         sha, ts, subject, body = entry.lstrip("\n").split("\x00", 3)
         sha, ts = sha.strip(), ts.strip()
-        trailers = parse_trailers(body)
-        kind = (trailers.get("Change-Type") or ["proposal"])[-1]
-        parents = _git(repo, "show", "-s", "--format=%P", sha).split()
-        parent = parents[0] if parents else "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-        changed_files = _git(repo, "diff", "--name-only", "--no-renames", parent, sha, "--", "*.gml").splitlines()
+        changed_files = changed(repo, sha, suffix=".gml")   # against its first parent; a root commit too
         if not changed_files:
             continue
+        trailers = parse_trailers(body)
+        manifest_cache = _manifest_blob(repo, sha, trailers) if trailers.get("Provenance-Manifest") else None
+        # the gate's reading of Change-Type (D-b6); a manifest-backed commit is of its manifest's kind
+        kind = ((trailers.get("Change-Type") or [""])[-1].lower()
+                or str((manifest_cache or {}).get("kind") or "proposal"))
         id_from = (trailers.get("Building-ID-From") or [None])[0]
         id_to = (trailers.get("Building-ID-To") or [None])[0]
-        manifest_cache: dict | None = None
         seen_now: set[str] = set()
+        vanished: list[tuple[str, str]] = []
         mentioned = set(trailers.get("Building", []) + trailers.get("Building-Added", []) + trailers.get("Building-Deleted", []))
         if id_from: mentioned.add(id_from)
         if id_to: mentioned.add(id_to)
@@ -251,12 +180,12 @@ def build_index(repo: Path, rev: str = "HEAD") -> dict[str, list[dict]]:
             if per_building and raw is not None and f in file_states:
                 # a one-building commit: parse only the mentioned members, patch the cached file state
                 frame = _frame(raw)
-                edition = R.detect_edition(raw)
+                edition = _edition(raw, pack)
                 new_state = dict(file_states[f])
                 present: set[str] = set()
                 for stable_m, member in _members(raw, rule).items():
                     if stable_m in mentioned:
-                        new_state[stable_m] = _values(member, edition, frame)
+                        new_state[stable_m] = _values(member, edition, frame, pack)
                         present.add(stable_m)
                 for gone in mentioned - present:
                     new_state.pop(gone, None)
@@ -266,7 +195,7 @@ def build_index(repo: Path, rev: str = "HEAD") -> dict[str, list[dict]]:
                 iter_state = {k: v for k, v in new_state.items() if k in mentioned}
                 file_states[f] = new_state
             else:
-                new_state, edition = _file_state(raw, rule) if raw is not None else ({}, None)
+                new_state, edition = _file_state(raw, rule, pack) if raw is not None else ({}, None)
                 old_state = file_states.get(f, {})
                 file_states[f] = new_state
                 iter_state = new_state
@@ -288,19 +217,18 @@ def build_index(repo: Path, rev: str = "HEAD") -> dict[str, list[dict]]:
                     row["id_from"] = prev_id
                     state.pop(prev_id, None)
                     events.setdefault(stable, []).extend(events.pop(prev_id, []))
-                if trailers.get("Provenance-Manifest"):
-                    if manifest_cache is None:
-                        manifest_cache = _manifest_blob(repo, sha, trailers) or {}
+                if manifest_cache:
                     entry_m = _manifest_slice(manifest_cache, {stable, prev_id})
                     if entry_m:
                         row["manifest"] = entry_m
                 state[stable] = values
                 events.setdefault(stable, []).append(row)
-            for stable in set(old_state) - set(iter_state):
-                if stable in seen_now or (id_from == stable and id_to):
-                    continue  # moved to another file, or renamed (handled above)
-                events.setdefault(stable, []).append({"commit": sha[:12], "time": int(ts), "subject": subject, "kind": kind, "event": "removed", "id": stable, "file": f})
-                state.pop(stable, None)
+            vanished += [(stable, f) for stable in sorted(set(old_state) - set(iter_state))]
+        for stable, f in vanished:   # after every file of the commit: a move to a later file is no removal
+            if stable in seen_now or (id_from == stable and id_to):
+                continue  # moved to another file, or renamed (handled above)
+            events.setdefault(stable, []).append({"commit": sha[:12], "time": int(ts), "subject": subject, "kind": kind, "event": "removed", "id": stable, "file": f})
+            state.pop(stable, None)
     return events
 
 

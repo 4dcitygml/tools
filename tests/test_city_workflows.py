@@ -13,6 +13,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests import city_checkouts
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT = REPO_ROOT.parent
 SIBLING_SUFFIX = REPO_ROOT.name.removeprefix("tools")   # sibling checkouts share this checkout's suffix
@@ -20,7 +22,7 @@ TEMPLATE = ROOT / ("city-template" + SIBLING_SUFFIX)
 SAMPLES = sorted(ROOT.glob("sample-*-station" + SIBLING_SUFFIX))
 
 
-@unittest.skipUnless(TEMPLATE.is_dir() and SAMPLES, "sibling city repositories not checked out")
+@city_checkouts.skip_unless(TEMPLATE.is_dir() and bool(SAMPLES), "sibling city repositories not checked out")
 class CityWorkflowContractTest(unittest.TestCase):
     def _wf(self, repo: Path, name: str) -> str:
         return (repo / ".github" / "workflows" / name).read_text(encoding="utf-8")
@@ -45,6 +47,13 @@ class CityWorkflowContractTest(unittest.TestCase):
         with patch.object(sys, "path", [str(scripts), *sys.path]):   # it imports its siblings by name
             spec.loader.exec_module(post)
         self.assertEqual(post.COMMENT_LIMIT, 60000)          # GitHub rejects bodies over 65,536 characters
+        # an intended duplicate, proven equal: the trusted poster fetches no tools, so it keeps its own
+        # limit, and the tools' reports (md_report) are cut to the same one
+        from scripts import md_report
+        self.assertEqual(post.COMMENT_LIMIT, md_report.COMMENT_LIMIT)
+        for city in SAMPLES:
+            copy = (city / ".github" / "scripts" / "post_comments.py").read_text(encoding="utf-8")
+            self.assertIn(f"COMMENT_LIMIT = {md_report.COMMENT_LIMIT} ", copy, city.name)
         self.assertEqual(post.ARTIFACT_LIMIT, 4194304)       # absurd sizes are still rejected
         self.assertIn("Truncated to fit the GitHub comment size limit", post.TRUNCATED)
         body = post.truncated(b"x" * (post.COMMENT_LIMIT + 10))
@@ -63,6 +72,9 @@ def template_differences(template: Path, city: Path, allowed: dict) -> list[str]
     ours, theirs = tracked(template), tracked(city)
     expected = {name: template / name for name in ours}
     expected.update({name: template / source for name, source in allowed.get("activated", {}).items()})
+    template_only = set(allowed.get("template_only", {}))   # files the practice cities do not carry
+    for name in template_only:
+        expected.pop(name, None)
     pr_template = template / ".github/PULL_REQUEST_TEMPLATE" / f"{meta.get('lang', 'en')}.md"
     if pr_template.is_file():
         expected[".github/PULL_REQUEST_TEMPLATE.md"] = pr_template
@@ -72,11 +84,14 @@ def template_differences(template: Path, city: Path, allowed: dict) -> list[str]
     if lang != "en":   # e.g. docs/<lang>/getting-started.md, in the city's working language only
         added |= {path.replace("<lang>", lang) for path in allowed.get("added_in_city_language", [])}
     data = tuple(f"{d.rstrip('/')}/" for d in [*(meta.get("data_dirs") or []), "provenance"])
+    folders = data + tuple(a for a in added if a.endswith("/"))   # an `added` entry ending in / adds the whole folder
     problems = [f"missing: {name}" for name in sorted(set(expected) - theirs)]
     for name in sorted(theirs):
-        if name in free or name in added or name.startswith(data):
+        if name in free or name in added or name.startswith(folders):
             continue
-        if name not in expected:
+        if name in template_only:
+            problems.append(f"template only: {name}")
+        elif name not in expected:
             problems.append(f"not in the template: {name}")
         elif (city / name).read_bytes() != expected[name].read_bytes():
             problems.append(f"differs from {expected[name].relative_to(template)}: {name}")
@@ -86,7 +101,7 @@ def template_differences(template: Path, city: Path, allowed: dict) -> list[str]
 ALLOWED = TEMPLATE / ".github" / "practice" / "allowed-differences.json"   # CI configuration (A11)
 
 
-@unittest.skipUnless(ALLOWED.is_file() and SAMPLES, "template without .github/practice/allowed-differences.json")
+@city_checkouts.skip_unless(ALLOWED.is_file() and bool(SAMPLES), "template without .github/practice/allowed-differences.json")
 class PracticeCityTemplateTest(unittest.TestCase):
     # S15: a practice city is the template plus its data (rebuilt from the template in v1.5.0).
     def test_practice_cities_carry_the_template(self) -> None:
@@ -100,9 +115,11 @@ class PracticeCityTemplateTest(unittest.TestCase):
             template, city = Path(t) / "template", Path(t) / "city"
             files = {"a.txt": "a", ".github/PULL_REQUEST_TEMPLATE.md": "en", ".github/PULL_REQUEST_TEMPLATE/de.md": "de",
                      ".github/practice/manual-reset.yml": "reset", "README.md": "template"}
-            for root, extra in ((template, {}),
+            only = {".github/dependabot.yml": "version: 2"}   # template_only: the cities do not carry it
+            for root, extra in ((template, only),
                                 (city, {".github/PULL_REQUEST_TEMPLATE.md": "de", "README.md": "city",
                                         "docs/de/getting-started.md": "Erste Schritte",
+                                        "docs/practice-photos/front.jpg": "jpg",
                                         ".github/workflows/manual-reset.yml": "reset", "lod2/x.gml": "x",
                                         "4dcitygml.json": json.dumps({"lang": "de", "data_dirs": ["lod2"]})})):
                 for name, text in {**files, **extra}.items():
@@ -110,17 +127,23 @@ class PracticeCityTemplateTest(unittest.TestCase):
                     (root / name).write_text(text, encoding="utf-8")
                 subprocess.run(["git", "init", "-q", str(root)], check=True)
                 subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-            allowed = {"replaced": {"README.md": "", ".github/PULL_REQUEST_TEMPLATE.md": ""}, "added": ["4dcitygml.json"],
+            allowed = {"replaced": {"README.md": "", ".github/PULL_REQUEST_TEMPLATE.md": ""}, "added": ["4dcitygml.json", "docs/practice-photos/"],
                        "added_in_city_language": ["docs/<lang>/getting-started.md"],
-                       "activated": {".github/workflows/manual-reset.yml": ".github/practice/manual-reset.yml"}}
+                       "activated": {".github/workflows/manual-reset.yml": ".github/practice/manual-reset.yml"},
+                       "template_only": {".github/dependabot.yml": ""}}
             self.assertEqual(template_differences(template, city, allowed), [])
             (city / "a.txt").write_text("changed", encoding="utf-8")
             (city / "extra.txt").write_text("", encoding="utf-8")
+            (city / "docs/practice-photos-old").mkdir()
+            (city / "docs/practice-photos-old/x.jpg").write_text("", encoding="utf-8")   # a sibling folder is not added
             (city / ".github/PULL_REQUEST_TEMPLATE.md").write_text("en", encoding="utf-8")
+            (city / ".github/dependabot.yml").write_text("version: 2", encoding="utf-8")
             subprocess.run(["git", "-C", str(city), "add", "-A"], check=True)
             self.assertEqual(template_differences(template, city, allowed),
                              ["differs from .github/PULL_REQUEST_TEMPLATE/de.md: .github/PULL_REQUEST_TEMPLATE.md",
-                              "differs from a.txt: a.txt", "not in the template: extra.txt"])
+                              "template only: .github/dependabot.yml",
+                              "differs from a.txt: a.txt", "not in the template: docs/practice-photos-old/x.jpg",
+                              "not in the template: extra.txt"])
 
 
 if __name__ == "__main__":

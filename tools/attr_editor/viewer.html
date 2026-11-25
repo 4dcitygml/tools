@@ -17,6 +17,7 @@
   }
   .sep { width: 1px; height: 22px; background: rgba(255,255,255,.25); margin: 0 2px; }
   .btn {
+    font: revert;   /* the browser's button font, not the tools' shared button look (common.css) */
     padding: 5px 12px; border: none; border-radius: 4px;
     cursor: pointer; font-size: 12px; font-weight: bold;
   }
@@ -83,44 +84,18 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
 // No sun lighting on the globe surface.
 viewer.scene.globe.enableLighting = false;
 
-// Ground tiles: follow the city setting (map.tiles in 4dcitygml.json, injected by the
-// server as CITY_MAP). gsi = GSI aerial photo + standard map (served for Japan only),
-// osm = OSM standard map only (worldwide; no aerial layer, so the basemap toggle is hidden).
-const CITY_MAP = window.CITY_MAP || {};
-const INTL_TILES = CITY_MAP.tiles !== 'gsi';   // GSI only where the city declares it
-
-let photoLayer = null;
-let stdLayer;
-if (INTL_TILES) {
-  stdLayer = viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      maximumLevel: 19,
-      credit: '© OpenStreetMap contributors'
-    })
-  );
-  stdLayer.show = true;
+// Ground tiles: the city's background layers (the server's map values). Without an aerial
+// layer the basemap toggle is hidden; with one, the aerial photo is the default.
+const CITY_MAP = window.CITYGML.map;
+const groundLayer = b => viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({ url: b.url, maximumLevel: b.maxZoom, credit: b.attribution }));
+const photoLayer = CITY_MAP.basemaps.photo ? groundLayer(CITY_MAP.basemaps.photo) : null;
+const stdLayer = groundLayer(CITY_MAP.basemaps.street);
+stdLayer.show = !photoLayer;
+if (!photoLayer) {
   for (const id of ['sepLayers', 'btnPhoto', 'btnStd']) {
     document.getElementById(id).style.display = 'none';
   }
-} else {
-  photoLayer = viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
-      maximumLevel: 18,
-      credit: 'GSI Tiles (Geospatial Information Authority of Japan)'
-    })
-  );
-  stdLayer = viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
-      maximumLevel: 18,
-      credit: 'GSI Tiles (Geospatial Information Authority of Japan)'
-    })
-  );
-  // Aerial photo is the default basemap.
-  photoLayer.show = true;
-  stdLayer.show = false;
 }
 
 // Switch between the two basemaps and mark the unselected button as inactive.
@@ -413,26 +388,11 @@ bindOrbitButton('btnRotR', -1);  // ⟳ building appears to turn right (clockwis
 // JPEG data URL. CityGML UVs are bottom-left origin, canvas is top-left, so
 // the vertical start is measured from (1 - vMax).
 function cropUV(img, uvs) {
-  let uMin = Infinity, uMax = -Infinity;
-  let vMin = Infinity, vMax = -Infinity;
-  for (const [u, v] of uvs) {
-    if (u < uMin) uMin = u;
-    if (u > uMax) uMax = u;
-    if (v < vMin) vMin = v;
-    if (v > vMax) vMax = v;
-  }
-
-  const iw = img.naturalWidth;
-  const ih = img.naturalHeight;
-  const sx = Math.round(uMin * iw);
-  const sy = Math.round((1 - vMax) * ih);
-  const sw = Math.max(1, Math.round((uMax - uMin) * iw));
-  const sh = Math.max(1, Math.round((vMax - vMin) * ih));
-
+  const r = uvBox(uvs, img.naturalWidth, img.naturalHeight);   // the editor paints the same box (common.js)
   const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  canvas.width = r.w;
+  canvas.height = r.h;
+  canvas.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
   return canvas.toDataURL('image/jpeg');
 }
 
@@ -455,7 +415,7 @@ function loadTex(imgRef, cb) {
 // Return CityGML UVs (normalized within the crop rectangle) as Cesium texture coordinates.
 // Without them Cesium maps with its own planar projection, which rotates/flips per face,
 // and on vertical walls the projection degenerates so the texture looks like different
-// content (UVs are normalized against the same bbox as cropUV / the editor's uvRect;
+// content (UVs are normalized against the same bbox as cropUV / uvBox in common.js;
 // the duplicated closing point at the end of uv is dropped)
 function uvTexCoords(face) {
   const ti = face.id && bldg.tex && bldg.tex[face.id];
@@ -662,10 +622,7 @@ async function load() {
   if (!tile || !bid) { info.textContent = t('viewer.usage_hint', 'Specify ?tile=<tile>&bid=<gml:id>'); return; }
   info.textContent = t('viewer.loading_mesh', 'Loading… (tile {tile})').replace('{tile}', tile);
   try {
-    const r = await fetch(`/api/building/${tile}/${encodeURIComponent(bid)}`);
-    const j = await r.json();
-    if (j.ok === false) throw new Error(j.error);
-    bldg = j.building;
+    bldg = (await api(`/api/building/${tile}/${encodeURIComponent(bid)}`)).building;
   } catch (e) {
     info.textContent = t('viewer.load_error', 'Load error: ') + e.message;
     return;

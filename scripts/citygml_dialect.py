@@ -6,10 +6,12 @@ hub and the CI preview, for every city (CityGML 1.0 and 2.0; a projected CRS suc
 state plane in US feet as well as latitude/longitude).
 
 - ``ns_for_root(root)``: the namespaces of the file's own CityGML version.
-- ``crs_transformer(srs_name)``: (x, y) -> (lat, lon) for a projected CRS, None for lat/lon data.
+- ``crs_transformer(srs_name)``: (x, y) -> (lat, lon); the identity for lat/lon data; None when the
+  CRS is missing or unknown (no map, never "treat as lat/lon").
   No external dependency (it runs in the hub bundle). A transformer of a CRS in US feet carries
   ``z_scale`` (heights are in feet too).
-- ``file_transformer(root, ns)``: the transformer of the file's own Envelope srsName.
+- ``file_transformer(root, ns, declared)``: the transformer of the file's own Envelope srsName, else
+  of the city's declared `crs`.
 
 Shipped next to the hub as program/citygml_dialect.py.
 """
@@ -24,6 +26,7 @@ NS = {
     "gml": "http://www.opengis.net/gml",
     "app": "http://www.opengis.net/citygml/appearance/2.0",
     "gen": "http://www.opengis.net/citygml/generics/2.0",
+    "xlink": "http://www.w3.org/1999/xlink",
 }
 
 
@@ -89,22 +92,34 @@ def _lcc_inverse_2263(E_ft: float, N_ft: float) -> "tuple[float, float]":
     return math.degrees(phi), math.degrees(theta / n + lon0)
 
 
-def crs_transformer(srs_name: str):
-    """srsName → (x, y) -> (lat, lon) transformer. Lat/lon systems get None (no conversion needed).
+# Geographic CRSs whose coordinates are written latitude first (EPSG axis order): no conversion.
+# JGD2011 (6668) and JGD2011 + height (6697), WGS 84 (4326, 4979), ETRS89 (4258, 4937),
+# NAD83 (4269), JGD2000 (4612).
+LATLON_EPSG = frozenset({4326, 4979, 4258, 4937, 4269, 4612, 6668, 6697})
 
-    Formula implementation without external dependencies. Supports: UTM
-    (ETRS89/WGS84, urn:adv notation and EPSG:258xx/326xx) and EPSG:2263
-    (NY Long Island). Unknown projections fall back to None (previous behavior = no conversion).
-    """
+
+def _latlon(x, y):
+    return x, y
+
+
+def crs_transformer(srs_name: str):
+    """srsName -> (x, y) -> (lat, lon) transformer; None when the CRS is missing or unknown.
+
+    A geographic CRS of LATLON_EPSG gets the identity (its values are latitude, longitude). Formula
+    implementation without external dependencies for: UTM (ETRS89/WGS84, urn:adv notation and
+    EPSG:258xx/326xx) and EPSG:2263 (NY Long Island). Anything else is unknown: the caller shows no
+    map and no preview, never reading the values as latitude and longitude (v2.0.0 phase 1-2)."""
     s = str(srs_name or "")
     m = re.search(r"UTM[ _]?zone[ _]?(\d{1,2})|UTM(\d{1,2})", s)
     if m:
         zone = int(m.group(1) or m.group(2))
         if 1 <= zone <= 60:
             return lambda x, y: _tm_inverse(x, y, zone * 6 - 183)
-    m = re.search(r"EPSG:+(\d+)", s)
+    m = re.search(r"EPSG(?::+|/\d+/)(\d+)", s)   # EPSG:6697, urn:...:EPSG::6697, .../EPSG/0/6697
     if m:
         code = int(m.group(1))
+        if code in LATLON_EPSG:
+            return _latlon
         if 25801 <= code <= 25860:  # ETRS89 / UTM
             zone = code - 25800
             return lambda x, y: _tm_inverse(x, y, zone * 6 - 183)
@@ -119,19 +134,33 @@ def crs_transformer(srs_name: str):
     return None
 
 
+# CityGML 1.0: the same modules, the version part of the namespaces rewritten (gml is shared)
+NS10 = {k: v.replace("/2.0", "/1.0") for k, v in NS.items()}
+
+
+def list_key(codespace: str) -> str:
+    """A codeSpace's list as a path below the code lists folder: `<edition>/X.xml` for a list kept
+    under its edition's folder, `X.xml` for the current one (D-4b4: the file name alone was
+    taken, so a carried list was judged as the current edition's list of that name)."""
+    path = codespace.replace("\\", "/")
+    at = path.rfind("codelists/")
+    return path[at + len("codelists/"):] if at >= 0 else path.rsplit("/", 1)[-1]
+
+
 def ns_for_root(root) -> dict:
-    """Return the namespace dict matching the file's CityGML version.
-
-    CityGML 2.0 is NS as it is; CityGML 1.0 data has a root element namespace of
-    `…/citygml/1.0`, so only the version part is rewritten (gml is shared by both).
-    """
+    """Return the namespace dict matching the file's CityGML version (a 1.0 file's root
+    element is in `…/citygml/1.0`)."""
     m = re.match(r"\{(.+?)\}", root.tag or "")
-    if m and m.group(1).endswith("/citygml/1.0"):
-        return {k: v.replace("/2.0", "/1.0") for k, v in NS.items()}
-    return NS
+    return NS10 if m and m.group(1).endswith("/citygml/1.0") else NS
 
 
-def file_transformer(root, ns: dict):
-    """The transformer of the file's own CRS (its Envelope's srsName), or None."""
+def ns_for_bytes(raw: bytes) -> dict:
+    """ns_for_root for a file that is not parsed: the version its CityModel declares at the start."""
+    return NS10 if b"http://www.opengis.net/citygml/1.0" in raw[:8192] else NS
+
+
+def file_transformer(root, ns: dict, declared: str = ""):
+    """The transformer of the file's CRS: its Envelope's srsName, else the CRS the city declares
+    (4dcitygml.json `crs`); None when neither is a CRS this module knows."""
     env = root.find(f"{{{ns['gml']}}}boundedBy/{{{ns['gml']}}}Envelope")
-    return crs_transformer(env.get("srsName") if env is not None else "")
+    return crs_transformer((env.get("srsName") if env is not None else "") or declared)

@@ -12,6 +12,9 @@ import unittest
 from pathlib import Path
 
 from scripts import identity_manifest as I
+from scripts.building_identity import IdentityRule
+
+RULE = IdentityRule("uro:buildingID")   # the fixtures are i-UR data keyed by their buildingID
 from scripts.provenance_manifest import validate
 
 
@@ -34,7 +37,10 @@ def citygml(buildings: list[tuple[str, str, list[tuple[float, float]]]]) -> byte
             f'</bldg:Building></core:cityObjectMember>')
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0" '
             'xmlns:bldg="http://www.opengis.net/citygml/building/2.0" xmlns:gml="http://www.opengis.net/gml" '
-            'xmlns:uro="https://www.geospatial.jp/iur/uro/3.2">' + "".join(members) + "</core:CityModel>\n").encode()
+            'xmlns:uro="https://www.geospatial.jp/iur/uro/3.2">'
+            '<gml:boundedBy><gml:Envelope srsName="http://www.opengis.net/def/crs/EPSG/0/6697" srsDimension="3">'
+            '<gml:lowerCorner>35.7 139.7 0</gml:lowerCorner><gml:upperCorner>35.72 139.72 0</gml:upperCorner></gml:Envelope></gml:boundedBy>'
+            + "".join(members) + "</core:CityModel>\n").encode()
 
 
 BASE = 35.7100
@@ -43,7 +49,7 @@ P = [square(BASE + i * 0.0005, LON) for i in range(8)]  # eight well-separated f
 
 
 class IdentityManifestTest(unittest.TestCase):
-    def _generate(self, editions: list[tuple[str, bytes]], tmp: Path, **overrides):
+    def _generate(self, editions: list[tuple[str, bytes]], tmp: Path, rule=RULE, **overrides):
         paths = []
         for label, data in editions:
             path = tmp / f"{label}.gml"
@@ -54,7 +60,7 @@ class IdentityManifestTest(unittest.TestCase):
             edition=paths, edition_uri=None, product="udx/bldg/base.gml", product_source=None,
             tools_repo="4dcitygml/tools", tools_commit="0" * 40, plan_issue="https://example.com/issues/1",
             seed=1, sample_size=30, **overrides)
-        return I.build_manifest(args, I.Thresholds())
+        return I.build_manifest(args, I.Thresholds(), rule)
 
     def test_continuous_regime_links_by_id_with_geometry_check(self) -> None:
         e0 = citygml([("13101-bldg-1", "13101", P[0]), ("13101-bldg-2", "13101", P[1])])
@@ -113,13 +119,28 @@ class IdentityManifestTest(unittest.TestCase):
         self.assertEqual([l["from"] for l in ordered], ["13101-bldg-2", "13101-bldg-1"])  # free the target first
         self.assertEqual({l["from"] for l in cyclic}, {"13101-bldg-8", "13101-bldg-9"})
         raw = citygml([("13101-bldg-1", "13101", P[0]), ("13101-bldg-2", "13101", P[1])])
-        out = I.apply_links(raw, ordered)
+        out = I.apply_links(raw, ordered, RULE)
         self.assertIn(b"<uro:buildingID>13101-bldg-2</uro:buildingID>", out)
         self.assertIn(b"<uro:buildingID>13101-bldg-3</uro:buildingID>", out)
         self.assertNotIn(b"<uro:buildingID>13101-bldg-1</uro:buildingID>", out)
         self.assertEqual(len(out), len(raw))  # byte-preserving apart from the values
         with self.assertRaises(SystemExit):
-            I.apply_links(raw, [{"from": "13101-bldg-1", "to": "13101-bldg-2"}])  # would duplicate id 2
+            I.apply_links(raw, [{"from": "13101-bldg-1", "to": "13101-bldg-2"}], RULE)  # would duplicate id 2
+
+    def test_the_manifest_is_keyed_by_the_citys_rule(self) -> None:
+        # D-b4: the raw buildingID was the key, so a placeholder value (invalid_values) became a link
+        # target the gate never sees (it falls back to the gml:id); the rule is the gate's now, and
+        # the manifest records it for verify
+        rule = IdentityRule("uro:buildingID", frozenset({"13101-bldg-0"}))
+        with tempfile.TemporaryDirectory() as d:
+            old = citygml([("13101-bldg-0", "13101", P[0]), ("13101-bldg-1", "13101", P[1])])
+            new = citygml([("13101-bldg-0", "13101", P[0]), ("13101-bldg-1", "13101", P[1])])
+            manifest, _product = self._generate([("2020", old), ("2025", new)], Path(d), rule=rule)
+        self.assertEqual(manifest["evidence"]["identity"], {"type": "uro:buildingID", "invalid_values": ["13101-bldg-0"]})
+        keys = {l["from"] for l in manifest["evidence"]["links"]} | {u["id"] for u in manifest["evidence"]["unlinked"]}
+        self.assertNotIn("13101-bldg-0", keys)   # the placeholder is no ID; that building is its gml:id
+        self.assertEqual(I.manifest_rule(manifest), rule)
+        self.assertEqual(validate(manifest), [])
 
     def test_commit_message_carries_the_contract_trailers(self) -> None:
         link = {"from": "13101-bldg-1", "to": "13101-bldg-21", "tier": "B", "method": "mutual_best_iou", "iou": 0.97,

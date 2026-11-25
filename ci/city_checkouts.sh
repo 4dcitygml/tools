@@ -14,13 +14,15 @@
 set -euo pipefail
 REFS="$1"
 DEST="$2"
+TOOLS="$(cd "$(dirname "$0")/.." && pwd)"
 started=$(date +%s)
 
-auth=()
 if [ -n "${CITY_READ_TOKEN:-}" ]; then
   basic="$(printf 'x-access-token:%s' "$CITY_READ_TOKEN" | base64 | tr -d '\n')"
   echo "::add-mask::${basic}"
-  auth=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}")
+  # git's environment configuration: the header never appears on a command line (ps shows argv)
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+    GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
 fi
 
 python3 - "$REFS" <<'PY' | while IFS=$'\t' read -r folder repository ref; do
@@ -36,19 +38,12 @@ PY
   rm -rf "$target"
   git init -q "$target"
   git -C "$target" remote add origin "https://github.com/${repository}.git"
-  git "${auth[@]}" -C "$target" fetch -q --depth 1 --filter=blob:none origin "$ref"
-  data="$(git "${auth[@]}" -C "$target" show "FETCH_HEAD:4dcitygml.json" 2>/dev/null | python3 -c '
-import json, sys
-try:
-    dirs = json.load(sys.stdin).get("data_dirs") or []
-except ValueError:
-    dirs = []
-for d in [*dirs, "provenance"]:
-    if isinstance(d, str) and d.strip("/"):
-        print("!/" + d.strip("/") + "/")
-' || true)"
+  git -C "$target" fetch -q --depth 1 --filter=blob:none origin "$ref"
+  # the data folders from the declaration (scripts/city_declaration.py), plus provenance/
+  data="$({ git -C "$target" show "FETCH_HEAD:4dcitygml.json" 2>/dev/null || true; } \
+    | python3 "$TOOLS/scripts/city_declaration.py" | sed 's#^#!/#; s#$#/#'; echo '!/provenance/')"
   git -C "$target" sparse-checkout set --no-cone '/*' $data
-  git "${auth[@]}" -C "$target" checkout -q --detach FETCH_HEAD
+  git -C "$target" checkout -q --detach FETCH_HEAD
   echo "$folder: ${repository}@${ref:0:12} ($(git -C "$target" ls-files | wc -l | tr -d ' ') tracked files)"
 done
 echo "City checkouts took $(( $(date +%s) - started )) s."

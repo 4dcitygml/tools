@@ -11,17 +11,16 @@ in that commit, standard git history features **work at building granularity**:
 - `git blame` / `git bisect` / `git revert <sha>` … trace/revert at building granularity (W6 removes churn, so accurate)
 
 **The key is the building's stable ID under the city's rule** (4dcitygml.json `building_id`,
-read at the PR's base: a code-list attribute, the gml:id or a generic attribute), the same ID the
-commit scope gate expects. A gml:id may be regenerated at a rebuild; the stable ID carries the
-building across rebuilds and renames. A deleted building is resolved in the base files.
+read at the PR's base: a code-list attribute, the gml:id or a generic attribute). The IDs are the
+commit scope gate's own (its PR scope, U4), so a suggestion is what the gate then expects. A
+gml:id may be regenerated at a rebuild; the stable ID carries the building across rebuilds and
+renames.
 
 Do **NOT** use building ID as labels (thousands of variants cause label noise, blame/bisect won't see them anyway).
 Commit trailer is the standard approach.
 
-Usage (CI: pass pre-calculated gml:id list and changed .gml):
-    python scripts/suggest_commit.py --classification single \
-        --modified /tmp/M --added /tmp/A --deleted /tmp/D --renamed /tmp/R \
-        --sources changed_gml.txt --base-sha "$BASE_SHA"
+Usage (CI: the commit scope gate's result):
+    python scripts/suggest_commit.py --scope-json "$CITYGML_RUN/citygml_commit_scope.json"
 """
 from __future__ import annotations
 
@@ -29,13 +28,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from scripts.building_identity import IdentityRule, building_spans, rule_from_config, stable_id  # noqa: E402
-from scripts.repo_git import blob  # noqa: E402
 
 MARKER = "<!-- citygml-suggested-commit -->"
 
@@ -49,53 +41,17 @@ _TYPE = {
 }
 
 
-def _read_ids(path: Path | None) -> list[str]:
-    if path is None or not path.exists():
-        return []
-    return [ln.strip() for ln in path.read_text().splitlines() if ln.strip()]
-
-
-def building_id_map(gml_paths: list[Path], rule: IdentityRule = IdentityRule(), base_sha: str = "") -> dict[str, str]:
-    """gml:id -> stable ID under the city's rule, from the changed .gml files: the head side, then
-    the base side for buildings the head no longer has (deletions)."""
-    m: dict[str, str] = {}
-    sides = [[p.read_bytes() for p in gml_paths if p.exists()]]
-    if base_sha:
-        sides.append([raw for raw in (blob(".", base_sha, p.as_posix()) for p in gml_paths) if raw is not None])
-    for raws in sides:
-        for raw in raws:
-            for gid, (s, e) in building_spans(raw).items():
-                m.setdefault(gid, stable_id(raw[s:e], gid, rule))
-    return m
-
-
-def city_rule(base_sha: str = "") -> IdentityRule:
-    """The building ID rule of the city's 4dcitygml.json, at the base when given (else the checkout)."""
-    raw = blob(".", base_sha, "4dcitygml.json") if base_sha else (
-        Path("4dcitygml.json").read_bytes() if Path("4dcitygml.json").is_file() else None)
-    try:
-        return rule_from_config(json.loads(raw) if raw else None)
-    except ValueError:
-        return IdentityRule()
-
-
 def build_message(
     modified: list[str],
     added: list[str],
     deleted: list[str],
     renamed: list[str],
     classification: str,
-    id_map: dict[str, str] | None = None,
 ) -> str:
-    """Return the raw body of the suggested commit message (subject + trailers). Resolved to stable IDs via id_map."""
-    id_map = id_map or {}
-
-    def disp(gid: str) -> str:  # prefer the stable ID, fall back to gml:id
-        return id_map.get(gid, gid)
-
+    """Return the raw body of the suggested commit message (subject + trailers), by stable ID."""
     ctype = _TYPE.get(classification, "update")
     all_ids = sorted(set(modified) | set(added) | set(deleted) | set(renamed))
-    scope = disp(all_ids[0]) if len(all_ids) == 1 else f"{len(all_ids)} buildings"
+    scope = all_ids[0] if len(all_ids) == 1 else f"{len(all_ids)} buildings"
     lines = [f"{ctype}({scope}): <fill in a summary of the change>", ""]
     if classification == "lifecycle":
         lines.append("<fill in why the addition/deletion, merge, split, or rebuild was done>")
@@ -108,20 +64,20 @@ def build_message(
         lines.append('Change-Type: lifecycle')
         lines.append('Lifecycle-Manifest: <paste the reference printed by lifecycle_manifest.py>')
     for bid in sorted(modified):
-        lines.append(f"Building: {disp(bid)}")
+        lines.append(f"Building: {bid}")
     for bid in sorted(added):
-        lines.append(f"Building-Added: {disp(bid)}")
+        lines.append(f"Building-Added: {bid}")
     for bid in sorted(deleted):
-        lines.append(f"Building-Deleted: {disp(bid)}")
+        lines.append(f"Building-Deleted: {bid}")
     for bid in sorted(renamed):
         # A rename keeps the stable ID unchanged, so the same key tracks it continuously (only gml:id changed).
-        lines.append(f"Building: {disp(bid)}")
+        lines.append(f"Building: {bid}")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_comment(message: str, classification: str, n: int, resolved: bool, rule: IdentityRule = IdentityRule()) -> str:
-    """PR comment (Markdown with marker)."""
-    key = f"{rule.type} (stable ID)" if resolved else "gml:id"
+def render_comment(message: str, classification: str, n: int, rule: str = "gml:id") -> str:
+    """PR comment (Markdown with marker); rule names the city's stable ID."""
+    key = f"{rule} (stable ID)"
     return (
         f"{MARKER}\n"
         f"## 🧾 Suggested commit message (for building commits)\n\n"
@@ -138,31 +94,19 @@ def render_comment(message: str, classification: str, n: int, resolved: bool, ru
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--classification", required=True)
-    p.add_argument("--modified", type=Path, help="File listing modified building gml:ids")
-    p.add_argument("--added", type=Path, help="File listing added building gml:ids")
-    p.add_argument("--deleted", type=Path, help="File listing deleted building gml:ids")
-    p.add_argument("--renamed", type=Path, help="File listing renamed (new gml:id)")
-    p.add_argument("--sources", type=Path, help="File listing changed .gml paths (for the stable ID)")
-    p.add_argument("--base-sha", default="", help="The PR's base: the city's rule and deleted buildings are read there")
+    p.add_argument("--scope-json", type=Path, required=True, help="the commit scope gate's result (its PR scope)")
     args = p.parse_args(argv)
-
-    modified = _read_ids(args.modified)
-    added = _read_ids(args.added)
-    deleted = _read_ids(args.deleted)
-    renamed = _read_ids(args.renamed)
-    n = len(set(modified) | set(added) | set(deleted) | set(renamed))
+    try:
+        scope = json.loads(args.scope_json.read_text(encoding="utf-8")).get("scope") or {}
+    except (OSError, ValueError):
+        scope = {}
+    ids = {kind: list(scope.get(kind) or []) for kind in ("modified", "added", "deleted", "renamed")}
+    n = len(set().union(*ids.values()))
     if n == 0:
         return 0  # no building changes -> no output (not a comment-posting target)
-
-    rule = city_rule(args.base_sha)
-    id_map: dict[str, str] = {}
-    if args.sources:
-        gml_paths = [Path(x) for x in _read_ids(args.sources)]
-        id_map = building_id_map(gml_paths, rule, args.base_sha)
-
-    msg = build_message(modified, added, deleted, renamed, args.classification, id_map)
-    sys.stdout.write(render_comment(msg, args.classification, n, resolved=bool(id_map), rule=rule))
+    classification = str(scope.get("class") or "none")
+    msg = build_message(**ids, classification=classification)
+    sys.stdout.write(render_comment(msg, classification, n, str(scope.get("rule") or "gml:id")))
     return 0
 
 

@@ -6,11 +6,13 @@ including a container rename and a split attribute between i-UR 3.0 and 3.1."""
 from __future__ import annotations
 
 import argparse
+
+from scripts.building_identity import IdentityRule   # the fixtures are keyed by their buildingID (a PLATEAU city)
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import carry_forward_manifest as C
+from dialects.plateau import carry_forward_manifest as C
 from scripts.provenance_manifest import validate
 
 NS30 = "https://www.geospatial.jp/iur/uro/3.0"
@@ -47,7 +49,7 @@ class CarryForwardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             t = Path(tmp)
             (t / "base.gml").write_bytes(base); (t / "current.gml").write_bytes(current); (t / "new.gml").write_bytes(new)
-            args = argparse.Namespace(repository="example/13101-example", mesh="53394611", municipality="13101",
+            args = argparse.Namespace(rule=IdentityRule("uro:buildingID"), repository="example/13101-example", mesh="53394611", municipality="13101",
                                       base=str(t / "base.gml"), current=str(t / "current.gml"), new=str(t / "new.gml"),
                                       edition_from=None, edition_to=None, base_uri=None, current_uri=None, new_uri=None,
                                       product="udx/bldg/tile.gml", tools_repo="4dcitygml/tools", tools_commit="0" * 40,

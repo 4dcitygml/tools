@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 4dcitygml
 # SPDX-License-Identifier: Apache-2.0
-"""identity-baseline: unify historical ``uro:buildingID`` values to the current
+"""identity-baseline: unify historical stable building IDs (the city's rule) to the current
 edition — manifest generation, application, per-building commits, and the
 reproduction check used by CI.
 
@@ -30,7 +30,6 @@ import argparse
 import datetime as _dt
 import json
 import random
-import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -40,13 +39,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.citygml_constants import tools_repo  # noqa: E402
-from scripts import analyze_yearly_citygml_mesh as A  # noqa: E402
+from scripts import building_compare as A  # noqa: E402
+from scripts import city_declaration  # noqa: E402
+from scripts.building_identity import IdentityRule, building_spans, replace_stable_id, rule_from_config, stable_id  # noqa: E402
 from scripts.provenance_manifest import (  # noqa: E402
     commit_series, committed_manifest, compare_reproduction, edition_arg, locate_materials,
     manifest_ref, schema_errors, sha256_hex, write_generated)
 
-BUILDING_ID_RE_TEMPLATE = rb"<(?:\w+:)?buildingID(?:\s[^>]*)?>%s</(?:\w+:)?buildingID>"
-_INDEX_RE = re.compile(r"\[\d+\]$")
 
 
 @dataclass
@@ -65,29 +64,32 @@ class Thresholds:
     id_change_tier_b_min_iou: float = 0.9  # different IDs in a non-renumbered regime need this much overlap for tier B
 
 
-def building_id_of(building: A.Building) -> str | None:
-    for key, value in building.attrs.items():
-        last = _INDEX_RE.sub("", key.split("/")[-1])
-        if last == "buildingID" and value:
-            return value.strip()
-    return None
+def manifest_rule(manifest: "dict | None" = None, root: "Path | None" = None) -> IdentityRule:
+    """The identity rule a manifest is keyed by: the one it records (evidence.identity, D-b4),
+    else, for a manifest made before it recorded one, the raw values of the city's declared type."""
+    recorded = ((manifest or {}).get("evidence") or {}).get("identity")
+    if recorded:
+        return IdentityRule(recorded["type"], frozenset(recorded.get("invalid_values") or ()))
+    declared = rule_from_config(city_declaration.read(root or Path.cwd()).resolved)
+    return declared if manifest is None else IdentityRule(declared.type)
 
 
-def load_edition(path: Path, municipality: str) -> dict[str, A.Building]:
-    """Buildings of one edition keyed by uro:buildingID (municipality-filtered)."""
+def load_edition(path: Path, municipality: str, rule: IdentityRule) -> dict[str, A.Building]:
+    """Buildings of one edition keyed by their stable ID under the rule, read from the member's
+    bytes as the commit scope gate reads it (D-b4), municipality-filtered."""
     result: dict[str, A.Building] = {}
     duplicates: set[str] = set()
-    for building in A.load_buildings(path).values():
+    raw = path.read_bytes()
+    spans = building_spans(raw)
+    for gid, building in A.load_buildings(path).items():
         if municipality and building.city_code != municipality:
             continue
-        stable = building_id_of(building)
-        if not stable:
-            continue
+        stable = stable_id(raw[slice(*spans[gid])], gid, rule) if gid in spans else gid
         if stable in result:
             duplicates.add(stable)
         result[stable] = building
     if duplicates:
-        raise SystemExit(f"{path}: duplicated uro:buildingID within one edition: {sorted(duplicates)[:5]}")
+        raise SystemExit(f"{path}: duplicated building ID within one edition: {sorted(duplicates)[:5]}")
     return result
 
 
@@ -123,10 +125,6 @@ class _Competitors:
             if union:
                 best = max(best, inter / union)
         return best
-
-
-def _competitor_iou(new: A.Building, old_pool: dict[str, A.Building], exclude: str, index: "_Competitors | None" = None) -> float:
-    return (index or _Competitors(old_pool)).best(new, exclude)
 
 
 def _consistent(iou: float, centroid: float, thr: Thresholds) -> bool:
@@ -268,31 +266,40 @@ def compose_chain(per_boundary: list[tuple[dict, list[dict], list[dict]]], label
     return links, unlinked, unchanged
 
 
-_ANY_BUILDING_ID_RE = re.compile(rb"(<(?:\w+:)?buildingID(?:\s[^>]*)?>)([^<]+)(</(?:\w+:)?buildingID>)")
+def _stable_ids(raw: bytes, rule: IdentityRule) -> "list[tuple[str, int, int, str]]":
+    """(stable ID, start, end, gml:id) of every member, in file order."""
+    return [(stable_id(raw[s:e], gid, rule), s, e, gid) for gid, (s, e) in sorted(building_spans(raw).items(), key=lambda x: x[1][0])]
 
 
-def apply_links(raw: bytes, links: list[dict]) -> bytes:
-    """Simultaneous, byte-preserving substitution of every link's buildingID.
+def apply_links(raw: bytes, links: list[dict], rule: IdentityRule) -> bytes:
+    """Simultaneous, byte-preserving substitution of every link's stable ID, where the rule keeps
+    it (building_identity.replace_stable_id).
 
     Each From must occur exactly once in the input; the result must not contain
     duplicated IDs (a To that equals a From of another link is fine — both are
     replaced in the same pass — but a To colliding with an untouched building is
     an error)."""
-    mapping = {l["from"].encode(): l["to"].encode() for l in links}
-    seen: dict[bytes, int] = {}
-    for m in _ANY_BUILDING_ID_RE.finditer(raw):
-        seen[m.group(2)] = seen.get(m.group(2), 0) + 1
+    mapping = {l["from"]: l["to"] for l in links}
+    members = _stable_ids(raw, rule)
+    seen: dict[str, int] = {}
+    for stable, *_rest in members:
+        seen[stable] = seen.get(stable, 0) + 1
     for src in mapping:
         if seen.get(src, 0) != 1:
-            raise SystemExit(f"buildingID {src.decode()} occurs {seen.get(src, 0)} times (expected exactly once)")
-    out = _ANY_BUILDING_ID_RE.sub(lambda m: m.group(1) + mapping.get(m.group(2), m.group(2)) + m.group(3), raw)
-    final: dict[bytes, int] = {}
-    for m in _ANY_BUILDING_ID_RE.finditer(out):
-        final[m.group(2)] = final.get(m.group(2), 0) + 1
-    dup = sorted(k.decode() for k, n in final.items() if n > 1)
+            raise SystemExit(f"building ID {src} occurs {seen.get(src, 0)} times (expected exactly once)")
+    out, pos = [], 0
+    for stable, s, e, _gid in members:
+        span = raw[s:e]
+        out += [raw[pos:s], replace_stable_id(span, stable, mapping[stable], rule) if stable in mapping else span]
+        pos = e
+    result = b"".join(out) + raw[pos:]
+    final: dict[str, int] = {}
+    for stable, *_rest in _stable_ids(result, rule):
+        final[stable] = final.get(stable, 0) + 1
+    dup = sorted(k for k, n in final.items() if n > 1)
     if dup:
-        raise SystemExit(f"applying the links would duplicate buildingID(s): {dup[:5]}")
-    return out
+        raise SystemExit(f"applying the links would duplicate building ID(s): {dup[:5]}")
+    return result
 
 
 def order_links(links: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -313,7 +320,7 @@ def order_links(links: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def _file_material(label: str, path: Path, uri: str | None) -> dict:
     """Material entry for one edition file. ``uri`` may name the official ZIP
-    with the member path after '#' (``https://.../x.zip#pkg/udx/bldg/m.gml``):
+    with the member path after '#' (``https://.../x.zip#pkg/buildings/m.gml``):
     then the archive is the material and the file is its member, so CI can
     re-fetch exactly that member by HTTP Range (fetch_materials.py)."""
     data = path.read_bytes()
@@ -329,9 +336,9 @@ def _file_material(label: str, path: Path, uri: str | None) -> dict:
     return {"name": label, "uri": uri or path.resolve().as_uri(), "sha256": digest, "bytes": size, "acquired": acquired}
 
 
-def build_manifest(args: argparse.Namespace, thr: Thresholds) -> tuple[dict, bytes]:
+def build_manifest(args: argparse.Namespace, thr: Thresholds, rule: IdentityRule) -> tuple[dict, bytes]:
     labels = [label for label, _p in args.edition]
-    editions = [load_edition(Path(p), args.municipality) for _l, p in args.edition]
+    editions = [load_edition(Path(p), args.municipality, rule) for _l, p in args.edition]
     per_boundary = [boundary_links(editions[i], editions[i + 1], labels[i], labels[i + 1], thr) for i in range(len(editions) - 1)]
     links, unlinked, unchanged = compose_chain(per_boundary, labels)
     # A To must not collide with an ID that stays in the file: a past-only
@@ -358,7 +365,7 @@ def build_manifest(args: argparse.Namespace, thr: Thresholds) -> tuple[dict, byt
     links = ordered
     unlinked.sort(key=lambda u: u["id"])
     product_source = Path(args.product_source or args.edition[0][1])
-    product_bytes = apply_links(product_source.read_bytes(), links)
+    product_bytes = apply_links(product_source.read_bytes(), links, rule)
     uris = dict(args.edition_uri or [])
     rng = random.Random(args.seed)
     link_targets = sorted(l["to"] for l in links)
@@ -380,6 +387,8 @@ def build_manifest(args: argparse.Namespace, thr: Thresholds) -> tuple[dict, byt
         },
         "products": [{"path": args.product, "sha256": sha256_hex(product_bytes), "buildings": len(editions[0])}],
         "evidence": {
+            # the rule the IDs are read with (D-b4): verify regenerates with it, whatever the city declares later
+            "identity": {"type": rule.type, "invalid_values": sorted(rule.invalid_values)},
             "boundaries": [s for s, _l, _u in per_boundary],
             "thresholds": asdict(thr),
             "links": links,
@@ -417,7 +426,7 @@ def commit_message(link: dict, manifest_path: str, manifest_bytes: bytes, kind: 
 
 def cmd_generate(args: argparse.Namespace) -> int:
     thr = Thresholds()
-    manifest, product = build_manifest(args, thr)
+    manifest, product = build_manifest(args, thr, manifest_rule())
     code = write_generated(manifest, args.output, product, args.apply_output)
     if code:
         return code
@@ -430,7 +439,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
 def cmd_apply(args: argparse.Namespace) -> int:
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    out = apply_links(Path(args.input).read_bytes(), manifest["evidence"]["links"])
+    out = apply_links(Path(args.input).read_bytes(), manifest["evidence"]["links"], manifest_rule(manifest))
     Path(args.output).write_bytes(out)
     print(f"applied {len(manifest['evidence']['links'])} links -> {args.output} sha256 {sha256_hex(out)}")
     return 0
@@ -440,11 +449,12 @@ def cmd_commits(args: argparse.Namespace) -> int:
     repo = Path(args.repo)
     manifest, manifest_bytes, rel_manifest = committed_manifest(repo, Path(args.manifest))
     product = manifest["products"][0]["path"]
+    rule = manifest_rule(manifest, repo)
 
     def steps():
         raw = (repo / product).read_bytes()
         for link in manifest["evidence"]["links"]:  # manifest order = safe one-at-a-time order (order_links)
-            raw = apply_links(raw, [link])
+            raw = apply_links(raw, [link], rule)
             yield raw, commit_message(link, rel_manifest, manifest_bytes, manifest["kind"], manifest["scope"]["edition_to"])
 
     return commit_series(repo, product, rel_manifest, steps(), manifest["products"][0]["sha256"], "links")
@@ -466,7 +476,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     args.tools_commit = committed["builder"]["tools_commit"]; args.product = committed["products"][0]["path"]
     args.seed = committed["sample_audit"]["seed"]; args.sample_size = committed["sample_audit"]["size"]
     args.edition_uri = []
-    regenerated, _product = build_manifest(args, thr)
+    regenerated, _product = build_manifest(args, thr, manifest_rule(committed))
     return compare_reproduction(committed, regenerated)
 
 

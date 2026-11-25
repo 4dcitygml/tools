@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests import test_editor_push_paths as pp
-from tests.support import REPO_ROOT, TOKYO, load_app, runtime
+from tests.support import REPO_ROOT, TOKYO, load_app, ready_to_send, runtime
 
 GOLDEN = REPO_ROOT / "tests" / "fixtures" / "editor_pr_snapshot.json"
 git = pp.git
@@ -34,14 +34,9 @@ def normalized(text: str) -> str:
 class TestEditorPrSnapshot(pp._PushFixture):
     def setUp(self):   # as TestPushWithAccount, without inheriting its tests
         super().setUp()
-        self.acc.save_account("alice", "tok-a", 1)
-        self.acc.bind_city_login(TOKYO, "alice")
-        os.environ["CITYGML_ACCOUNT"] = "alice"
-        self.acc.apply_clone_identity(self.clone, "alice", 1)
-        self.repo._origin_nwo = lambda: "alice/sample-tokyo-station"
+        ready_to_send(self.repo)
 
     def tearDown(self):
-        os.environ.pop("CITYGML_ACCOUNT", None)
         super().tearDown()
 
     def capture(self, send) -> dict:
@@ -69,7 +64,7 @@ class TestEditorPrSnapshot(pp._PushFixture):
     def send_texture(self) -> dict:
         tex = load_app("tex_pr_snapshot", "tools/tex_editor/app.py")
         repo = tex.TexRepo(self.clone)
-        repo._origin_nwo = lambda: "alice/sample-tokyo-station"
+        ready_to_send(repo)
         gml = self.clone / "city/udx/bldg/53394611_bldg_6697_op.gml"
         image = "53394611_bldg_6697_appearance/tex_snapshot.jpg"
 
@@ -110,7 +105,7 @@ class TestEditorPrSnapshot(pp._PushFixture):
         # git would take the computer's global name and e-mail into a public commit
         git(self.clone, "config", "--local", "--unset", "user.email")
         head = git(self.clone, "rev-parse", "HEAD")
-        with self.assertRaisesRegex(RuntimeError, "no author set"):
+        with self.assertRaisesRegex(RuntimeError, "choose the GitHub account"):
             self.send_attribute()
         self.assertEqual(git(self.clone, "rev-parse", "HEAD"), head)
         self.assertEqual(git(self.clone, "status", "--porcelain", "--untracked-files=no"), "")

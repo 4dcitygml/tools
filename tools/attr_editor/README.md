@@ -81,12 +81,12 @@ values-only change proposal cannot be created.
   byte stream by string substitution**
   (preserving UTF-8 BOM, CRLF, indentation, and element order; consistent with the W6
   minimal-diff gate).
-- `gml:id`, geometry, `uro:buildingID`, and `core:creationDate` are always read-only.
+- `gml:id`, geometry, the building ID leaf (`buildingID`), and `core:creationDate` are always read-only.
 - PRs are **one building each** (multi-building changes are machine-rejected by CI, so
   the UI never creates them in the first place).
 - The pre-submission check completes locally and inspects the post-change state without
   rewriting files. The same check is re-run at submission time; details such as full
   XSD validation are checked by CI after submission.
-- Commits follow the format `attr-fix(<attribute-name>): <old> → <new>` plus a `Building: <uro:buildingID>`
-  trailer (the same convention as `scripts/suggest_commit.py`;
+- Commits follow the format `attr-fix(<attribute-name>): <old> → <new>` plus a `Building: <building ID>`
+  trailer (the city's building ID rule, `building_id` in 4dcitygml.json; the same convention as `scripts/suggest_commit.py`;
   `git log --grep "Building: <id>"` works).

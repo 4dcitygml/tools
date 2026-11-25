@@ -1,0 +1,22 @@
+{
+  "common.ago_min": "{n}分前",
+  "common.ago_hour": "{n}時間前",
+  "common.ago_day": "{n}日前",
+  "common.err_banner": "⚠ エラー: {msg}（クリックで閉じる）",
+  "common.shortcut_done": "{name} を作りました。デスクトップや Dock へドラッグしてください。次回からはこのアイコンで開けます。",
+  "common.shortcut_failed": "アイコンを作れませんでした：{reason}",
+  "common.keep_terminal_open": "このウィンドウは閉じないでください（閉じるとツールが止まります）。",
+  "common.tool_stopped": "ツールが止まりました。ターミナルのウィンドウを閉じた場合は、前と同じ方法で起動し直してから、このページを再読み込みしてください。",
+  "common.back_to_hub": "← ハブに戻る",
+  "common.confirm_loading": "この送信で行われる内容を集めています…",
+  "common.confirm_account": "GitHub アカウント",
+  "common.confirm_no_account": "この都市にはつながっていません",
+  "common.confirm_identity": "変更に記録される名義",
+  "common.confirm_identity_unset": "（未設定。先にハブでアカウントを選んでください）",
+  "common.confirm_origin": "アップロード先（自分用のコピー）",
+  "common.confirm_upstream": "提案先（都市）",
+  "common.confirm_proposal": "提案",
+  "common.confirm_pr_auto": "アップロード後に自動で作成されます",
+  "common.confirm_pr_manual": "最後の一手は GitHub の画面で行います（緑のボタンを 1 回）",
+  "common.confirm_lead": "「この内容で送信」を押すと、次のことが行われます："
+}

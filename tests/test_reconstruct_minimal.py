@@ -13,7 +13,8 @@ from __future__ import annotations
 import unittest
 
 from scripts.diff_citygml import diff_sources
-from scripts.reconstruct_minimal import building_spans, classify, reconstruct
+from scripts.building_identity import building_spans
+from scripts.reconstruct_minimal import classify, reconstruct
 
 NS = (
     'xmlns:core="http://www.opengis.net/citygml/2.0" '

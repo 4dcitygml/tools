@@ -7,7 +7,7 @@ A generator to make paper chapter 6 PR-A/B reproducible in the form "anyone can 
 (reproducibility requirement of work plan D2, D5). Surgically rewrites only the byte range of one target building,
 leaving everything else unchanged. Therefore:
 
-- Preserves PLATEAU's official serialization (UTF-8 BOM + CRLF) as-is.
+- Preserves the file's own serialization (UTF-8 BOM + CRLF when it has them) as-is.
 - `git diff` becomes the minimal diff showing only the target building's changed sections, preserving reviewability.
 
 Demo definitions (defaults, overridable):
@@ -31,8 +31,10 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-_COM_OPEN = b"<core:cityObjectMember>"
-_COM_CLOSE = b"</core:cityObjectMember>"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.building_identity import building_spans  # noqa: E402
 
 _STOREYS_RE = b"<bldg:storeysAboveGround>%s</bldg:storeysAboveGround>"
 _POSLIST_RE = re.compile(rb"(<gml:posList[^>]*>)([^<]+)(</gml:posList>)")
@@ -40,16 +42,11 @@ _MEASURED_RE = re.compile(rb"(<bldg:measuredHeight[^>]*>)([^<]+)(</bldg:measured
 
 
 def _find_span(raw: bytes, building_id: str) -> tuple[int, int]:
-    """Return the byte range [start, end) of the core:cityObjectMember containing the target building."""
-    needle = f'gml:id="{building_id}"'.encode("utf-8")
-    idx = raw.find(needle)
-    if idx < 0:
+    """Return the byte range [start, end) of the cityObjectMember holding the building (by gml:id)."""
+    span = building_spans(raw).get(building_id)
+    if span is None:
         raise SystemExit(f"Building not found: {building_id}")
-    start = raw.rfind(_COM_OPEN, 0, idx)
-    end = raw.find(_COM_CLOSE, idx)
-    if start < 0 or end < 0:
-        raise SystemExit("Cannot identify cityObjectMember range.")
-    return start, end + len(_COM_CLOSE)
+    return span
 
 
 def _num(value: Decimal) -> bytes:
