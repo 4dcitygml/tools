@@ -70,7 +70,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Validate release series before building
@@ -93,7 +93,7 @@ jobs:
     if: vars.CITYGML_CI != 'no-windows' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           persist-credentials: false
@@ -172,7 +172,7 @@ jobs:
           $smoke = Join-Path $env:RUNNER_TEMP "mingit-smoke\work"
           & $py scripts\verify_bundle.py $zip --flavor windows --git-smoke $smoke
           if ($LASTEXITCODE -ne 0) { throw "verification under the bundled Python failed" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request'
         with:
@@ -248,7 +248,7 @@ jobs:
     needs: validate-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           persist-credentials: false
@@ -261,7 +261,7 @@ jobs:
       - name: Verify the archive with scripts/verify_bundle.py (layout, required files, smoke test)
         shell: bash
         run: python3 scripts/verify_bundle.py "${{ steps.build.outputs.path }}" --flavor macos
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # On PRs, only assemble and verify. Do not depend on artifact storage quota.
         if: github.event_name != 'pull_request'
         with:
@@ -303,7 +303,7 @@ jobs:
           out3="$(bash install/release/citygml.sh --fetch-latest 2>&1 || true)"
           echo "$out3" | tail -n 1 | grep -q "^hub-v" || { echo "$out3"; echo "fetch mode failed"; exit 1; }
           echo "installer OK: first run installed hub-$ver, the bootstrap runs it, second run started it without network, fetch mode answers a tag"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # W8: the installers travel with every hub release (the bootstrap fetches them from the latest)
         if: github.event_name != 'pull_request'
         with:
